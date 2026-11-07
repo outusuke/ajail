@@ -22,7 +22,8 @@ Run AppImages inside a [bubblewrap](https://github.com/containers/bubblewrap) sa
 - Linux with a Wayland session (X11 can be enabled per app)
 - Python 3
 - `bubblewrap` and `squashfs-tools`
-- Optional: `xdg-dbus-proxy` (notifications, portals, tray), `notify-send` (failure popups), `squashfuse` and `fuse3` (compressed installs, experimental)
+- Optional: `xdg-dbus-proxy` (notifications, portals, tray), `notify-send` (failure popups), `squashfuse` and `fuse3` (compressed installs, experimental), `passt` (provides `pasta`, needed for **Keep localhost private**)
+- Optional: systemd with a user session (`systemd-run --user`), for the memory, CPU and process limits
 - For `ajail-gui`: PyGObject, GTK 4 and libadwaita (1.5 or newer, for `Adw.AlertDialog`)
 
 On Fedora (the distro ajail was written on):
@@ -30,6 +31,7 @@ On Fedora (the distro ajail was written on):
 ```bash
 sudo dnf install bubblewrap squashfs-tools xdg-dbus-proxy libnotify python3-gobject gtk4 libadwaita
 sudo dnf install squashfuse fuse3    # optional, for compressed installs
+sudo dnf install passt               # optional, for "Keep localhost private"
 ```
 
 On other distros, install whatever your distro calls the same things: `bubblewrap`, `squashfs-tools` (for `unsquashfs`), `xdg-dbus-proxy`, `notify-send` (usually in a libnotify package), and for `ajail-gui` PyGObject with the GTK 4 and libadwaita bindings. Compressed installs also need `squashfuse` and `fuse3`. Package names differ between distros, so no commands are given for them here.
@@ -112,6 +114,7 @@ Precedence is built-in defaults, then `default.conf`, then the app's file. List 
 | Key | Default | Grants |
 | --- | --- | --- |
 | `net` | 1 | Network access (including localhost and your LAN) |
+| `net_private` | 0 | With `net`: own network via `pasta`, so the app reaches the internet but not services on this computer (localhost). Your local network is still reachable. Fails to start if `pasta` is missing |
 | `sound` | 1 | PipeWire/PulseAudio (includes microphone) |
 | `gpu` | 1 | `/dev/dri` and NVIDIA devices |
 | `x11` | 0 | X11 socket; weaker isolation |
@@ -123,6 +126,17 @@ Precedence is built-in defaults, then `default.conf`, then the app's file. List 
 | `printing` | 0 | CUPS socket |
 | `theme` | 1 | Read-only access to your fonts, icons and themes |
 | `userns` | 1 | Lets the app create its own sandbox (Electron/Chromium need this); `0` needs bubblewrap 0.8+ |
+| `tmp_home` | 0 | The private home is a temporary filesystem, erased when the app closes. Shared folders are not affected |
+| `privacy` | 0 | Minimal `/etc/passwd`, `/etc/group` and `/etc/hosts` (no real name) and the hostname `ajail` |
+| `harden` | 0 | Also blocks `io_uring_*`, `userfaultfd`, `process_vm_readv/writev` and `kcmp`. Can slow down or break some apps |
+
+Limits use the same files; `0` means no limit, and they need `systemd-run --user` (without it the app runs unlimited, with a warning):
+
+```ini
+mem_max=2048     # memory in MB
+cpu_max=150      # percent of one CPU core
+tasks_max=300    # processes and threads
+```
 
 List keys:
 
@@ -139,6 +153,8 @@ talk=org.gnome.SessionManager    # extra D-Bus name the app may talk to
 `xdg` kinds: `download`, `documents`, `pictures`, `music`, `videos`, `desktop`.
 
 Shared paths must be non-hidden items inside your home, or live under `/mnt/`, `/media/` or `/run/media/$USER/`. Anything else is skipped with a warning.
+
+To start over, press **Reset all settings…** on the main page of `ajail-gui`. It clears `default.conf` and `ui.conf` (the default permissions, the ask-before-opening setting and every app's remembered choices). Each app's own permissions and data are kept; those have their own **Reset** buttons on the app's page.
 
 ## Self-test
 
@@ -166,4 +182,4 @@ If an app fails within 10 seconds of starting, ajail sends a notification that o
 
 ## Limitations
 
-This is a convenience layer over bubblewrap, not a security guarantee. Compressed installs (experimental) read the AppImage outside the sandbox. Enabling `x11`, `ssh_agent`, `input` or broad folder shares weakens isolation, and `net` gives the app your network. Check the result with the self-test or `ajail preview NAME`.
+This is a convenience layer over bubblewrap, not a security guarantee. **Keep localhost private** hides services on this computer but does not block your local network or the internet, and it relies on the `pasta` command line options listed in the source; test it with the self-test (`Host services visible` should show an isolated network) and report problems. The resource limits protect your session, not your privacy, and are skipped if systemd is unavailable. Compressed installs (experimental) read the AppImage outside the sandbox. Enabling `x11`, `ssh_agent`, `input` or broad folder shares weakens isolation, and `net` gives the app your network. Check the result with the self-test or `ajail preview NAME`.

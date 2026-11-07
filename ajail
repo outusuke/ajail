@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # ajail - run AppImages in a bubblewrap sandbox with a persistent private home
-import errno, fcntl, glob, json, os, platform, pwd, re, select, shlex, shutil, signal, struct, subprocess
+import errno, fcntl, glob, grp, json, os, platform, pwd, re, select, shlex, shutil, signal, struct, subprocess
 import sys, tempfile, threading, time, urllib.parse
 
 _pw     = pwd.getpwuid(os.getuid())
@@ -27,7 +27,10 @@ ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch
 
 # Permission defaults. Keep in sync with DEFAULTS in ajail-gui.
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
-            "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1}
+            "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
+            "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0}
+# Numeric limits (0 = no limit): memory in MB, CPU in % of one core, number of processes.
+NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk")
 XDG_DEFAULT = {"download": "Downloads", "documents": "Documents", "pictures": "Pictures",
                "music": "Music", "videos": "Videos", "desktop": "Desktop"}
@@ -37,7 +40,10 @@ OUTSIDE = ("/mnt/", "/media/", f"/run/media/{USER}/")
 # keyctl request_key move_pages mbind get_mempolicy set_mempolicy migrate_pages open_by_handle_at name_to_handle_at
 SYSCALLS_X86_64 = [246, 320, 298, 321, 103, 134, 163, 179, 248, 250, 249, 279, 237, 239, 238, 256, 304, 303]
 SYSCALLS_AARCH64 = [104, 294, 241, 280, 116, 89, 60, 217, 219, 218, 239, 235, 236, 237, 238, 265, 264]
-LEGACY_FLAGS = {"--net=none": ("net", 0), "--nosound": ("sound", 0), "--no3d": ("gpu", 0), "--x11": ("x11", 1)}
+# Extra blocked syscalls with "Block extra system calls" (harden): io_uring_setup io_uring_enter io_uring_register
+# userfaultfd process_vm_readv process_vm_writev kcmp
+SYSCALLS_EXTRA = {"x86_64": [425, 426, 427, 323, 310, 311, 312], "aarch64": [425, 426, 427, 282, 270, 271, 272]}
+LEGACY_FLAGS ={"--net=none": ("net", 0), "--nosound": ("sound", 0), "--no3d": ("gpu", 0), "--x11": ("x11", 1)}
 
 # Install hints in error messages. Only families where the packages ajail asks for (bubblewrap, squashfs-tools,
 # xdg-dbus-proxy, squashfuse, fuse3) have the same names are listed; anywhere else gets a generic hint.
@@ -62,6 +68,9 @@ def install_hint(*pkgs):
     fam = distro_family()
     if fam not in INSTALL_CMD: return "install " + ", ".join(pkgs) + " with your package manager"
     return f"{INSTALL_CMD[fam]} " + " ".join(pkgs)
+
+# Control characters (C0 except tab/newline, DEL and C1) are stripped from app output before it reaches a terminal or the log.
+CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 def die(msg, code=1):
     print(f"ajail: {msg}", file=sys.stderr); sys.exit(code)
@@ -155,6 +164,7 @@ def parse_cfg(path):
         k, _, v = ln.partition("=")
         if k in LISTS and v: d[k].append(v)
         elif k in DEFAULTS and v in ("0", "1"): d["s"][k] = int(v)
+        elif k in NUM and v.isdigit(): d["s"][k] = min(int(v), 10**7)
         elif k == "profile" and v == "strict": d["s"].update(net=0, sound=0)
         elif k == "flag":
             if v in LEGACY_FLAGS: d["s"][LEGACY_FLAGS[v][0]] = LEGACY_FLAGS[v][1]
@@ -165,7 +175,7 @@ def load_cfg(name):
     """Built-in defaults < default.conf < apps/NAME.conf. Lists add up, except xdg (per folder)."""
     g = parse_cfg(f"{CONF}/default.conf") or empty_cfg()
     a = parse_cfg(f"{CONF}/apps/{name}.conf") or empty_cfg()
-    cfg = {**DEFAULTS, **g["s"], **a["s"]}
+    cfg = {**DEFAULTS, **NUM, **g["s"], **a["s"]}
     for k in ("allow", "allow_ro", "env", "talk"):
         cfg[k] = list(dict.fromkeys(g[k] + a[k]))
     xd = {}
@@ -204,18 +214,21 @@ def bwrap_has(opt):
 BASE = ["--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
         "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin"]
 
-def seccomp_file():
+def seccomp_file(harden=False):
     """Syscall blocklist (like Flatpak's), generated as a raw BPF program. No extra packages needed."""
     arch = {"x86_64": (0xC000003E, SYSCALLS_X86_64), "aarch64": (0xC00000B7, SYSCALLS_AARCH64)}.get(platform.machine())
     if not arch:
         return None
     audit, nrs = arch
+    if harden: nrs = nrs + SYSCALLS_EXTRA[platform.machine()]
     deny = 0x00050000 | errno.EPERM
     ins = [(0x20, 0, 0, 4),                    # load arch
            (0x15, 1, 0, audit),                # native arch? skip the next instruction
            (0x06, 0, 0, deny),                 # other ABI (32-bit/x32): deny
            (0x20, 0, 0, 0)]                    # load syscall number
     n = len(nrs)
+    # x32 calls share the x86_64 audit arch and only differ by bit 30 of the number: deny them all (skips the list + allow)
+    ins += [(0x35, n + 1, 0, 0x40000000)]                       # number >= 0x40000000: jump to deny
     ins += [(0x15, n - i, 0, nr) for i, nr in enumerate(nrs)]   # listed syscall: jump to deny
     ins += [(0x06, 0, 0, 0x7FFF0000), (0x06, 0, 0, deny)]       # allow, deny
     try:
@@ -274,18 +287,123 @@ def stop_bus(b):
     try: os.unlink(sock)
     except OSError: pass
 
-def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=()):
+def private_net(cfg):
+    """'Keep localhost private': the app gets its own network (via pasta) that reaches the internet but not this computer."""
+    return bool(cfg["net"] and cfg["net_private"])
+
+# pasta gives the sandbox its own network namespace. Nothing is forwarded in either direction, the gateway address is
+# not mapped to this computer (--no-map-gw), and DNS goes through a forwarder address that pasta answers itself.
+DNS_FWD = "169.254.1.1"
+PASTA = ["pasta", "--quiet", "--config-net", "--no-map-gw", "--dns-forward", DNS_FWD,
+         "-t", "none", "-u", "none", "-T", "none", "-U", "none", "--"]
+SEC_FD = 9      # pasta closes inherited descriptors, so the seccomp filter is re-opened from a file inside it
+
+def net_wrap(inner, secpath=None):
+    if secpath:
+        return PASTA + ["/bin/sh", "-c", f'exec {SEC_FD}<"$1"; shift; exec "$@"', "sh", secpath] + inner
+    return PASTA + inner
+
+def work_dir():
+    return f"{runtime_dir()}/ajail/{os.getpid()}.d"
+
+def make_files(cfg, d):
+    """Files bound over /etc for this run: minimal passwd/group/hosts (privacy) and a resolv.conf for private net."""
+    out = {}
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    def put(n, text):
+        with open(f"{d}/{n}", "w") as f: f.write(text)
+        out[n] = f"{d}/{n}"
+    if cfg["privacy"]:
+        gid = os.getgid()
+        try: gname = grp.getgrgid(gid).gr_name
+        except KeyError: gname = USER
+        put("passwd", f"root:x:0:0:root:/root:/usr/sbin/nologin\n{USER}:x:{os.getuid()}:{gid}::{HOME}:"
+                      f"{_pw.pw_shell or '/bin/sh'}\nnobody:x:65534:65534:Nobody:/:/usr/sbin/nologin\n")
+        put("group", f"root:x:0:\n{gname}:x:{gid}:\nnogroup:x:65534:\n")
+        put("hosts", "127.0.0.1 localhost\n::1 localhost\n")
+    if private_net(cfg):
+        put("resolv.conf", f"nameserver {DNS_FWD}\n")
+    return out
+
+def preview_files(cfg):
+    d = f"{runtime_dir()}/ajail/PID.d"
+    n = (["passwd", "group", "hosts"] if cfg["privacy"] else []) + (["resolv.conf"] if private_net(cfg) else [])
+    return {x: f"{d}/{x}" for x in n}
+
+def limit_props(cfg):
+    props = []
+    if cfg["mem_max"]: props += ["-p", f"MemoryMax={cfg['mem_max']}M"]
+    if cfg["cpu_max"]: props += ["-p", f"CPUQuota={cfg['cpu_max']}%"]
+    if cfg["tasks_max"]: props += ["-p", f"TasksMax={cfg['tasks_max']}"]
+    return props
+
+def limit_prefix(cfg, name):
+    """systemd-run --user --scope wrapper that applies the memory, CPU and process limits. Without systemd the app
+    still runs, just without limits (a warning is shown): limits protect your session, they are not a privacy boundary."""
+    props = limit_props(cfg)
+    if not props: return []
+    sr = shutil.which("systemd-run")
+    ok = False
+    if sr:
+        probe = [sr, "--user", "--scope", "--quiet"] + props + ["--", "/usr/bin/true"]
+        try: ok = subprocess.run(probe, capture_output=True, timeout=10).returncode == 0
+        except Exception: ok = False
+    if not ok:
+        print("ajail: resource limits are not available here (needs systemd --user with cgroups); running without them",
+              file=sys.stderr)
+        log("resource limits unavailable", name)
+        return []
+    return [sr, "--user", "--scope", "--quiet", f"--unit=ajail-{name}-{os.getpid()}"] + props + ["--"]
+
+def sweep_runtime():
+    """Remove per-run files and sockets left behind by ajail processes that died."""
+    d = f"{runtime_dir()}/ajail"
+    try: entries = os.listdir(d)
+    except OSError: return
+    for e in entries:
+        pid = e.split(".", 1)[0]
+        if not pid.isdigit() or os.path.exists(f"/proc/{pid}"): continue
+        p = f"{d}/{e}"
+        if os.path.isdir(p) and not os.path.islink(p): shutil.rmtree(p, ignore_errors=True)
+        elif e.endswith(".bus"):
+            try: os.unlink(p)
+            except OSError: pass
+
+def scoped_xauth(src, disp):
+    """A copy of the XAUTHORITY file holding only the cookie for DISPLAY, or None (then the full file is used)."""
+    d = work_dir()
+    if not os.path.isdir(d) or not shutil.which("xauth"):
+        return None
+    dst = f"{d}/Xauthority"
+    try:
+        r = subprocess.run(["xauth", "-f", src, "nextract", "-", disp], capture_output=True, timeout=5)
+        if r.returncode or not r.stdout: return None
+        subprocess.run(["xauth", "-f", dst, "nmerge", "-"], input=r.stdout, capture_output=True, timeout=5)
+        os.chmod(dst, 0o600)
+        return dst if os.path.getsize(dst) else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None):
     rt = runtime_dir()
     a = ["bwrap", "--unshare-all", "--die-with-parent", "--new-session", "--clearenv"]
     if not cfg["userns"]:
         if bwrap_has("--disable-userns"): a.append("--disable-userns")
         else: print("ajail: this bubblewrap is too old for --disable-userns; ignoring", file=sys.stderr)
+    if cfg["privacy"]:
+        if bwrap_has("--hostname"): a += ["--hostname", "ajail"]
+        else: print("ajail: this bubblewrap is too old for --hostname; the computer name stays visible", file=sys.stderr)
+    if private_net(cfg):
+        a += ["--uid", str(os.getuid()), "--gid", str(os.getgid())]     # keep your own ids inside pasta's namespace
     if cfg["net"]: a.append("--share-net")
     if sec is not None: a += ["--seccomp", str(sec)]
     a += BASE + ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/run",
                  "--dir", "/var", "--symlink", "../tmp", "/var/tmp", "--perms", "0700", "--dir", rt]
+    gen = gen or {}
     for p in ETC:
-        a += ["--ro-bind-try", f"/etc/{p}", f"/etc/{p}"]
+        if p not in gen: a += ["--ro-bind-try", f"/etc/{p}", f"/etc/{p}"]
+    for n, src in gen.items():
+        a += ["--ro-bind", src, f"/etc/{n}"]
     env = {"HOME": HOME, "USER": USER, "LOGNAME": USER, "PATH": "/usr/local/bin:/usr/bin:/usr/sbin",
            "XDG_RUNTIME_DIR": rt, "APPDIR": "/app", "AJAIL_ACTIVE": "1",
            "ELECTRON_OZONE_PLATFORM_HINT": "auto" if cfg["x11"] else "wayland"}
@@ -303,7 +421,8 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=()):
             a += ["--ro-bind-try", sock, sock]; env["DISPLAY"] = disp
         xa = os.environ.get("XAUTHORITY")
         if xa and os.path.isfile(xa):
-            a += ["--ro-bind", xa, xa]; env["XAUTHORITY"] = xa
+            # Only this display's cookie is shared, not every cookie in the file (those can include remote displays).
+            a += ["--ro-bind", scoped_xauth(xa, disp) or xa, xa]; env["XAUTHORITY"] = xa
     if cfg["sound"]:
         for s in ("pipewire-0", "pulse/native"):
             a += ["--ro-bind-try", f"{rt}/{s}", f"{rt}/{s}"]
@@ -330,7 +449,9 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=()):
     if bus:
         a += ["--ro-bind", bus, f"{rt}/bus"]
         env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={rt}/bus"
-    a += ["--ro-bind", root, "/app", "--bind", f"{HOMES}/{name}", HOME]
+    a += ["--ro-bind", root, "/app"]
+    if cfg["tmp_home"]: a += ["--perms", "0700", "--tmpfs", HOME]      # erased when the app closes
+    else: a += ["--bind", f"{HOMES}/{name}", HOME]
     if cfg["theme"]:
         for rel in THEME:
             a += ["--ro-bind-try", f"{HOME}/{rel}", f"{HOME}/{rel}"]
@@ -408,9 +529,12 @@ def check_identity(name, root):
     a different app that merely has the same file name (it would inherit data and permissions)."""
     ident = ""
     try:
-        for f in sorted(glob.glob(f"{root}/*.desktop"))[:1]:
-            m = re.search(r"^Name=(.+)$", open(f, errors="replace").read(), re.M)
-            ident = m.group(1).strip() if m else ""
+        for f in sorted(glob.glob(f"{glob.escape(root)}/*.desktop"))[:1]:
+            # Hostile content: stay inside the app, regular files only, and read a bounded amount.
+            if not inside(root, f) or not os.path.isfile(f): continue
+            with open(f, errors="replace") as fh: text = fh.read(65536)
+            m = re.search(r"^Name=(.+)$", text, re.M)
+            ident = CTRL.sub("", m.group(1)).strip() if m else ""
     except OSError:
         pass
     if not ident: return
@@ -479,15 +603,29 @@ def launch(name, root, cfg, extra, source=None, once=False):
     if source:
         try: open(f"{SOURCES}/{name}", "w").write(source)
         except OSError: pass
+    priv = private_net(cfg)
+    if priv and not shutil.which("pasta"):
+        die("'Keep localhost private' needs pasta: " + install_hint("passt") + ". Or turn that option off for this app.")
+    sweep_runtime()
     bus = start_bus(cfg, name)
-    sec = seccomp_file()
-    cmd = bwrap_args(name, root, cfg, ["/app/AppRun"] + extra, bus[2] if bus else None,
-                     sec.fileno() if sec else None, forward_files(extra))
+    sec = seccomp_file(cfg["harden"])
+    wd, gen, secpath = None, {}, None
+    if cfg["privacy"] or priv or cfg["x11"]:
+        wd = work_dir(); gen = make_files(cfg, wd)
+    if priv and sec:
+        secpath = f"{wd}/seccomp.bpf"
+        sec.seek(0)
+        with open(secpath, "wb") as f: f.write(sec.read())
+    secfd = (SEC_FD if secpath else None) if priv else (sec.fileno() if sec else None)
+    inner = bwrap_args(name, root, cfg, ["/app/AppRun"] + extra, bus[2] if bus else None,
+                       secfd, forward_files(extra), gen)
+    cmd = limit_prefix(cfg, name) + (net_wrap(inner, secpath) if priv else inner)
     on = ",".join(k for k in DEFAULTS if cfg[k])
-    log(f"START allow=[{on}] seccomp={'on' if sec else 'off'} dbus={'on' if bus else 'off'}", name)
+    lim = ",".join(f"{k}={cfg[k]}" for k in NUM if cfg[k])
+    log(f"START allow=[{on}] limits=[{lim}] seccomp={'on' if sec else 'off'} dbus={'on' if bus else 'off'}", name)
     start = time.time()
     p = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True, errors="replace",
-                         pass_fds=[sec.fileno()] if sec else ())
+                         pass_fds=[sec.fileno()] if sec and not priv else ())
     pidfile = f"{RUNNING}/{os.getpid()}"
     open(pidfile, "w").write(name)
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
@@ -496,6 +634,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
         try:
             with open(LOG, "a") as lf:
                 for line in p.stderr:
+                    line = CTRL.sub("", line)     # an app must not inject terminal escape sequences (OSC 52 etc.)
                     try: sys.stderr.write(line); sys.stderr.flush()
                     except Exception: pass
                     lf.write(f"[{name}] {line}"); lf.flush()
@@ -504,6 +643,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
     t = threading.Thread(target=tee, daemon=True); t.start()
     rc = p.wait(); t.join(2)
     stop_bus(bus)
+    if wd: shutil.rmtree(wd, ignore_errors=True)
     try: os.unlink(pidfile)
     except OSError: pass
     if once and not running(name): rm_tree(f"{EXTRACT}/{name}")
@@ -579,10 +719,17 @@ def installed_stamp(name):
     try: return open(f"{INSTALLED}/{name}/stamp").read()
     except OSError: return None
 
+def live_ajail(pid):
+    """True if this PID is really an ajail process (a stale pid file may point at a reused PID)."""
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f: return b"ajail" in f.read()
+    except OSError:
+        return False
+
 def running(name):
     try:
         return [f for f in os.listdir(RUNNING)
-                if f.isdigit() and os.path.exists(f"/proc/{f}") and open(f"{RUNNING}/{f}").read().strip() == name]
+                if f.isdigit() and live_ajail(f) and open(f"{RUNNING}/{f}").read().strip() == name]
     except OSError:
         return []
 
@@ -593,7 +740,9 @@ def read_desktop(root):
     keep, icon = [], None
     for f in sorted(glob.glob(f"{glob.escape(root)}/*.desktop"))[:1]:
         if not inside(root, f): continue
-        try: text = open(f, errors="replace").read()
+        if not os.path.isfile(f): continue          # no FIFOs or devices
+        try:
+            with open(f, errors="replace") as fh: text = fh.read(65536)
         except OSError: continue
         for ln in text.splitlines():
             ln = ln.strip()
@@ -809,6 +958,13 @@ def cmd_check():
     yes(seccomp_file(), "seccomp filter available", "seccomp filter not available on this CPU architecture")
     yes(bwrap_has("--disable-userns"), "bubblewrap supports disabling nested sandboxes",
         "bubblewrap too old for 'Allow the app's own sandbox = off'")
+    yes(bwrap_has("--hostname"), "bubblewrap can hide the computer name", "bubblewrap too old for 'Hide personal details' to hide the computer name")
+    yes(shutil.which("pasta"), "pasta installed ('Keep localhost private' available)",
+        "pasta missing, so 'Keep localhost private' cannot be used: " + install_hint("passt"))
+    sr = shutil.which("systemd-run")
+    lim = bool(sr) and subprocess.run([sr, "--user", "--scope", "--quiet", "-p", "TasksMax=infinity", "--", "/usr/bin/true"],
+                                      capture_output=True).returncode == 0
+    yes(lim, "resource limits available (systemd --user)", "resource limits unavailable: needs systemd --user with cgroups")
     on = os.path.exists(f"{BM}/appimage-jail")
     line("OK" if on else "INFO", "forcing is ON" if on else "forcing is OFF")
     try:
@@ -830,7 +986,12 @@ def cmd_preview(n):
     root = f"{INSTALLED}/{name}/root"
     if installed_kind(name) == "mount": root = f"{MOUNTS}/{name}"
     elif not os.path.isdir(root): root = f"{EXTRACT}/{name}/root"
-    print(shlex.join(bwrap_args(name, root, cfg, ["/app/AppRun"], bus)))
+    priv = private_net(cfg)
+    cmd = bwrap_args(name, root, cfg, ["/app/AppRun"], bus, SEC_FD if priv else None, (), preview_files(cfg))
+    if priv: cmd = net_wrap(cmd, f"{runtime_dir()}/ajail/PID.d/seccomp.bpf")
+    props = limit_props(cfg)
+    if props: cmd = ["systemd-run", "--user", "--scope", "--quiet"] + props + ["--"] + cmd
+    print(shlex.join(cmd))
 
 def cmd_dump(arg):
     """JSON of the raw settings, for ajail-gui."""

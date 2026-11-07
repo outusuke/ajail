@@ -55,10 +55,11 @@ row("INFO", "/sys/devices entries", ", ".join(sorted(os.listdir("/sys/devices"))
 
 # A folder only counts as shared if it is a mount point. An empty folder can be left over in the private
 # home from when the share was on (bwrap creates it as the mount point), and that is not the real folder.
-mounts = set()
+mounts, fstypes = set(), {}
 try:
     for ln in open("/proc/self/mountinfo"):
-        mounts.add(ln.split()[4].replace("\\040", " "))
+        p = ln.split(); mp = p[4].replace("\\040", " "); mounts.add(mp)
+        if "-" in p: fstypes[mp] = p[p.index("-") + 1]
 except OSError: pass
 for k in ("Downloads", "Documents", "Pictures", "Music", "Videos", "Desktop"):
     p = f"{H}/{k}"
@@ -73,6 +74,11 @@ for k in (".ssh", ".gnupg", ".config", ".mozilla", ".aws"):
 try: names = sorted(n for n in os.listdir(H) if not n.startswith("."))
 except OSError: names = []
 row("INFO", "Visible in ~ (non-hidden)", ", ".join(names) or "nothing (private home only)")
+row("INFO", "Home storage", "temporary (tmpfs, erased on exit)" if fstypes.get(H) == "tmpfs" else "persistent private home")
+try: gecos = next(l.split(":")[4] for l in open("/etc/passwd") if l.split(":")[0] == os.environ.get("USER", ""))
+except Exception: gecos = ""
+row("EXPOSED" if gecos.strip(",") else "hidden", "Real name in /etc/passwd", gecos[:30])
+row("INFO", "Computer name", socket.gethostname())
 row(yn(f"{H}/.local/share/fonts" in mounts or f"{H}/.fonts" in mounts), "Your fonts")
 for a in sys.argv[1:]:
     if os.path.exists(a):
@@ -126,6 +132,11 @@ if nr:
     libc.syscall(nr, None, 0, -1, -1, 0)
     e = ctypes.get_errno()
     row("ACTIVE" if e == 1 else "off", "seccomp filter", "perf_event_open returns EPERM" if e == 1 else f"perf_event_open errno={e}")
+if platform.machine() in ("x86_64", "aarch64"):
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall(425, 0, None)       # io_uring_setup, same number on both architectures
+    e = ctypes.get_errno()
+    row("ACTIVE" if e == 1 else "off", "Extra syscalls blocked", "io_uring_setup returns EPERM" if e == 1 else f"io_uring_setup errno={e}")
 rc, o = sh(["unshare", "-U", "true"]) if shutil.which("unshare") else (127, "unshare missing")
 row(yn(rc == 0), "Nested sandboxes (userns)", "" if rc == 0 else o[:60])
 

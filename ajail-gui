@@ -26,7 +26,9 @@ os.makedirs(APPS, exist_ok=True)
 
 # Keep in sync with DEFAULTS in ajail.
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
-            "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1}
+            "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
+            "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0}
+NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}      # 0 = no limit
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk")
 XDG = [("download", "Downloads"), ("documents", "Documents"), ("pictures", "Pictures"),
        ("music", "Music"), ("videos", "Videos"), ("desktop", "Desktop")]
@@ -37,6 +39,9 @@ SECTIONS = [
     ("What can this app use?",
      "Changes apply the next time the app starts. Everything else on your computer stays hidden from it.", [
         ("net", "Internet", "Network access. Also reaches localhost and your local network."),
+        ("net_private", "Keep localhost private",
+         "Internet only: the app can't reach services running on this computer (databases, dev servers). "
+         "Other devices on your local network are still reachable. Needs passt (pasta)."),
         ("sound", "Audio", "Play sound. Also allows microphone access."),
         ("x11", "X11 compatibility", "Only for apps that won't start otherwise. Weaker isolation."),
         ("printing", "Printing", "Talk to the print service (CUPS)"),
@@ -50,7 +55,13 @@ SECTIONS = [
         ("tray", "Tray icon and media keys", "Show a tray icon and answer media keys (needs xdg-dbus-proxy)"),
         ("theme", "Your fonts and themes", "Read-only access to your installed fonts, icons and themes")]),
     ("Hardening", None, [
-        ("userns", "Allow the app's own sandbox",
+        ("tmp_home", "Temporary home",
+         "Everything the app saves in its private home is erased when it closes. Shared folders are not affected."),
+        ("privacy", "Hide personal details",
+         "Hides your real name and the computer name from the app (minimal user list, hosts file and hostname)."),
+        ("harden", "Block extra system calls",
+         "Also blocks io_uring and a few other rarely needed calls. Can slow down or break some apps."),
+        ("userns","Allow the app's own sandbox",
          "Electron and Chromium apps need this. Turn off for stricter isolation (needs bubblewrap 0.8+).")]),
 ]
 
@@ -164,11 +175,19 @@ def app_names():
                     names.add(n)
     return sorted(names)
 
+def live_ajail(pid):
+    """True if this PID is really an ajail process, so a stale pid file never makes Stop signal a reused PID."""
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return b"ajail" in f.read()
+    except OSError:
+        return False
+
 def running_pids(name=None):
     out = {}
     if os.path.isdir(RUNNING):
         for f in os.listdir(RUNNING):
-            if f.isdigit() and os.path.exists(f"/proc/{f}"):
+            if f.isdigit() and live_ajail(f):
                 try:
                     n = open(f"{RUNNING}/{f}").read().strip()
                 except OSError:
@@ -258,7 +277,8 @@ class Win(Adw.ApplicationWindow):
         GLib.timeout_add_seconds(3, self.tick)
 
     def toast(self, msg):
-        self.toasts.add_toast(Adw.Toast(title=msg))
+        # Messages can contain text from an app's stderr, so never parse them as markup.
+        self.toasts.add_toast(Adw.Toast(title=msg, use_markup=False))
 
     def confirm(self, heading, body, label, cb):
         dlg = Adw.AlertDialog(heading=heading, body=body)
@@ -715,6 +735,54 @@ class Win(Adw.ApplicationWindow):
             for key, t, sub in items:
                 add_switch(g, key, t, sub)
             page.add(g)
+
+        def eff_num(k):
+            v = G["s"].get(k, 0)
+            if scope:
+                v = A["s"].get(k, v)
+            return int(v)
+
+        def default_num(k):
+            return int(G["s"].get(k, 0)) if scope else 0
+
+        limg = Adw.PreferencesGroup(
+            title="Resource limits",
+            description="0 means no limit. Keeps one app from using all your memory or CPU. "
+                        "Needs systemd (systemd-run --user); without it the app runs unlimited.")
+        for key, t, sub, upper, step in (
+                ("mem_max", "Memory limit (MB)", "The app can't use more memory than this.", 262144, 256),
+                ("cpu_max", "CPU limit (% of one core)", "100 is one full core, 400 is four.", 6400, 25),
+                ("tasks_max", "Process limit", "Most processes and threads the app may have at once.", 100000, 50)):
+            sp = Adw.SpinRow(title=t, subtitle=sub, adjustment=Gtk.Adjustment(
+                value=eff_num(key), lower=0, upper=upper, step_increment=step, page_increment=step * 10))
+            rb = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER,
+                            tooltip_text="Use the default" if scope else "Use the built-in default")
+            rb.add_css_class("flat")
+            sp.add_suffix(rb)
+
+            def on_spin(row, _p, key=key):
+                if syncing[0]:
+                    return
+                val = int(row.get_value())
+                if val == default_num(key):
+                    R["s"].pop(key, None)
+                else:
+                    R["s"][key] = val
+                commit()
+
+            def on_reset_num(_b, key=key, sp=sp):
+                R["s"].pop(key, None)
+                syncing[0] = True
+                sp.set_value(eff_num(key))
+                syncing[0] = False
+                commit()
+
+            sp.connect("notify::value", on_spin)
+            rb.connect("clicked", on_reset_num)
+            marks.append(lambda key=key, rb=rb: rb.set_visible(key in R["s"]))
+            rb.set_visible(key in R["s"])
+            limg.add(sp)
+        page.add(limg)
 
         def xmap(*srcs):
             m = {}
