@@ -13,6 +13,8 @@ CONF    = HOME + "/.config/ajail"
 APPS    = CONF + "/apps"
 HOMES   = HOME + "/.appimage-homes"
 EXTRACT = HOME + "/.local/share/ajail/extracted"
+INSTALLED = HOME + "/.local/share/ajail/apps"
+UICONF = CONF + "/ui.conf"
 STATE   = HOME + "/.local/state/ajail"
 RUNNING = STATE + "/running"
 SOURCES = STATE + "/sources"
@@ -110,9 +112,24 @@ def path_ok(p):
         return None if p[len(HOME) + 1:].split("/")[0].startswith(".") else p
     return p if any(p.startswith(b) for b in OUTSIDE) else None
 
+def get_open_mode():
+    try:
+        for ln in open(UICONF):
+            k, _, v = ln.strip().partition("=")
+            if k == "open_mode" and v in ("ask", "run"):
+                return v
+    except OSError:
+        pass
+    return "ask"
+
+def set_open_mode(v):
+    os.makedirs(CONF, exist_ok=True)
+    with open(UICONF, "w") as f:
+        f.write(f"open_mode={v}\n")
+
 def app_names():
     names = set()
-    for d, ext in ((APPS, ".conf"), (HOMES, "")):
+    for d, ext in ((APPS, ".conf"), (HOMES, ""), (INSTALLED, "")):
         if os.path.isdir(d):
             for f in os.listdir(d):
                 n = f[:-len(ext)] if ext and f.endswith(ext) else f
@@ -190,6 +207,12 @@ class Win(Adw.ApplicationWindow):
         self.force.set_active(os.path.exists(RULE))
         self.force.connect("notify::active", self.on_force)
         g.add(self.force)
+        self.ask = Adw.SwitchRow(
+            title="Ask before opening a new AppImage",
+            subtitle="Offers Install or Run once when you double-click one. Needs Sandbox every AppImage.")
+        self.ask.set_active(get_open_mode() == "ask")
+        self.ask.connect("notify::active", lambda r, _p: set_open_mode("ask" if r.get_active() else "run"))
+        g.add(self.ask)
         page.add(g)
 
         self.apps_group = Adw.PreferencesGroup(title="Apps")
@@ -285,16 +308,85 @@ class Win(Adw.ApplicationWindow):
                 f = d.open_finish(res)
             except GLib.Error:
                 return
-            name = run([SELF, "name", f.get_path()]).stdout.strip()
-            if not NAME_RE.match(name):
-                self.toast("Could not read that file. Is ajail installed?")
-                return
-            if not os.path.exists(path_for(name)):
-                write_cfg(name, empty())
-            self.fill_apps()
-            self.open_app(name)
+            self.offer_install(f.get_path())
 
         dlg.open(self, None, cb)
+
+    def offer_install(self, path, quit_on_close=False):
+        name = run([SELF, "name", path]).stdout.strip()
+        if not NAME_RE.match(name):
+            self.toast("Could not read that file. Is ajail installed?")
+            return
+        d = dump(name)
+        update = os.path.isdir(f"{INSTALLED}/{name}/root")
+        dlg = Adw.AlertDialog(
+            heading=f"{'Update' if update else 'Install'} {name}?",
+            body=f"It runs sandboxed and is added to your app menu. Allowed: {summary(d['global'], d.get('app'))}.")
+        trash = Gtk.CheckButton(label="Move the AppImage to the Trash afterwards", active=True)
+        dlg.set_extra_child(trash)
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("once", "Run once")
+        dlg.add_response("install", "Update" if update else "Install")
+        dlg.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_default_response("install")
+        dlg.set_close_response("cancel")
+
+        def done(_d, r):
+            if r == "install":
+                self.install_file(path, trash.get_active(), lambda: self.open_app(name))
+                return
+            if r == "once":
+                subprocess.Popen([SELF, "run-file", "--once", path], start_new_session=True)
+            if quit_on_close:
+                self.get_application().quit()
+
+        dlg.connect("response", done)
+        self.dialog = dlg
+        dlg.present(self)
+
+    def install_file(self, path, trash=False, then=None):
+        self.toast("Installing…")
+
+        def work():
+            r = run([SELF, "install", path] + (["--trash"] if trash else []))
+            GLib.idle_add(done, r)
+
+        def done(r):
+            if r.returncode:
+                self.toast(((r.stderr or r.stdout).strip().splitlines() or ["Install failed"])[-1][:120])
+            else:
+                self.toast("Installed")
+                self.fill_apps()
+                if then:
+                    then()
+            return False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def uninstall(self, scope):
+        dlg = Adw.AlertDialog(heading=f"Uninstall {scope}?",
+                              body="It is removed from your app menu. Keep its saved data in case you reinstall it?")
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("keep", "Keep data")
+        dlg.add_response("purge", "Delete data too")
+        dlg.set_response_appearance("purge", Adw.ResponseAppearance.DESTRUCTIVE)
+        dlg.set_default_response("cancel")
+        dlg.set_close_response("cancel")
+
+        def done(_d, r):
+            if r == "cancel":
+                return
+            res = run([SELF, "uninstall", scope] + (["--purge"] if r == "purge" else []))
+            if res.returncode:
+                self.toast(((res.stderr or res.stdout).strip().splitlines() or ["Uninstall failed"])[-1][:120])
+                return
+            self.nav.pop()
+            self.fill_apps()
+            self.toast("Uninstalled")
+
+        dlg.connect("response", done)
+        self.dialog = dlg
+        dlg.present(self)
 
     def open_app(self, scope):
         d = dump(scope or "")
@@ -340,9 +432,15 @@ class Win(Adw.ApplicationWindow):
                 src = open(f"{SOURCES}/{scope}").read().strip()
             except OSError:
                 src = ""
-            arow = Adw.ActionRow(title="AppImage file", subtitle=esc(src or "Unknown until the first launch"))
-            launch = Gtk.Button(label="Launch", valign=Gtk.Align.CENTER, sensitive=bool(src and os.path.isfile(src)))
-            launch.connect("clicked", lambda *_: subprocess.Popen([SELF, src], start_new_session=True))
+            inst = os.path.isdir(f"{INSTALLED}/{scope}/root")
+            if inst:
+                arow = Adw.ActionRow(title="Installed", subtitle="In your app menu. The AppImage file is no longer needed.")
+                launch = Gtk.Button(label="Launch", valign=Gtk.Align.CENTER)
+                launch.connect("clicked", lambda *_: subprocess.Popen([SELF, "run", scope], start_new_session=True))
+            else:
+                arow = Adw.ActionRow(title="AppImage file", subtitle=esc(src or "Unknown until the first launch"))
+                launch = Gtk.Button(label="Launch", valign=Gtk.Align.CENTER, sensitive=bool(src and os.path.isfile(src)))
+                launch.connect("clicked", lambda *_: subprocess.Popen([SELF, "run-file", src], start_new_session=True))
             stop = Gtk.Button(label="Stop", valign=Gtk.Align.CENTER)
 
             def do_stop(*_):
@@ -359,6 +457,20 @@ class Win(Adw.ApplicationWindow):
             for b in (logb, stop, launch):
                 arow.add_suffix(b)
             ag.add(arow)
+            if inst:
+                mrow = Adw.ActionRow(title="Remove from app menu",
+                                     subtitle="Deletes the installed copy. You choose whether to keep the app data.")
+                mb = Gtk.Button(label="Uninstall…", valign=Gtk.Align.CENTER)
+                mb.add_css_class("destructive-action")
+                mb.connect("clicked", lambda *_: self.uninstall(scope))
+            else:
+                mrow = Adw.ActionRow(title="Add to app menu",
+                                     subtitle="Keeps an unpacked copy, so the AppImage file can be deleted.")
+                mb = Gtk.Button(label="Install", valign=Gtk.Align.CENTER, sensitive=bool(src and os.path.isfile(src)))
+                mb.connect("clicked", lambda *_: self.install_file(
+                    src, False, lambda: (self.nav.pop(), self.open_app(scope))))
+            mrow.add_suffix(mb)
+            ag.add(mrow)
             page.add(ag)
 
         def add_switch(g, key, t, sub):
@@ -574,18 +686,19 @@ class Win(Adw.ApplicationWindow):
             data_row.add_suffix(resetb)
             dg.add(data_row)
 
-            ext_row = Adw.ActionRow(title="Extracted copy",
-                                    subtitle=dir_size(ext_dir) + " · rebuilt on next launch if removed")
-            clearb = Gtk.Button(label="Clear", valign=Gtk.Align.CENTER)
+            if not inst or os.path.isdir(ext_dir):
+                ext_row = Adw.ActionRow(title="Extracted copy",
+                                        subtitle=dir_size(ext_dir) + " · rebuilt on next launch if removed")
+                clearb = Gtk.Button(label="Clear", valign=Gtk.Align.CENTER)
 
-            def do_clear():
-                if os.path.isdir(ext_dir) and not os.path.islink(ext_dir):
-                    shutil.rmtree(ext_dir, ignore_errors=True)
-                ext_row.set_subtitle(dir_size(ext_dir) + " · rebuilt on next launch if removed")
+                def do_clear():
+                    if os.path.isdir(ext_dir) and not os.path.islink(ext_dir):
+                        shutil.rmtree(ext_dir, ignore_errors=True)
+                    ext_row.set_subtitle(dir_size(ext_dir) + " · rebuilt on next launch if removed")
 
-            clearb.connect("clicked", lambda *_: do_clear())
-            ext_row.add_suffix(clearb)
-            dg.add(ext_row)
+                clearb.connect("clicked", lambda *_: do_clear())
+                ext_row.add_suffix(clearb)
+                dg.add(ext_row)
             page.add(dg)
 
         tg = Adw.PreferencesGroup()
@@ -664,16 +777,19 @@ class Win(Adw.ApplicationWindow):
 
 
 class App(Adw.Application):
-    def __init__(self, log=None):
-        kw = {"flags": Gio.ApplicationFlags.NON_UNIQUE} if log is not None else {}
+    def __init__(self, log=None, install=None):
+        kw = {"flags": Gio.ApplicationFlags.NON_UNIQUE} if (log is not None or install) else {}
         super().__init__(application_id="org.ajail.Gui", **kw)
         self.log_scope = log
+        self.install_path = install
 
     def do_activate(self):
         first = self.props.active_window is None
         win = self.props.active_window or Win(self)
         win.present()
-        if first and self.log_scope is not None:
+        if first and self.install_path:
+            win.offer_install(self.install_path, quit_on_close=True)
+        elif first and self.log_scope is not None:
             win.open_trouble(self.log_scope or None)
 
 
@@ -683,4 +799,10 @@ if "--log" in argv:                      # ajail-gui --log [NAME]  opens the log
     nxt = argv[i + 1] if i + 1 < len(argv) else ""
     log = nxt if NAME_RE.match(nxt) else ""
     del argv[i:i + (2 if log else 1)]
-sys.exit(App(log).run(argv))
+inst = None
+if "--install" in argv:                  # ajail-gui --install FILE  offers Install or Run once
+    i = argv.index("--install")
+    if i + 1 < len(argv) and os.path.isfile(argv[i + 1]):
+        inst = os.path.realpath(argv[i + 1])
+    del argv[i:i + 2]
+sys.exit(App(log, inst).run(argv))

@@ -17,6 +17,9 @@ SELF    = "/usr/local/bin/ajail"
 BM      = "/proc/sys/fs/binfmt_misc"
 RULE    = r":appimage-jail:M:8:AI\x02::/usr/local/bin/ajail:"
 UNSQ    = "/usr/bin/unsquashfs"
+INSTALLED    = f"{HOME}/.local/share/ajail/apps"
+APPLICATIONS = f"{HOME}/.local/share/applications"
+ICONS        = f"{HOME}/.local/share/icons/hicolor"
 ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch.conf", "hosts",
        "resolv.conf", "localtime", "os-release", "fonts", "ssl", "pki", "crypto-policies",
        "alternatives", "vulkan", "drirc", "mime.types", "protocols", "services"]
@@ -399,25 +402,43 @@ def check_identity(name, root):
             f"It would share that app's private data and permissions. Rename the file, or delete {p} "
             f"if it really is the same app.")
 
-def run_app(arg, extra):
+def guard():
     if os.geteuid() == 0: die("refusing to run apps as root")
     if os.environ.get("AJAIL_ACTIVE"): die("recursion detected, aborting. Run: ajail off")
     if not shutil.which("bwrap"): die("bubblewrap missing: sudo dnf install bubblewrap")
+
+def check_display(cfg):
+    if not cfg["x11"] and not wayland_path():
+        die("no Wayland session found. Enable 'X11 compatibility' for this app in ajail-gui.")
+
+def run_app(arg, extra, once=False):
+    guard()
     app = os.path.realpath(arg)
     if not os.path.isfile(app): die(f"not a file: {arg}")
     off = appimage_offset(app)
     name = sanitize(app)
     cfg = load_cfg(name)
-    if not cfg["x11"] and not wayland_path():
-        die("no Wayland session found. Enable 'X11 compatibility' for this app in ajail-gui.")
-    root = ensure_extracted(app, name, off)
+    check_display(cfg)
+    launch(name, ensure_extracted(app, name, off), cfg, extra, source=app, once=once)
+
+def run_installed(name, extra):
+    guard()
+    name = clean(name)
+    root = f"{INSTALLED}/{name}/root"
+    if not os.path.isdir(root): die(f"'{name}' is not installed")
+    cfg = load_cfg(name)
+    check_display(cfg)
+    launch(name, root, cfg, extra)
+
+def launch(name, root, cfg, extra, source=None, once=False):
     if not os.path.lexists(f"{root}/AppRun"): die("no AppRun found inside this AppImage")
     check_identity(name, root)
     os.makedirs(HOMES, mode=0o700, exist_ok=True)
     os.makedirs(f"{HOMES}/{name}", mode=0o700, exist_ok=True); os.chmod(f"{HOMES}/{name}", 0o700)
     os.makedirs(RUNNING, exist_ok=True); os.makedirs(SOURCES, exist_ok=True)
-    try: open(f"{SOURCES}/{name}", "w").write(app)
-    except OSError: pass
+    if source:
+        try: open(f"{SOURCES}/{name}", "w").write(source)
+        except OSError: pass
     bus = start_bus(cfg, name)
     sec = seccomp_file()
     cmd = bwrap_args(name, root, cfg, ["/app/AppRun"] + extra, bus[2] if bus else None,
@@ -445,10 +466,179 @@ def run_app(arg, extra):
     stop_bus(bus)
     try: os.unlink(pidfile)
     except OSError: pass
+    if once and not running(name): rm_tree(f"{EXTRACT}/{name}")
     log(f"EXIT code={rc}", name)
     if rc != 0 and time.time() - start < 10:
         notify_failure(name)
     sys.exit(rc)
+
+def inside(root, p):
+    r, q = os.path.realpath(root), os.path.realpath(p)
+    return q == r or q.startswith(r + "/")
+
+def rm_tree(p):
+    if os.path.isdir(p) and not os.path.islink(p): shutil.rmtree(p, ignore_errors=True)
+
+def file_stamp(path):
+    st = os.stat(path)
+    return f"{st.st_size}:{st.st_mtime_ns}"
+
+def installed_stamp(name):
+    try: return open(f"{INSTALLED}/{name}/stamp").read()
+    except OSError: return None
+
+def running(name):
+    try:
+        return [f for f in os.listdir(RUNNING)
+                if f.isdigit() and os.path.exists(f"/proc/{f}") and open(f"{RUNNING}/{f}").read().strip() == name]
+    except OSError:
+        return []
+
+DESKTOP_KEEP = re.compile(r"(Name|GenericName|Comment|Keywords)(\[[A-Za-z0-9_@.-]+\])?=|(Categories|MimeType|StartupWMClass)=")
+
+def read_desktop(root):
+    """Name, categories and the like from the app's own .desktop file. Exec and similar keys are never copied."""
+    keep, icon = [], None
+    for f in sorted(glob.glob(f"{glob.escape(root)}/*.desktop"))[:1]:
+        if not inside(root, f): continue
+        try: text = open(f, errors="replace").read()
+        except OSError: continue
+        for ln in text.splitlines():
+            ln = ln.strip()
+            if ln.startswith("["):
+                if ln != "[Desktop Entry]": break
+                continue
+            if any(ord(c) < 32 and c != "\t" for c in ln): continue
+            if ln.startswith("Icon="): icon = ln[5:]
+            elif DESKTOP_KEEP.match(ln): keep.append(ln)
+    return keep, icon
+
+def find_icon(root, icon):
+    """Best icon inside the extracted app as (path, extension, size dir), or None."""
+    r = glob.escape(root)
+    cands = [f"{root}/.DirIcon"]
+    if icon and re.fullmatch(r"[A-Za-z0-9._+-]+", icon):
+        for ext in ("svg", "png"):
+            cands += glob.glob(f"{r}/usr/share/icons/hicolor/*/apps/{icon}.{ext}") + [f"{root}/{icon}.{ext}"]
+    best = None
+    for p in cands:
+        try:
+            if not os.path.isfile(p) or not inside(root, p) or os.path.getsize(p) > 5_000_000: continue
+            head = open(p, "rb").read(1024)
+        except OSError:
+            continue
+        if b"<svg" in head: cand = ((1, 0), p, "svg", "scalable")
+        elif head[:8] == b"\x89PNG\r\n\x1a\n" and len(head) >= 24:
+            w = struct.unpack(">I", head[16:20])[0]
+            if not 16 <= w <= 1024: continue
+            cand = ((0, w), p, "png", f"{w}x{w}")
+        else: continue
+        if best is None or cand[0] > best[0]: best = cand
+    return best[1:] if best else None
+
+def remove_icons(name):
+    for p in glob.glob(f"{ICONS}/*/apps/ajail-{name}.*"):
+        try: os.unlink(p)
+        except OSError: pass
+
+def refresh_desktop_db():
+    if shutil.which("update-desktop-database"):
+        subprocess.run(["update-desktop-database", APPLICATIONS], capture_output=True, check=False)
+
+def install_launcher(name, root):
+    keep, icon = read_desktop(root)
+    remove_icons(name)
+    found, iname = find_icon(root, icon), None
+    if found:
+        src, ext, size = found
+        os.makedirs(f"{ICONS}/{size}/apps", exist_ok=True)
+        shutil.copyfile(src, f"{ICONS}/{size}/apps/ajail-{name}.{ext}")
+        iname = f"ajail-{name}"
+    lines = ["[Desktop Entry]", "Type=Application", f"Exec={SELF} run {name} %U", "Terminal=false", f"X-AJAIL-App={name}"]
+    if not any(k.startswith("Name=") for k in keep): lines.append(f"Name={name}")
+    lines += keep
+    if iname: lines.append(f"Icon={iname}")
+    os.makedirs(APPLICATIONS, exist_ok=True)
+    path = f"{APPLICATIONS}/ajail-{name}.desktop"
+    open(path + ".tmp", "w").write("\n".join(lines) + "\n")
+    os.replace(path + ".tmp", path)
+    refresh_desktop_db()
+
+def cmd_install(args):
+    trash = "--trash" in args
+    files = [x for x in args if not x.startswith("--")]
+    if len(files) != 1: die("usage: ajail install FILE.AppImage [--trash]")
+    guard()
+    app = os.path.realpath(files[0])
+    if not os.path.isfile(app): die(f"not a file: {files[0]}")
+    off = appimage_offset(app)
+    name = sanitize(app)
+    dest = f"{INSTALLED}/{name}"
+    if installed_stamp(name) == file_stamp(app) and os.path.isdir(f"{dest}/root"):
+        print(f"{name} is already installed, refreshing its launcher")
+    else:
+        if running(name): die(f"{name} is running. Close it first")
+        root = ensure_extracted(app, name, off)
+        if not os.path.lexists(f"{root}/AppRun"): die("no AppRun found inside this AppImage")
+        check_identity(name, root)
+        os.makedirs(INSTALLED, mode=0o700, exist_ok=True)
+        rm_tree(dest)
+        os.replace(f"{EXTRACT}/{name}", dest)
+    install_launcher(name, f"{dest}/root")
+    os.makedirs(f"{CONF}/apps", exist_ok=True)
+    open(f"{CONF}/apps/{name}.conf", "a").close()
+    log("installed", name)
+    print(f"Installed {name}")
+    if trash:
+        if shutil.which("gio") and subprocess.run(["gio", "trash", app]).returncode == 0:
+            print("Moved the AppImage to the Trash")
+        else:
+            print("ajail: could not move the AppImage to the Trash", file=sys.stderr)
+
+def cmd_uninstall(args):
+    purge = "--purge" in args
+    names = [x for x in args if not x.startswith("--")]
+    if len(names) != 1: die("usage: ajail uninstall NAME [--purge]")
+    name = clean(names[0])
+    if running(name): die(f"{name} is running. Close it first")
+    rm_tree(f"{INSTALLED}/{name}")
+    try: os.unlink(f"{APPLICATIONS}/ajail-{name}.desktop")
+    except OSError: pass
+    remove_icons(name)
+    if purge:
+        rm_tree(f"{HOMES}/{name}"); rm_tree(f"{EXTRACT}/{name}")
+        for p in (f"{CONF}/apps/{name}.conf", f"{CONF}/ids/{name}", f"{SOURCES}/{name}"):
+            try: os.unlink(p)
+            except OSError: pass
+    refresh_desktop_db()
+    log("uninstalled" + (" and purged" if purge else ""), name)
+    print(f"Uninstalled {name}" + (" and deleted its data" if purge else ", its data was kept"))
+
+def open_mode():
+    try:
+        for ln in open(f"{CONF}/ui.conf"):
+            k, _, v = ln.strip().partition("=")
+            if k == "open_mode" and v in ("ask", "run"): return v
+    except OSError:
+        pass
+    return "ask"
+
+def open_file(arg, extra):
+    """Entry point for double-click and 'Open with': offer Install or Run once, unless launched from a terminal."""
+    gui = f"{os.path.dirname(SELF)}/ajail-gui"
+    if (open_mode() == "ask" and not extra and os.path.isfile(arg) and os.path.exists(gui)
+            and not (sys.stdin.isatty() or sys.stdout.isatty() or os.environ.get("AJAIL_ACTIVE") or os.geteuid() == 0)
+            and (os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))):
+        app = os.path.realpath(arg)
+        name = sanitize(app)
+        if installed_stamp(name) == file_stamp(app): return run_installed(name, extra)
+        p = subprocess.Popen([gui, "--install", app], start_new_session=True)
+        try:
+            if p.wait(2) != 0: run_app(arg, extra)
+        except subprocess.TimeoutExpired:
+            pass
+        return
+    run_app(arg, extra)
 
 def need_root(cmd):
     if os.geteuid() != 0:
@@ -502,7 +692,9 @@ def cmd_preview(n):
     name = clean(n) if n else "NAME"
     cfg = load_cfg(name)
     bus = f"{runtime_dir()}/ajail/PID.bus" if want_bus(cfg) else None
-    print(shlex.join(bwrap_args(name, f"{EXTRACT}/{name}/root", cfg, ["/app/AppRun"], bus)))
+    root = f"{INSTALLED}/{name}/root"
+    if not os.path.isdir(root): root = f"{EXTRACT}/{name}/root"
+    print(shlex.join(bwrap_args(name, root, cfg, ["/app/AppRun"], bus)))
 
 def cmd_dump(arg):
     """JSON of the raw settings, for ajail-gui."""
@@ -522,7 +714,12 @@ def cmd_dump(arg):
 HELP = """ajail on | off | status | check   force on/off for all AppImages, or check the setup
 ajail preview [NAME]             show the bwrap command that would run
 ajail name FILE.AppImage         show the name ajail uses for this file
-ajail FILE.AppImage [args]       run one AppImage sandboxed (files in args are shared for that run)
+ajail install FILE.AppImage      unpack it, add it to the app menu (--trash moves the file to the Trash)
+ajail run NAME [args]            run an installed app
+ajail uninstall NAME [--purge]   remove it from the app menu (--purge also deletes its data)
+ajail run-file [--once] FILE     run an AppImage without offering to install it (--once deletes its unpacked copy on exit)
+ajail FILE.AppImage [args]       open an AppImage: offers Install or Run once when double-clicked,
+                                 otherwise runs it sandboxed (files in args are shared for that run)
 Settings and everything else: ajail-gui"""
 
 def main():
@@ -536,6 +733,15 @@ def main():
     elif c == "preview": cmd_preview(a[1] if len(a) > 1 else "")
     elif c == "dump": cmd_dump(a[1] if len(a) > 1 else "")
     elif c == "name" and len(a) > 1: print(sanitize(a[1]))
-    else: run_app(c, a[1:])
+    elif c == "install": cmd_install(a[1:])
+    elif c == "uninstall": cmd_uninstall(a[1:])
+    elif c == "run" and len(a) > 1: run_installed(a[1], a[2:])
+    elif c == "run-file":
+        rest = a[1:]
+        once = bool(rest) and rest[0] == "--once"
+        if once: rest = rest[1:]
+        if not rest: die("usage: ajail run-file [--once] FILE [args]")
+        run_app(rest[0], rest[1:], once)
+    else: open_file(c, a[1:])
 
 main()
