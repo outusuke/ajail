@@ -27,7 +27,8 @@ os.makedirs(APPS, exist_ok=True)
 # Keep in sync with DEFAULTS in ajail.
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
-            "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0}
+            "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
+            "portal_screenshot": 1, "portal_screencast": 1}
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}      # 0 = no limit
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk")
 XDG = [("download", "Downloads"), ("documents", "Documents"), ("pictures", "Pictures"),
@@ -52,6 +53,11 @@ SECTIONS = [
         ("input", "Game controllers and input devices", "Raw access to /dev/input")]),
     ("Desktop integration", None, [
         ("portals", "Notifications and portals", "Notifications, opening links, dark mode (needs xdg-dbus-proxy)"),
+        ("portal_screenshot", "Screenshots",
+         "Let the app ask the desktop for a screenshot. Needs Notifications and portals. The desktop shows its own prompt."),
+        ("portal_screencast", "Screen sharing",
+         "Let the app ask to share your screen or a window (Discord, Teams, Slack). Needs Notifications and portals. "
+         "The desktop shows its own picker."),
         ("tray", "Tray icon and media keys", "Show a tray icon and answer media keys (needs xdg-dbus-proxy)"),
         ("theme", "Your fonts and themes", "Read-only access to your installed fonts, icons and themes")]),
     ("Hardening", None, [

@@ -118,9 +118,11 @@ Precedence is built-in defaults, then `default.conf`, then the app's file. List 
 | `sound` | 1 | PipeWire/PulseAudio (includes microphone) |
 | `gpu` | 1 | `/dev/dri` and NVIDIA devices |
 | `x11` | 0 | X11 socket; weaker isolation |
-| `portals` | 1 | Notifications and desktop portals via the D-Bus proxy |
+| `portals` | 1 | Notifications and a fixed list of desktop portals (settings, open links, file chooser, print, background and a few more) via the D-Bus proxy. Other portals, such as RemoteDesktop, Location and Secret, are not reachable |
+| `portal_screenshot` | 1 | With `portals`: the Screenshot portal. The desktop shows its own prompt |
+| `portal_screencast` | 1 | With `portals`: the ScreenCast portal (screen sharing in Discord, Teams, Slack). The desktop shows its own picker |
 | `tray` | 0 | Tray icon and media keys |
-| `camera` | 0 | `/dev/video*` |
+| `camera` | 0 | `/dev/video*`, and the Camera portal when `portals` is on |
 | `input` | 0 | `/dev/input` (controllers, raw input) |
 | `ssh_agent` | 0 | Your SSH agent socket; the app can sign as you |
 | `printing` | 0 | CUPS socket |

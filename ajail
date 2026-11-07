@@ -28,7 +28,8 @@ ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch
 # Permission defaults. Keep in sync with DEFAULTS in ajail-gui.
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
-            "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0}
+            "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
+            "portal_screenshot": 1, "portal_screencast": 1}
 # Numeric limits (0 = no limit): memory in MB, CPU in % of one core, number of processes.
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk")
@@ -242,6 +243,29 @@ def seccomp_file(harden=False):
 def want_bus(cfg):
     return bool(cfg["portals"] or cfg["tray"] or cfg["talk"])
 
+# Desktop portals an app may call when "Notifications and portals" is on. xdg-dbus-proxy runs on the host, so the
+# desktop sees the app as an ordinary unsandboxed program: a portal that is not listed here is simply unreachable.
+# Deliberately left out: RemoteDesktop (input injection), Location, Secret, Wallpaper, GlobalShortcuts, Documents.
+# Camera follows the Camera permission; Screenshot and ScreenCast (both show the user a prompt) have their own switches.
+PORTAL_NAME = "org.freedesktop.portal.Desktop"
+PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "Inhibit", "Background", "Account",
+                "Email", "Trash", "NetworkMonitor", "ProxyResolver", "GameMode", "MemoryMonitor",
+                "PowerProfileMonitor", "Realtime")
+
+def portal_rules(cfg):
+    """xdg-dbus-proxy rules for Notifications and the allowed portals (see PORTAL_BASIC above)."""
+    ifaces = list(PORTAL_BASIC)
+    if cfg["camera"]: ifaces.append("Camera")
+    if cfg["portal_screenshot"]: ifaces.append("Screenshot")
+    if cfg["portal_screencast"]: ifaces.append("ScreenCast")
+    rules = ["--talk=org.freedesktop.Notifications", f"--see={PORTAL_NAME}"]
+    rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.{i}.*" for i in ifaces]
+    rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*",
+              f"--call={PORTAL_NAME}=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*",
+              f"--call={PORTAL_NAME}=org.freedesktop.DBus.Properties.*@/org/freedesktop/portal/desktop",
+              "--broadcast=org.freedesktop.portal.*=@/org/freedesktop/portal/*"]
+    return rules
+
 def start_bus(cfg, name):
     if not want_bus(cfg): return None
     px = shutil.which("xdg-dbus-proxy")
@@ -255,8 +279,7 @@ def start_bus(cfg, name):
     sock = f"{d}/{os.getpid()}.bus"
     rules = ["--filter"]
     if cfg["portals"]:
-        rules += ["--talk=org.freedesktop.Notifications", "--talk=org.freedesktop.portal.Desktop",
-                  "--call=org.freedesktop.portal.*=*", "--broadcast=org.freedesktop.portal.*=@/org/freedesktop/portal/*"]
+        rules += portal_rules(cfg)
     if cfg["tray"]:
         rules += ["--talk=org.kde.StatusNotifierWatcher", "--own=org.kde.*", "--own=org.mpris.MediaPlayer2.*"]
     rules += [f"--talk={n}" for n in cfg["talk"] if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]*(\.\*)?", n)]
@@ -371,18 +394,36 @@ def sweep_runtime():
 
 def scoped_xauth(src, disp):
     """A copy of the XAUTHORITY file holding only the cookie for DISPLAY, or None (then the full file is used)."""
+    # Done in Python (no xauth needed, and many Wayland desktops don't install it). Entries are kept when they are
+    # for this display number or have no display number (wildcard entries, as Xwayland's own auth file uses).
     d = work_dir()
-    if not os.path.isdir(d) or not shutil.which("xauth"):
+    if not os.path.isdir(d):
+        return None
+    num = disp[1:].split(".")[0].encode()
+    try:
+        with open(src, "rb") as f: data = f.read(1_000_000)
+    except OSError:
+        return None
+    keep, i = [], 0
+    while i + 2 <= len(data):
+        start = i
+        i += 2                                    # family
+        fields = []
+        for _ in range(4):                        # address, display number, auth name, auth data
+            if i + 2 > len(data): return None     # truncated or not an Xauthority file: use it unchanged
+            n = int.from_bytes(data[i:i+2], "big"); i += 2
+            fields.append(data[i:i+n]); i += n
+        if i > len(data): return None
+        if fields[1] in (num, b""): keep.append(data[start:i])
+    if not keep:
         return None
     dst = f"{d}/Xauthority"
     try:
-        r = subprocess.run(["xauth", "-f", src, "nextract", "-", disp], capture_output=True, timeout=5)
-        if r.returncode or not r.stdout: return None
-        subprocess.run(["xauth", "-f", dst, "nmerge", "-"], input=r.stdout, capture_output=True, timeout=5)
-        os.chmod(dst, 0o600)
-        return dst if os.path.getsize(dst) else None
-    except (OSError, subprocess.TimeoutExpired):
+        fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f: f.write(b"".join(keep))
+    except OSError:
         return None
+    return dst
 
 def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None):
     rt = runtime_dir()
