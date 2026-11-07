@@ -112,20 +112,38 @@ def path_ok(p):
         return None if p[len(HOME) + 1:].split("/")[0].startswith(".") else p
     return p if any(p.startswith(b) for b in OUTSIDE) else None
 
-def get_open_mode():
+def ui_read():
+    d = {}
     try:
         for ln in open(UICONF):
             k, _, v = ln.strip().partition("=")
-            if k == "open_mode" and v in ("ask", "run"):
-                return v
+            if k:
+                d[k] = v
     except OSError:
         pass
-    return "ask"
+    return d
+
+def ui_set(key, value):
+    """Change one key in ui.conf and keep the others."""
+    d = ui_read()
+    d[key] = value
+    os.makedirs(CONF, exist_ok=True)
+    tmp = UICONF + ".tmp"
+    with open(tmp, "w") as f:
+        f.write("".join(f"{k}={v}\n" for k, v in d.items()))
+    os.replace(tmp, UICONF)
+
+def get_open_mode():
+    v = ui_read().get("open_mode")
+    return v if v in ("ask", "run") else "ask"
 
 def set_open_mode(v):
-    os.makedirs(CONF, exist_ok=True)
-    with open(UICONF, "w") as f:
-        f.write(f"open_mode={v}\n")
+    ui_set("open_mode", v)
+
+def get_install_opt(key, default):
+    """Remembered state of a checkbox in the install window ('1' or '0')."""
+    v = ui_read().get(key)
+    return default if v not in ("0", "1") else v == "1"
 
 def app_names():
     names = set()
@@ -322,17 +340,26 @@ class Win(Adw.ApplicationWindow):
         dlg = Adw.AlertDialog(
             heading=f"{'Update' if update else 'Install'} {name}?",
             body=f"It runs sandboxed and is added to your app menu. Allowed: {summary(d['global'], d.get('app'))}.")
-        trash = Gtk.CheckButton(label="Move the AppImage to the Trash afterwards", active=True)
         can_mount = bool(shutil.which("squashfuse") and shutil.which("fusermount3"))
-        pack = Gtk.CheckButton(label="Save disk space: keep it compressed (experimental)", sensitive=can_mount)
-        pack.set_tooltip_text(
-            "Mounts the AppImage's filesystem when the app starts instead of unpacking it. "
-            "The image is read outside the sandbox." if can_mount
-            else "Needs squashfuse and fuse3: sudo dnf install squashfuse fuse3")
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        box.append(trash)
-        box.append(pack)
-        dlg.set_extra_child(box)
+        trash = Gtk.CheckButton(active=get_install_opt("install_trash", True), valign=Gtk.Align.CENTER)
+        pack = Gtk.CheckButton(active=can_mount and get_install_opt("install_mount", False),
+                               valign=Gtk.Align.CENTER)
+
+        def opt_row(check, title, sub, enabled=True):
+            row = Adw.ActionRow(title=title, subtitle=sub, sensitive=enabled)
+            row.add_prefix(check)
+            row.set_activatable_widget(check)
+            return row
+
+        opts = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        opts.add_css_class("boxed-list")
+        opts.append(opt_row(trash, "Delete the AppImage afterwards",
+                            "Moves it to the Trash. The installed app doesn't need it."))
+        opts.append(opt_row(
+            pack, "Use less disk space",
+            "Apps open a bit slower, and the file is read outside the sandbox. Only for apps you trust. Experimental."
+            if can_mount else "Needs squashfuse and fuse3: sudo dnf install squashfuse fuse3", can_mount))
+        dlg.set_extra_child(opts)
         dlg.add_response("cancel", "Cancel")
         dlg.add_response("once", "Run once")
         dlg.add_response("install", "Update" if update else "Install")
@@ -342,6 +369,9 @@ class Win(Adw.ApplicationWindow):
 
         def done(_d, r):
             if r == "install":
+                ui_set("install_trash", "1" if trash.get_active() else "0")
+                if can_mount:
+                    ui_set("install_mount", "1" if pack.get_active() else "0")
                 self.install_file(path, trash.get_active(), lambda: self.open_app(name), pack.get_active())
                 return
             if r == "once":
