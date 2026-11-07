@@ -323,7 +323,16 @@ class Win(Adw.ApplicationWindow):
             heading=f"{'Update' if update else 'Install'} {name}?",
             body=f"It runs sandboxed and is added to your app menu. Allowed: {summary(d['global'], d.get('app'))}.")
         trash = Gtk.CheckButton(label="Move the AppImage to the Trash afterwards", active=True)
-        dlg.set_extra_child(trash)
+        can_mount = bool(shutil.which("squashfuse") and shutil.which("fusermount3"))
+        pack = Gtk.CheckButton(label="Save disk space: keep it compressed (experimental)", sensitive=can_mount)
+        pack.set_tooltip_text(
+            "Mounts the AppImage's filesystem when the app starts instead of unpacking it. "
+            "The image is read outside the sandbox." if can_mount
+            else "Needs squashfuse and fuse3: sudo dnf install squashfuse fuse3")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.append(trash)
+        box.append(pack)
+        dlg.set_extra_child(box)
         dlg.add_response("cancel", "Cancel")
         dlg.add_response("once", "Run once")
         dlg.add_response("install", "Update" if update else "Install")
@@ -333,7 +342,7 @@ class Win(Adw.ApplicationWindow):
 
         def done(_d, r):
             if r == "install":
-                self.install_file(path, trash.get_active(), lambda: self.open_app(name))
+                self.install_file(path, trash.get_active(), lambda: self.open_app(name), pack.get_active())
                 return
             if r == "once":
                 subprocess.Popen([SELF, "run-file", "--once", path], start_new_session=True)
@@ -344,11 +353,11 @@ class Win(Adw.ApplicationWindow):
         self.dialog = dlg
         dlg.present(self)
 
-    def install_file(self, path, trash=False, then=None):
+    def install_file(self, path, trash=False, then=None, mount=False):
         self.toast("Installing…")
 
         def work():
-            r = run([SELF, "install", path] + (["--trash"] if trash else []))
+            r = run([SELF, "install", path] + (["--trash"] if trash else []) + (["--mount"] if mount else []))
             GLib.idle_add(done, r)
 
         def done(r):
@@ -432,9 +441,13 @@ class Win(Adw.ApplicationWindow):
                 src = open(f"{SOURCES}/{scope}").read().strip()
             except OSError:
                 src = ""
-            inst = os.path.isdir(f"{INSTALLED}/{scope}/root")
+            kind = ("root" if os.path.isdir(f"{INSTALLED}/{scope}/root")
+                    else "mount" if os.path.isfile(f"{INSTALLED}/{scope}/image") else None)
+            inst = bool(kind)
             if inst:
-                arow = Adw.ActionRow(title="Installed", subtitle="In your app menu. The AppImage file is no longer needed.")
+                arow = Adw.ActionRow(title="Installed", subtitle="In your app menu. The AppImage file is no longer needed."
+                                     if kind == "root" else
+                                     "In your app menu. Kept compressed (experimental) and mounted when the app starts.")
                 launch = Gtk.Button(label="Launch", valign=Gtk.Align.CENTER)
                 launch.connect("clicked", lambda *_: subprocess.Popen([SELF, "run", scope], start_new_session=True))
             else:
@@ -686,6 +699,9 @@ class Win(Adw.ApplicationWindow):
             data_row.add_suffix(resetb)
             dg.add(data_row)
 
+            if inst:
+                dg.add(Adw.ActionRow(title="Installed copy", subtitle=dir_size(f"{INSTALLED}/{scope}")
+                                     + (" · compressed, mounted at launch" if kind == "mount" else "")))
             if not inst or os.path.isdir(ext_dir):
                 ext_row = Adw.ActionRow(title="Extracted copy",
                                         subtitle=dir_size(ext_dir) + " · rebuilt on next launch if removed")

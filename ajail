@@ -20,6 +20,7 @@ UNSQ    = "/usr/bin/unsquashfs"
 INSTALLED    = f"{HOME}/.local/share/ajail/apps"
 APPLICATIONS = f"{HOME}/.local/share/applications"
 ICONS        = f"{HOME}/.local/share/icons/hicolor"
+MOUNTS       = f"{os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'}/ajail-mnt"
 ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch.conf", "hosts",
        "resolv.conf", "localtime", "os-release", "fonts", "ssl", "pki", "crypto-policies",
        "alternatives", "vulkan", "drirc", "mime.types", "protocols", "services"]
@@ -424,11 +425,18 @@ def run_app(arg, extra, once=False):
 def run_installed(name, extra):
     guard()
     name = clean(name)
-    root = f"{INSTALLED}/{name}/root"
-    if not os.path.isdir(root): die(f"'{name}' is not installed")
+    kind = installed_kind(name)
+    if not kind: die(f"'{name}' is not installed")
     cfg = load_cfg(name)
     check_display(cfg)
-    launch(name, root, cfg, extra)
+    if kind == "root":
+        launch(name, f"{INSTALLED}/{name}/root", cfg, extra)
+        return
+    mp = mount_image(name)
+    try:
+        launch(name, mp, cfg, extra)
+    finally:
+        unmount_image(mp)
 
 def launch(name, root, cfg, extra, source=None, once=False):
     if not os.path.lexists(f"{root}/AppRun"): die("no AppRun found inside this AppImage")
@@ -482,6 +490,51 @@ def rm_tree(p):
 def file_stamp(path):
     st = os.stat(path)
     return f"{st.st_size}:{st.st_mtime_ns}"
+
+def installed_kind(name):
+    d = f"{INSTALLED}/{name}"
+    return "root" if os.path.isdir(f"{d}/root") else "mount" if os.path.isfile(f"{d}/image") else None
+
+def need_squashfuse():
+    if not (shutil.which("squashfuse") and shutil.which("fusermount3")):
+        die("compressed installs need squashfuse: sudo dnf install squashfuse fuse3")
+    if not os.access("/dev/fuse", os.R_OK | os.W_OK):
+        die("/dev/fuse is not accessible, so compressed installs cannot work on this system")
+
+def sweep_mounts():
+    """Unmount and remove mountpoints left behind by ajail processes that died."""
+    try: entries = os.listdir(MOUNTS)
+    except OSError: return
+    for e in entries:
+        pid = e.rsplit("-", 1)[-1]
+        if pid.isdigit() and os.path.exists(f"/proc/{pid}"): continue
+        subprocess.run(["fusermount3", "-uz", f"{MOUNTS}/{e}"], capture_output=True)
+        try: os.rmdir(f"{MOUNTS}/{e}")
+        except OSError: pass
+
+def mount_image(name):
+    need_squashfuse()
+    sweep_mounts()
+    d = f"{INSTALLED}/{name}"
+    off = open(f"{d}/offset").read().strip()
+    os.makedirs(MOUNTS, mode=0o700, exist_ok=True)
+    mp = f"{MOUNTS}/{name}-{os.getpid()}"
+    os.makedirs(mp, mode=0o700, exist_ok=True)
+    try:
+        r = subprocess.run(["squashfuse", "-o", f"offset={off}", f"{d}/image", mp],
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
+    except subprocess.TimeoutExpired:
+        r = subprocess.CompletedProcess([], 1, "", "timed out")
+    if r.returncode:
+        os.rmdir(mp)
+        die(f"could not mount the image: {r.stderr.strip() or r.returncode}")
+    return mp
+
+def unmount_image(mp):
+    if subprocess.run(["fusermount3", "-u", mp], capture_output=True).returncode:
+        subprocess.run(["fusermount3", "-uz", mp], capture_output=True)
+    try: os.rmdir(mp)
+    except OSError: pass
 
 def installed_stamp(name):
     try: return open(f"{INSTALLED}/{name}/stamp").read()
@@ -565,17 +618,20 @@ def install_launcher(name, root):
     refresh_desktop_db()
 
 def cmd_install(args):
-    trash = "--trash" in args
+    trash, mount = "--trash" in args, "--mount" in args
     files = [x for x in args if not x.startswith("--")]
-    if len(files) != 1: die("usage: ajail install FILE.AppImage [--trash]")
+    if len(files) != 1: die("usage: ajail install FILE.AppImage [--mount] [--trash]")
     guard()
+    if mount: need_squashfuse()
     app = os.path.realpath(files[0])
     if not os.path.isfile(app): die(f"not a file: {files[0]}")
     off = appimage_offset(app)
     name = sanitize(app)
     dest = f"{INSTALLED}/{name}"
-    if installed_stamp(name) == file_stamp(app) and os.path.isdir(f"{dest}/root"):
-        print(f"{name} is already installed, refreshing its launcher")
+    kind = "mount" if mount else "root"
+    if installed_stamp(name) == file_stamp(app) and installed_kind(name) == kind:
+        print(f"{name} is already installed" + ("" if mount else ", refreshing its launcher"))
+        if not mount: install_launcher(name, f"{dest}/root")
     else:
         if running(name): die(f"{name} is running. Close it first")
         root = ensure_extracted(app, name, off)
@@ -583,12 +639,20 @@ def cmd_install(args):
         check_identity(name, root)
         os.makedirs(INSTALLED, mode=0o700, exist_ok=True)
         rm_tree(dest)
-        os.replace(f"{EXTRACT}/{name}", dest)
-    install_launcher(name, f"{dest}/root")
+        if mount:
+            os.makedirs(dest, mode=0o700)
+            shutil.copyfile(app, f"{dest}/image")
+            open(f"{dest}/offset", "w").write(str(off))
+            open(f"{dest}/stamp", "w").write(file_stamp(app))
+            install_launcher(name, root)
+            rm_tree(f"{EXTRACT}/{name}")
+        else:
+            os.replace(f"{EXTRACT}/{name}", dest)
+            install_launcher(name, f"{dest}/root")
     os.makedirs(f"{CONF}/apps", exist_ok=True)
     open(f"{CONF}/apps/{name}.conf", "a").close()
-    log("installed", name)
-    print(f"Installed {name}")
+    log("installed (compressed)" if mount else "installed", name)
+    print(f"Installed {name}" + (" (compressed, mounted at launch)" if mount else ""))
     if trash:
         if shutil.which("gio") and subprocess.run(["gio", "trash", app]).returncode == 0:
             print("Moved the AppImage to the Trash")
@@ -687,13 +751,17 @@ def cmd_check():
     except OSError:
         pass
     if not shutil.which("notify-send"): line("INFO", "notify-send missing (no failure popups)")
+    ok = shutil.which("squashfuse") and shutil.which("fusermount3") and os.access("/dev/fuse", os.R_OK | os.W_OK)
+    line("OK" if ok else "INFO", "compressed installs (experimental) available" if ok
+         else "compressed installs unavailable: needs squashfuse, fuse3 and access to /dev/fuse")
 
 def cmd_preview(n):
     name = clean(n) if n else "NAME"
     cfg = load_cfg(name)
     bus = f"{runtime_dir()}/ajail/PID.bus" if want_bus(cfg) else None
     root = f"{INSTALLED}/{name}/root"
-    if not os.path.isdir(root): root = f"{EXTRACT}/{name}/root"
+    if installed_kind(name) == "mount": root = f"{MOUNTS}/{name}"
+    elif not os.path.isdir(root): root = f"{EXTRACT}/{name}/root"
     print(shlex.join(bwrap_args(name, root, cfg, ["/app/AppRun"], bus)))
 
 def cmd_dump(arg):
@@ -714,7 +782,8 @@ def cmd_dump(arg):
 HELP = """ajail on | off | status | check   force on/off for all AppImages, or check the setup
 ajail preview [NAME]             show the bwrap command that would run
 ajail name FILE.AppImage         show the name ajail uses for this file
-ajail install FILE.AppImage      unpack it, add it to the app menu (--trash moves the file to the Trash)
+ajail install FILE.AppImage      unpack it and add it to the app menu (--trash moves the file to the Trash;
+                                 --mount keeps it compressed and mounts it at launch, experimental)
 ajail run NAME [args]            run an installed app
 ajail uninstall NAME [--purge]   remove it from the app menu (--purge also deletes its data)
 ajail run-file [--once] FILE     run an AppImage without offering to install it (--once deletes its unpacked copy on exit)
