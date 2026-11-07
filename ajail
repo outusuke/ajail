@@ -293,6 +293,17 @@ def portal_rules(cfg):
               "--broadcast=org.freedesktop.portal.*=@/org/freedesktop/portal/*"]
     return rules
 
+# Tray icons (StatusNotifierItem) own a name like org.kde.StatusNotifierItem-PID-N. xdg-dbus-proxy only takes a wildcard at
+# the end after a dot ("org.kde.*"), so rather than allowing every org.kde name, the likely names are listed. The PID is the
+# one inside the sandbox (it has its own PID namespace), so it is small. An app whose main process has a higher PID gets no
+# tray icon: the self-test shows this, and the range can be raised here.
+TRAY_PIDS = range(2, 65)
+TRAY_IDS = range(1, 4)
+
+def tray_rules():
+    return ["--talk=org.kde.StatusNotifierWatcher"] + [
+        f"--own=org.kde.StatusNotifierItem-{p}-{i}" for p in TRAY_PIDS for i in TRAY_IDS]
+
 def start_bus(cfg, name):
     if not want_bus(cfg): return None
     px = shutil.which("xdg-dbus-proxy")
@@ -307,7 +318,7 @@ def start_bus(cfg, name):
     if cfg["portals"]:
         rules += portal_rules(cfg)
     if cfg["tray"]:
-        rules += ["--talk=org.kde.StatusNotifierWatcher", "--own=org.kde.*", "--own=org.mpris.MediaPlayer2.*"]
+        rules += tray_rules() + ["--own=org.mpris.MediaPlayer2.*"]
     rules += [f"--talk={n}" for n in cfg["talk"] if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]*(\.\*)?", n)]
     r, w = os.pipe()
     proc = subprocess.Popen([px, f"--fd={w}", addr, sock] + rules, pass_fds=[w],
@@ -517,6 +528,7 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None):
         a += ["--ro-bind", bus, f"{rt}/bus"]
         env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={rt}/bus"
         if cfg["portals"]: env["AJAIL_PORTALS"] = ",".join(extra_portals(cfg))     # read by the self-test
+        if cfg["tray"]: env["AJAIL_TRAY"] = f"{TRAY_PIDS[0]}-{TRAY_PIDS[-1]}"      # read by the self-test
     a += ["--ro-bind", root, "/app"]
     if cfg["tmp_home"]: a += ["--perms", "0700", "--tmpfs", HOME]      # erased when the app closes
     else: a += ["--bind", f"{HOMES}/{name}", HOME]

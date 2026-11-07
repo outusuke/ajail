@@ -60,6 +60,14 @@ class Rules(unittest.TestCase):
         self.assertTrue({"Camera", "Screenshot", "ScreenCast"}.isdisjoint(base))
         self.assertIn("Secret", calls(A["portal_rules"](cfg(portal=["Secret"], camera=0))))
 
+    def test_tray_rules_are_narrow(self):
+        r = A["tray_rules"]()
+        self.assertIn("--talk=org.kde.StatusNotifierWatcher", r)
+        self.assertIn("--own=org.kde.StatusNotifierItem-2-1", r)
+        self.assertNotIn("--own=org.kde.*", r)
+        self.assertFalse(any(x.endswith("*") for x in r))                # xdg-dbus-proxy only takes ".*" suffixes
+        self.assertEqual(len(r), len(set(r)))
+
     def test_extra_portals_helper(self):
         self.assertEqual(A["extra_portals"](cfg(portal=["Secret", "Nope", "Secret", "Wallpaper"])), ["Secret", "Wallpaper"])
 
@@ -119,6 +127,14 @@ class Config(unittest.TestCase):
             A["cmd_dump"]("Foo")
         self.assertEqual(json.loads(out.getvalue())["app"]["portal"], ["-Location"])
 
+    def test_bwrap_env_tells_selftest_about_tray(self):
+        c = A["load_cfg"]("Foo"); c["tray"] = 1
+        a = A["bwrap_args"]("Foo", "/x", c, ["/app/AppRun"], bus="/run/user/1/ajail/1.bus")
+        i = a.index("AJAIL_TRAY"); self.assertEqual(a[i + 1], "2-64")
+        c["tray"] = 0
+        a = A["bwrap_args"]("Foo", "/x", c, ["/app/AppRun"], bus="/run/user/1/ajail/1.bus")
+        self.assertNotIn("AJAIL_TRAY", a)
+
     def test_dump_json_roundtrip_keeps_portal(self):
         import json
         self.put("apps/Foo.conf", "portal=Wallpaper\nnet=0\n")
@@ -174,6 +190,13 @@ class Sync(unittest.TestCase):
         compile(m.group(1), "AppRun", "exec")
         for p in A["EXTRA_PORTALS"]:
             self.assertIn(f'("{p}", "', m.group(1), p)
+
+    def test_selftest_covers_every_allowed_portal_and_tray(self):
+        s = open(f"{HERE}/make-selftest").read()
+        app = re.search(r"APPRUN = r'''(.*?)'''", s, re.S).group(1)
+        names = set(A["PORTAL_BASIC"]) | {"Screenshot", "ScreenCast", "Camera", "Documents"}
+        for p in names: self.assertIn(f'"{p}"', app, p)
+        self.assertIn("StatusNotifierItem", app); self.assertIn("MediaPlayer2", app); self.assertIn("AJAIL_TRAY", app)
 
     def test_gui_compiles(self):
         compile(open(f"{HERE}/ajail-gui").read(), "ajail-gui", "exec")
