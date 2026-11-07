@@ -1,187 +1,120 @@
 # ajail
 
-Run AppImages inside a [bubblewrap](https://github.com/containers/bubblewrap) sandbox, each with its own persistent private home. Permissions are set per app, Flatseal-style, with an optional GTK4 front-end.
+Run AppImages in a [bubblewrap](https://github.com/containers/bubblewrap) sandbox. Each app gets its own private home and its own permissions, set Flatseal-style.
 
-- **`ajail`**: the launcher and CLI
-- **`ajail-gui`**: GTK4 + libadwaita permission editor
-- **`make-selftest`**: builds a tiny AppImage that reports what the sandbox lets through
+- `ajail`: launcher and CLI
+- `ajail-gui`: GTK4 + libadwaita permission editor
+- `make-selftest`: builds a test AppImage that reports what the sandbox lets through
 
-## How it works
-
-- The AppImage is extracted once (squashfs, inside its own sandbox) and cached in `~/.local/share/ajail/extracted`. It is re-extracted when the file changes.
-- Each app gets a private home at `~/.appimage-homes/NAME`. The real `$HOME` is hidden except for folders you share.
-- Only the system paths the app needs are bound in (`/usr` and a short list of `/etc` files). The environment is cleared and rebuilt.
-- A seccomp blocklist (similar to Flatpak's) denies syscalls such as `bpf`, `perf_event_open` and `kexec_load`.
-- Notifications and portals go through `xdg-dbus-proxy`, which filters what the app may reach on the session bus.
-- The private home is tied to the app's `Name=` from its `.desktop` file. A different app that happens to have the same file name is refused instead of inheriting the first app's data and permissions.
-- With `ajail on`, a `binfmt_misc` rule makes the kernel route every type 2 AppImage through `ajail`, however it is started (double-click, `./app.AppImage`, "Open with").
-- Double-clicking an AppImage that isn't installed opens a window offering **Install** or **Run once**. Launches from a terminal never prompt.
-
-## Requirements
-
-- Linux with a Wayland session (X11 can be enabled per app)
-- Python 3
-- `bubblewrap` and `squashfs-tools`
-- Optional: `xdg-dbus-proxy` (notifications, portals, tray), `notify-send` (failure popups), `squashfuse` and `fuse3` (compressed installs, experimental), `passt` (provides `pasta`, needed for **Keep localhost private**)
-- Optional: systemd with a user session (`systemd-run --user`), for the memory, CPU and process limits
-- For `ajail-gui`: PyGObject, GTK 4 and libadwaita (1.5 or newer, for `Adw.AlertDialog`)
-
-On Fedora (the distro ajail was written on):
+## Quick start
 
 ```bash
-sudo dnf install bubblewrap squashfs-tools xdg-dbus-proxy libnotify python3-gobject gtk4 libadwaita
-sudo dnf install squashfuse fuse3    # optional, for compressed installs
-sudo dnf install passt               # optional, for "Keep localhost private"
-```
-
-On other distros, install whatever your distro calls the same things: `bubblewrap`, `squashfs-tools` (for `unsquashfs`), `xdg-dbus-proxy`, `notify-send` (usually in a libnotify package), and for `ajail-gui` PyGObject with the GTK 4 and libadwaita bindings. Compressed installs also need `squashfuse` and `fuse3`. Package names differ between distros, so no commands are given for them here.
-
-For the tools ajail itself needs, its error messages and `ajail check` suggest the matching command on Fedora, Debian/Ubuntu and Arch (read from `/etc/os-release`, derivatives included), where those packages have the same names. Everywhere else they just name the packages.
-
-## Install
-
-`ajail` expects to live at `/usr/local/bin/ajail` and be owned by root (`ajail on` checks this).
-
-```bash
+sudo dnf install bubblewrap squashfs-tools xdg-dbus-proxy libnotify python3-gobject gtk4 libadwaita   # Fedora
 sudo install -m 755 -o root -g root ajail ajail-gui /usr/local/bin/
-ajail check
+ajail check                  # shows what is missing
+ajail on                     # optional: route every AppImage through ajail (asks for your password)
 ```
 
-To put **AppImage Jail** in your application menu, open `ajail-gui` (from a terminal the first time) and turn on **Show AppImage Jail in the app menu**. It writes a launcher and icon under `~/.local/share/` and needs no root; turn the switch off to remove them.
+On Debian/Ubuntu and Arch the same package names work for the core tools; `ajail check` prints the exact command. Elsewhere, install the equivalents. `ajail` must live at `/usr/local/bin/ajail`, owned by root.
 
-`ajail check` reports what is available and what is missing.
+Needs Linux, Wayland (X11 is a per-app option), Python 3, `bubblewrap`, `squashfs-tools`. Optional: `xdg-dbus-proxy` (notifications, portals, tray), `passt` (Keep localhost private), `squashfuse` + `fuse3` (compressed installs), `systemd --user` (resource limits), `notify-send`.
 
-## Installing apps
+## Using it
 
-Installing works like dragging an app into Applications:
+Double-click an AppImage (with `ajail on`) and choose **Install** or **Run once**. Terminal launches never prompt.
 
-1. Double-click an AppImage (with `ajail on`), or press **+** in `ajail-gui`, or run `ajail install FILE.AppImage`.
-2. Choose **Install**. The app is unpacked once, added to your application menu with its own name and icon, and can handle its file types.
-3. The AppImage is moved to the Trash afterwards by default (untick the box to keep it). The installed copy doesn't need it.
-4. To update, open the newer AppImage and choose **Update**. Settings and data are kept.
-5. To remove it, press **Uninstall…** on the app's page, or run `ajail uninstall NAME`. You choose whether to keep its data or move it to the Trash.
-
-**Run once** runs the AppImage without installing it and deletes its unpacked copy when the app closes, so nothing is left behind except the app's private data. If you'd rather never see the window, tick **Don't ask again for NAME** in it, or turn off **Ask before opening this AppImage** on the app's page in `ajail-gui`; double-clicking that AppImage then runs it immediately and installing is done from the GUI. The choice is per app. **Ask before opening a new AppImage** on the main page is only the default for apps without their own setting. To get the window back for an app, turn its switch on again.
-
-The install window also has **Use less disk space** (experimental), see below. It applies to both Install and Run once: with it on, Run once mounts the AppImage instead of unpacking it, so nothing is written to disk. The window remembers the Trash choice globally and **Use less disk space** per app. The same two settings are on the app's page for apps that aren't installed yet, and **Launch** there follows them. With the prompt off, double-clicking an AppImage mounts it if that app has **Use less disk space** on, and launches from a terminal never do. These per-app choices are stored as `open_mode.NAME=` and `mount.NAME=` lines in `~/.config/ajail/ui.conf`, and are removed with the app's data on `ajail uninstall --purge`.
-
-The launcher is generated by ajail. Only the app's name, categories, file types and icon are copied from the AppImage's own `.desktop` file, never its `Exec` line or actions.
-
-## Compressed installs (experimental)
-
-By default an installed app is unpacked, which takes roughly 2 to 4 times the size of the AppImage. With **Use less disk space** (or `ajail install --mount FILE`), ajail keeps a copy of the AppImage instead and mounts its filesystem with `squashfuse` each time the app starts. The mount is removed when the app exits, and mounts left behind by a crash are cleaned up on the next launch.
-
-In a test with a 15 MB AppImage holding about 54 MB of files, the compressed install used 15 MB instead of 54 MB, and reading every file through the mount took 0.36 s instead of 0.03 s. Real apps will differ.
-
-Trade-offs:
-- **Weaker isolation for one step.** `squashfuse` reads the image as your user, outside the sandbox, every time the app starts. A bug in its parser could be exploited by a hostile AppImage before the sandbox exists. Unpacking (the default) does that work inside a sandbox with no network and no access to your home. Only use compressed installs for AppImages you trust.
-- **Slower starts and file access**, because files are decompressed as they are read.
-- **Needs `squashfuse`, `fuse3` and access to `/dev/fuse`.** `ajail check` tells you whether they are available.
-- **To switch an app between the two modes**, install its AppImage again with the other choice.
-
-## Usage
+- **Install** unpacks the app once and adds it to your app menu with its name, icon and file types. The AppImage goes to the Trash unless you untick that. Open a newer file and choose **Update** to upgrade; data and settings are kept.
+- **Run once** runs it without installing and deletes the unpacked copy afterwards. Tick **Don't ask again** to skip the window for that app.
+- **Use less disk space** (experimental) keeps the AppImage compressed and mounts it with `squashfuse` at launch. Smaller, slower, and the image is read outside the sandbox, so only use it for apps you trust.
 
 ```bash
-ajail FILE.AppImage [args]   # open an AppImage (offers Install or Run once when double-clicked, runs it from a terminal)
-ajail run-file [--once] [--mount] FILE # run an AppImage, never offering to install it (--once deletes the unpacked copy on exit, --mount mounts it instead of unpacking)
-ajail install FILE           # unpack it and add it to the app menu (--trash: move the file to the Trash, --mount: keep it compressed)
-ajail run NAME [args]        # run an installed app
-ajail uninstall NAME         # remove it from the app menu (--purge also moves its data to the Trash)
-ajail on                     # force every AppImage through ajail (asks for your password)
-ajail off                    # undo that
-ajail status                 # is forcing on or off
-ajail check                  # check the setup
-ajail preview [NAME]         # print the bwrap command that would run
-ajail name FILE.AppImage     # show the name ajail uses for a file
-ajail-gui                    # edit permissions, view logs
+ajail FILE.AppImage [args]       # open (prompts when double-clicked)
+ajail run-file [--once] [--mount] FILE
+ajail install FILE [--trash] [--mount]
+ajail run NAME [args]
+ajail uninstall NAME [--purge]   # --purge moves its data to the Trash
+ajail on | off | status | check
+ajail preview [NAME]             # print the bwrap command
+ajail-gui                        # permissions, logs
 ```
 
-Files or folders passed as arguments (or opened with "Open with") are shared with the app for that run only. Installed apps get "Open with" support through the launcher's `%U` entry.
+Files passed as arguments (or via "Open with") are shared for that run only. Names come from the file name minus version and arch: `Foo-1.2.3-x86_64.AppImage` is `Foo`. Only type 2 AppImages; ajail refuses to run as root.
 
-App names are derived from the file name with the extension, version, and architecture stripped. `Foo-1.2.3-x86_64.AppImage` becomes `Foo`.
+## What the sandbox does
 
-Only type 2 AppImages are supported. ajail refuses to run as root.
+- Only `/usr` and a few `/etc` files are visible; the environment is rebuilt. Your real `$HOME` is hidden except for folders you share. Each app's home is `~/.appimage-homes/NAME`.
+- The AppImage is unpacked inside its own sandbox (no network, no home).
+- A seccomp blocklist denies `bpf`, `perf_event_open`, `kexec_load` and similar.
+- Notifications and portals go through `xdg-dbus-proxy`, which only lets through the calls listed under Permissions.
+- The private home is tied to the app's `Name=`. A different app with the same file name is refused rather than inheriting the first one's data.
 
 ## Permissions
 
-Settings live in plain `key=value` files:
-
-- `~/.config/ajail/default.conf` for all apps
-- `~/.config/ajail/apps/NAME.conf` for one app
-
-Precedence is built-in defaults, then `default.conf`, then the app's file. List entries add up, except `xdg`, which is resolved per folder.
+Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.config/ajail/apps/NAME.conf` (one app). The app file overrides the default; list entries add up, except `xdg`.
 
 | Key | Default | Grants |
 | --- | --- | --- |
-| `net` | 1 | Network access (including localhost and your LAN) |
-| `net_private` | 0 | With `net`: own network via `pasta`, so the app reaches the internet but not services on this computer (localhost). Your local network is still reachable. Fails to start if `pasta` is missing |
+| `net` | 1 | Network, including localhost and your LAN |
+| `net_private` | 0 | With `net`: internet but not services on this computer, via `pasta`. Your LAN stays reachable. App won't start if `pasta` is missing |
 | `sound` | 1 | PipeWire/PulseAudio (includes microphone) |
-| `gpu` | 1 | `/dev/dri` and NVIDIA devices |
-| `x11` | 0 | X11 socket; weaker isolation |
-| `portals` | 1 | Notifications and a fixed list of desktop portals (settings, open links, file chooser, print, background and a few more) via the D-Bus proxy. Other portals, such as RemoteDesktop, Location and Secret, are not reachable |
-| `portal_screenshot` | 1 | With `portals`: the Screenshot portal. The desktop shows its own prompt |
-| `portal_screencast` | 1 | With `portals`: the ScreenCast portal (screen sharing in Discord, Teams, Slack). The desktop shows its own picker |
-| `tray` | 0 | Tray icon and media keys |
-| `camera` | 0 | `/dev/video*`, and the Camera portal when `portals` is on |
-| `input` | 0 | `/dev/input` (controllers, raw input) |
-| `ssh_agent` | 0 | Your SSH agent socket; the app can sign as you |
+| `gpu` | 1 | `/dev/dri`, NVIDIA devices |
+| `x11` | 0 | X11 socket (weaker isolation) |
+| `portals` | 1 | Notifications and a fixed set of portals: settings, open links, file chooser, print, background, and a few more |
+| `portal_screenshot` | 1 | With `portals`: Screenshot portal |
+| `portal_screencast` | 1 | With `portals`: ScreenCast portal (screen sharing) |
+| `tray` | 0 | Tray icon, media keys |
+| `camera` | 0 | `/dev/video*` and the Camera portal |
+| `input` | 0 | `/dev/input` |
+| `ssh_agent` | 0 | Your SSH agent; the app can sign as you |
 | `printing` | 0 | CUPS socket |
-| `theme` | 1 | Read-only access to your fonts, icons and themes |
-| `userns` | 1 | Lets the app create its own sandbox (Electron/Chromium need this); `0` needs bubblewrap 0.8+ |
-| `tmp_home` | 0 | The private home is a temporary filesystem, erased when the app closes. Shared folders are not affected |
-| `privacy` | 0 | Minimal `/etc/passwd`, `/etc/group` and `/etc/hosts` (no real name) and the hostname `ajail` |
-| `harden` | 0 | Also blocks `io_uring_*`, `userfaultfd`, `process_vm_readv/writev` and `kcmp`. Can slow down or break some apps |
+| `theme` | 1 | Read-only fonts, icons, themes |
+| `userns` | 1 | App may create its own sandbox (Electron/Chromium need it); `0` needs bubblewrap 0.8+ |
+| `tmp_home` | 0 | Private home is erased on exit |
+| `privacy` | 0 | Minimal `/etc/passwd`, `/etc/group`, `/etc/hosts`; hostname `ajail` |
+| `harden` | 0 | Also blocks `io_uring_*`, `userfaultfd`, `process_vm_*`, `kcmp`. May break apps |
 
-Limits use the same files; `0` means no limit, and they need `systemd-run --user` (without it the app runs unlimited, with a warning):
-
-```ini
-mem_max=2048     # memory in MB
-cpu_max=150      # percent of one CPU core
-tasks_max=300    # processes and threads
-```
+Limits (`0` = none, needs `systemd-run --user`): `mem_max=2048` (MB), `cpu_max=150` (% of one core), `tasks_max=300`.
 
 List keys:
 
 ```ini
 allow=/home/me/Projects          # read & write
 allow_ro=/media/me/usb/photos    # read-only
-xdg=download                     # standard folder, read & write
-xdg=pictures:ro                  # standard folder, read-only
+xdg=download                     # download, documents, pictures, music, videos, desktop
+xdg=pictures:ro                  # read-only
 xdg=documents:none               # cancel a folder granted in default.conf
 env=MY_VAR=value
-talk=org.gnome.SessionManager    # extra D-Bus name the app may talk to
+talk=org.gnome.SessionManager    # extra D-Bus name
+portal=Location                  # opt-in portal, one line each
 ```
 
-`xdg` kinds: `download`, `documents`, `pictures`, `music`, `videos`, `desktop`.
+Shared paths must be non-hidden items in your home or under `/mnt/`, `/media/`, `/run/media/$USER/`; others are skipped with a warning.
 
-Shared paths must be non-hidden items inside your home, or live under `/mnt/`, `/media/` or `/run/media/$USER/`. Anything else is skipped with a warning.
+**Opt-in portals.** `Location`, `GlobalShortcuts`, `RemoteDesktop`, `InputCapture`, `Wallpaper`, `DynamicLauncher` and `Secret` are blocked unless you add `portal=NAME`. They need `portals=1`. Unknown names are ignored with a warning. `RemoteDesktop` and `InputCapture` can control or capture your input, and `Secret` can read the desktop's stored secrets, so enable them only for apps that need them. The desktop may still show its own prompt. The Secret *service* (`org.freedesktop.secrets`) stays blocked. In `ajail-gui` each portal is a switch on the app's page; one enabled in the default settings shows as on and locked on every app.
 
-To start over, press **Reset all settings…** on the main page of `ajail-gui`. It clears `default.conf` and `ui.conf` (the default permissions, the ask-before-opening setting and every app's remembered choices). Each app's own permissions and data are kept; those have their own **Reset** buttons on the app's page.
+**Reset.** *Reset all settings…* on the main page of `ajail-gui` clears `default.conf` and `ui.conf`. Each app's own permissions and data have their own Reset buttons.
 
 ## Self-test
 
 ```bash
-./make-selftest              # writes ajail-selftest.AppImage (needs mksquashfs)
-ajail ./ajail-selftest.AppImage
+./make-selftest && ajail ./ajail-selftest.AppImage
 ```
 
-The test app isn't a real AppImage runtime, so it only runs through `ajail`. It reports what the sandbox exposes (network, sockets, devices, home folders, D-Bus, desktop portals, seccomp, nested sandboxes) and saves the report to `selftest-report.txt` in the app's private home.
+Prints what the sandbox exposes and saves it to `selftest-report.txt` in the app's private home. Opt-in portals should read `blocked`; `EXPOSED` means one is reachable without being enabled. The portal rows only appear when the app has a session bus (`portals=1`).
 
-## Files and logs
+## Files
 
 | Path | Contents |
 | --- | --- |
-| `~/.config/ajail/` | Settings and remembered app identities |
-| `~/.appimage-homes/NAME` | Private home per app |
-| `~/.local/share/ajail/extracted/` | Cache for AppImages you ran directly from a terminal or with the prompt turned off (safe to delete; rebuilt on next launch). Run once leaves nothing here |
-| `~/.local/share/ajail/apps/` | Installed apps. Deleting a folder here removes the app. Compressed installs hold `image` instead of `root` |
-| `$XDG_RUNTIME_DIR/ajail-mnt/` | Temporary mountpoints for running compressed apps |
-| `~/.local/share/applications/ajail-NAME.desktop` | Launcher of an installed app (icons go in `~/.local/share/icons/hicolor/`) |
-| `~/.config/ajail/ui.conf` | The "ask before opening" setting and the last choices in the install window |
+| `~/.config/ajail/` | Settings, app identities, `ui.conf` (install-window choices) |
+| `~/.appimage-homes/NAME` | Private home |
+| `~/.local/share/ajail/apps/` | Installed apps (delete a folder to remove one) |
+| `~/.local/share/ajail/extracted/` | Cache for apps run without installing; safe to delete |
+| `~/.local/share/applications/ajail-NAME.desktop` | Generated launcher (name, categories, file types and icon only; never the app's `Exec`) |
 | `~/.local/state/ajail/ajail.log` | Launch log and app stderr |
 
-If an app fails within 10 seconds of starting, ajail sends a notification that opens `ajail-gui` on that app's log.
+If an app dies within 10 seconds, ajail sends a notification that opens its log in `ajail-gui`.
 
 ## Limitations
 
-This is a convenience layer over bubblewrap, not a security guarantee. **Keep localhost private** hides services on this computer but does not block your local network or the internet, and it relies on the `pasta` command line options listed in the source; test it with the self-test (`Host services visible` should show an isolated network) and report problems. The resource limits protect your session, not your privacy, and are skipped if systemd is unavailable. Compressed installs (experimental) read the AppImage outside the sandbox. Enabling `x11`, `ssh_agent`, `input` or broad folder shares weakens isolation, and `net` gives the app your network. Check the result with the self-test or `ajail preview NAME`.
+A convenience layer over bubblewrap, not a security guarantee. `net` gives the app your network; `net_private` hides this computer's services but not your LAN or the internet. `x11`, `ssh_agent`, `input` and broad folder shares weaken isolation. Compressed installs read the image outside the sandbox. Resource limits protect your session, not your privacy. Check the result with the self-test or `ajail preview NAME`.

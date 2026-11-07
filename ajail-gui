@@ -30,8 +30,20 @@ DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "x11": 0, "portals": 1, "tray": 0, "
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
             "portal_screenshot": 1, "portal_screencast": 1}
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}      # 0 = no limit
-LISTS = ("allow", "allow_ro", "xdg", "env", "talk")
-XDG = [("download", "Downloads"), ("documents", "Documents"), ("pictures", "Pictures"),
+LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
+# Opt-in desktop portals. Keep in sync with EXTRA_PORTALS in ajail.
+EXTRA_PORTALS = ("Location", "GlobalShortcuts", "RemoteDesktop", "InputCapture", "Wallpaper", "DynamicLauncher", "Secret")
+PORTAL_INFO = {      # name -> (switch title, description); must have exactly the EXTRA_PORTALS keys
+    "Location": ("Location", "Let the app ask the desktop where you are."),
+    "GlobalShortcuts": ("Global shortcuts", "Let the app register keyboard shortcuts that work in any window."),
+    "RemoteDesktop": ("Remote desktop and input control",
+                      "Let the app ask to control your mouse and keyboard. Far-reaching access."),
+    "InputCapture": ("Input capture", "Let the app ask to capture your keyboard and mouse input. Far-reaching access."),
+    "Wallpaper": ("Wallpaper", "Let the app ask to change your desktop wallpaper."),
+    "DynamicLauncher": ("Create launchers", "Let the app ask to add its own entries to your app menu."),
+    "Secret": ("Secrets", "Let the app ask the desktop for its stored secrets (keyring). Far-reaching access."),
+}
+XDG =[("download", "Downloads"), ("documents", "Documents"), ("pictures", "Pictures"),
        ("music", "Music"), ("videos", "Videos"), ("desktop", "Desktop")]
 MODES = ["No access", "Read-only", "Read & write"]
 LABEL = {"net": "Internet", "sound": "Audio", "gpu": "Graphics", "camera": "Camera",
@@ -939,6 +951,32 @@ class Win(Adw.ApplicationWindow):
         list_group("Environment variables", "Extra variables set for this app.", "env",
                    ["Name", "Value"],
                    lambda v: f"{v[0]}={v[1]}" if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v[0]) else None)
+        # One switch per opt-in portal. Lists only add up, so a portal enabled in the default settings
+        # shows as on (and locked) on an app's page; it can only be turned off in the default settings.
+        pg = Adw.PreferencesGroup(
+            title="Extra portals",
+            description="Off by default. Each switch lets the app use one more desktop portal. "
+                        "Needs Notifications and portals. The desktop may still show its own prompt.")
+        for pname in EXTRA_PORTALS:
+            ptitle, psub = PORTAL_INFO[pname]
+            inherited = bool(scope) and pname in G["portal"]
+            psw = Adw.SwitchRow(
+                title=ptitle,
+                subtitle=psub + ("\nOn in the default settings." if inherited else ""),
+                active=inherited or pname in R["portal"], sensitive=not inherited)
+
+            def on_portal(row, _p, pname=pname):
+                if row.get_active():
+                    if pname not in R["portal"]:
+                        R["portal"].append(pname)
+                else:
+                    while pname in R["portal"]:
+                        R["portal"].remove(pname)
+                commit()
+
+            psw.connect("notify::active", on_portal)
+            pg.add(psw)
+        page.add(pg)
         list_group("D-Bus services", "Extra session-bus names the app may talk to (advanced).", "talk",
                    ["Service name, e.g. org.gnome.SessionManager"],
                    lambda v: v[0] if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]*(\.\*)?", v[0]) else None)

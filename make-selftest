@@ -162,19 +162,26 @@ if bus and shutil.which("gdbus"):
             row("ALLOWED" if ok else "INFO", f"  Portal: {label}", v if ok else "not offered by this desktop")
         # Portals ajail gates. Reading a version is always allowed, so call a method with no arguments instead:
         # the proxy answers AccessDenied if the portal is blocked, and the desktop answers InvalidArgs (without
-        # opening any dialog) if it is reachable. RemoteDesktop, Location and Secret should always be blocked.
-        for iface, method, label, should_block in (
+        # opening any dialog) if it is reachable. The opt-in portals (portal=NAME in the settings) must be blocked
+        # unless enabled; ajail tells us which ones are enabled in AJAIL_PORTALS. Reachable but not enabled is EXPOSED.
+        enabled = {p for p in os.environ.get("AJAIL_PORTALS", "").split(",") if p}
+        for iface, method, label, opt_in in (
                 ("Screenshot", "Screenshot", "screenshots", False), ("ScreenCast", "CreateSession", "screen sharing", False),
-                ("Camera", "AccessCamera", "camera access", False), ("RemoteDesktop", "CreateSession", "remote desktop", True),
-                ("Location", "CreateSession", "location", True), ("Secret", "RetrieveSecret", "secrets", True)):
+                ("Camera", "AccessCamera", "camera access", False),
+                ("Location", "CreateSession", "location", True), ("GlobalShortcuts", "CreateSession", "global shortcuts", True),
+                ("RemoteDesktop", "CreateSession", "remote desktop", True), ("InputCapture", "CreateSession", "input capture", True),
+                ("Wallpaper", "SetWallpaperURI", "wallpaper", True), ("DynamicLauncher", "PrepareInstall", "dynamic launcher", True),
+                ("Secret", "RetrieveSecret", "secrets", True)):
+            on = iface in enabled
             rc, o = portal(f"org.freedesktop.portal.{iface}.{method}")
             if "AccessDenied" in o or "not allowed" in o:
-                row("blocked", f"  Portal: {label}", "blocked by the proxy")
+                row("blocked", f"  Portal: {label}", "enabled in settings but blocked by the proxy" if on else "blocked by the proxy")
             elif "UnknownMethod" in o or "UnknownInterface" in o or "UnknownObject" in o:
                 row("INFO", f"  Portal: {label}", "not offered by this desktop")
+            elif opt_in and not on:
+                row("EXPOSED", f"  Portal: {label}", "reachable (should be blocked)")
             else:
-                row("EXPOSED" if should_block else "ALLOWED", f"  Portal: {label}",
-                    "reachable (should be blocked)" if should_block else "reachable")
+                row("ALLOWED", f"  Portal: {label}", "reachable (enabled)" if on else "reachable")
         args = ("org.freedesktop.appearance", "color-scheme")
         rc, o = portal("org.freedesktop.portal.Settings.Read", *args)
         if rc != 0:
