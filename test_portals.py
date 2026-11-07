@@ -390,15 +390,20 @@ class ButtonLayout(unittest.TestCase):
     """The host's window button layout reaches the app as a read-only GSettings key file."""
     def setUp(self):
         self.d = tempfile.mkdtemp()
+        self.patch("host_cursor", lambda: (None, None))     # keep the host's real cursor out of these tests
+
+    def patch(self, name, value):
+        old = A[name]; A[name] = value
+        self.addCleanup(A.__setitem__, name, old)
 
     def test_keyfile_holds_only_the_layout(self):
-        A["host_button_layout"] = lambda: "menu:minimize,maximize,close"
+        self.patch("host_button_layout", lambda: "menu:minimize,maximize,close")
         p = A["make_gsettings_keyfile"](self.d)
         self.assertEqual(open(p).read(),
                          "[org/gnome/desktop/wm/preferences]\nbutton-layout='menu:minimize,maximize,close'\n")
 
     def test_no_host_value_means_no_file(self):
-        A["host_button_layout"] = lambda: None
+        self.patch("host_button_layout", lambda: None)
         self.assertIsNone(A["make_gsettings_keyfile"](self.d))
         self.assertFalse(os.path.exists(f"{self.d}/gsettings-keyfile"))
 
@@ -417,6 +422,133 @@ class ButtonLayout(unittest.TestCase):
         self.assertNotIn("GSETTINGS_BACKEND", a)
         a = A["bwrap_args"]("Foo", "/x", A["load_cfg"]("Foo"), ["/app/AppRun"])
         self.assertNotIn("GSETTINGS_BACKEND", a)
+
+class Cursor(unittest.TestCase):
+    """The host's cursor theme and size (org.gnome.desktop.interface) reach the app in the same key file."""
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.patch("host_button_layout", lambda: None)
+
+    def patch(self, name, value):
+        old = A[name]; A[name] = value
+        self.addCleanup(A.__setitem__, name, old)
+
+    def gs(self, theme, size):
+        vals = {"cursor-theme": theme, "cursor-size": size}
+        self.patch("gsettings_get", lambda schema, key: vals.get(key) if schema == "org.gnome.desktop.interface" else None)
+
+    def test_reads_theme_and_size(self):
+        self.gs("'Hackneyed'", "32")
+        self.assertEqual(A["host_cursor"](), ("Hackneyed", 32))
+
+    def test_size_zero_is_unset(self):
+        self.gs("'Hackneyed'", "0")
+        self.assertEqual(A["host_cursor"](), ("Hackneyed", None))
+        for z in ("00", "000"):
+            self.gs("'Hackneyed'", z)
+            self.assertIsNone(A["host_cursor"]()[1], z)
+
+    def test_theme_is_validated(self):
+        for bad in ("'../evil'", "'a/b'", "'.hidden'", "''", "'a'b'", "\"it's\"", "Hackneyed", "'x\\ny'", "'a\nb'",
+                    "'" + "a" * 65 + "'", "'a;b'", "'a=b'", "'[x]'", "'ü'", None):
+            self.gs(bad, "24")
+            self.assertIsNone(A["host_cursor"]()[0], bad)
+        for good in ("Hackneyed", "Breeze_Snow", "Bibata-Modern-Classic", "Adwaita", "My Theme 2.0", "x+y"):
+            self.gs(f"'{good}'", "24")
+            self.assertEqual(A["host_cursor"]()[0], good)
+
+    def test_size_is_validated(self):
+        for bad in ("-1", "257", "1000", "1e2", "24.0", "uint32 24", "'24'", "", "0x18", " ", None):
+            self.gs("'Adwaita'", bad)
+            self.assertIsNone(A["host_cursor"]()[1], bad)
+        for good, n in (("1", 1), ("24", 24), ("256", 256)):
+            self.gs("'Adwaita'", good)
+            self.assertEqual(A["host_cursor"]()[1], n)
+
+    def test_keyfile_has_theme_and_no_size_when_size_is_zero(self):
+        self.gs("'Hackneyed'", "0")
+        p = A["make_gsettings_keyfile"](self.d)
+        self.assertEqual(open(p).read(), "[org/gnome/desktop/interface]\ncursor-theme='Hackneyed'\n")
+
+    def test_keyfile_has_theme_and_size(self):
+        self.gs("'Hackneyed'", "36")
+        p = A["make_gsettings_keyfile"](self.d)
+        self.assertEqual(open(p).read(), "[org/gnome/desktop/interface]\ncursor-theme='Hackneyed'\ncursor-size=36\n")
+
+    def test_keyfile_size_only(self):
+        self.gs(None, "36")
+        p = A["make_gsettings_keyfile"](self.d)
+        self.assertEqual(open(p).read(), "[org/gnome/desktop/interface]\ncursor-size=36\n")
+
+    def test_layout_and_cursor_share_one_file(self):
+        self.patch("host_button_layout", lambda: ":minimize,maximize,close")
+        self.gs("'Hackneyed'", "24")
+        p = A["make_gsettings_keyfile"](self.d)
+        self.assertEqual(open(p).read(),
+                         "[org/gnome/desktop/wm/preferences]\nbutton-layout=':minimize,maximize,close'\n\n"
+                         "[org/gnome/desktop/interface]\ncursor-theme='Hackneyed'\ncursor-size=24\n")
+
+    def test_nothing_found_means_no_file(self):
+        self.gs(None, None)
+        self.assertIsNone(A["make_gsettings_keyfile"](self.d))
+        self.assertFalse(os.path.exists(f"{self.d}/gsettings-keyfile"))
+        self.gs("'Hackneyed'", "0"); self.gs("'../x'", "0")      # size 0 + rejected theme: still nothing
+        self.assertIsNone(A["make_gsettings_keyfile"](self.d))
+
+    def test_keyfile_only_asks_gnome_interface_schema(self):
+        asked = []
+        self.patch("gsettings_get", lambda schema, key: asked.append((schema, key)))
+        A["host_cursor"]()
+        self.assertEqual(sorted(asked), [("org.gnome.desktop.interface", "cursor-size"),
+                                         ("org.gnome.desktop.interface", "cursor-theme")])
+
+    def test_env_cursor_vars_are_still_passed_through(self):
+        os.environ["XCURSOR_THEME"] = "Foo"
+        self.addCleanup(os.environ.pop, "XCURSOR_THEME", None)
+        a = A["bwrap_args"]("Foo", "/x", A["load_cfg"]("Foo"), ["/app/AppRun"])
+        i = a.index("XCURSOR_THEME"); self.assertEqual(a[i + 1], "Foo")
+
+    def test_preview_decides_by_what_would_be_written(self):
+        with open(f"{HERE}/ajail") as f: s = f.read()
+        self.assertIn('cfg["theme"] and gsettings_keyfile_text() is not None', s)
+
+class IniLayout(unittest.TestCase):
+    """The button layout comes from gsettings first, then from your own GTK settings.ini."""
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.patch("HOME", self.tmp)
+        self.patch("gsettings_get", lambda schema, key: "'appmenu:close'" if key == "button-layout" else None)
+
+    def patch(self, name, value):
+        old = A[name]; A[name] = value
+        self.addCleanup(A.__setitem__, name, old)
+
+    def ini(self, text, ver="gtk-3.0"):
+        os.makedirs(f"{self.tmp}/.config/{ver}", exist_ok=True)
+        with open(f"{self.tmp}/.config/{ver}/settings.ini", "w") as f: f.write(text)
+
+    def test_gsettings_comes_first(self):
+        self.ini("[Settings]\ngtk-decoration-layout=close:\n")
+        self.assertEqual(A["host_button_layout"](), "appmenu:close")
+
+    def test_settings_ini_is_the_fallback(self):
+        self.patch("gsettings_get", lambda schema, key: None)
+        self.ini("[Settings]\ngtk-decoration-layout=close:\n")
+        self.assertEqual(A["host_button_layout"](), "close:")
+
+    def test_nothing_found_is_none(self):
+        self.patch("gsettings_get", lambda schema, key: None)
+        self.assertIsNone(A["host_button_layout"]())
+
+    def test_invalid_ini_value_is_skipped(self):
+        self.patch("gsettings_get", lambda schema, key: None)
+        self.ini("[Settings]\ngtk-decoration-layout=close;rm\n")
+        self.assertIsNone(A["host_button_layout"]())
+
+    def test_gtk4_ini_comes_before_gtk3(self):
+        self.ini("[Settings]\ngtk-decoration-layout=:minimize\n", "gtk-3.0")
+        self.ini("[Settings]\ngtk-decoration-layout=:close\n", "gtk-4.0")
+        self.assertEqual(A["gtk_ini_layout"](), ":close")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
