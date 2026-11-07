@@ -257,6 +257,69 @@ class InstallMove(unittest.TestCase):
             with self.assertRaises(SystemExit): A["cmd_restore"](["Foo"])         # original path is taken
         self.assertTrue(os.path.exists(f"{d}/image"))
 
+    def test_uninstall_refuses_to_delete_a_moved_image(self):
+        d = f"{A['INSTALLED']}/Foo"; os.makedirs(d)
+        A["place_image"](self.app, f"{d}/image", True)
+        open(f"{d}/origin", "w").write(self.app)
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit): A["cmd_uninstall"](["Foo"])
+        self.assertTrue(os.path.isfile(f"{d}/image"))                          # nothing was deleted
+        with contextlib.redirect_stdout(io.StringIO()):
+            A["cmd_uninstall"](["Foo", "--discard-image"])                      # the explicit opt-out still works
+        self.assertFalse(os.path.exists(d))
+
+    def test_uninstall_without_move_is_unchanged(self):
+        d = f"{A['INSTALLED']}/Foo"; os.makedirs(d); open(f"{d}/image", "wb").write(b"x")     # copied: no origin file
+        with contextlib.redirect_stdout(io.StringIO()):
+            A["cmd_uninstall"](["Foo"])
+        self.assertFalse(os.path.exists(d))
+
+    def test_gui_uninstall_restores_first(self):
+        with open(f"{HERE}/ajail-gui") as f: s = f.read()
+        self.assertIn('[SELF, "restore", scope]', s); self.assertIn('"--discard-image"', s)
+
+    def moved_app(self):
+        d = f"{A['INSTALLED']}/Foo"; os.makedirs(d)
+        A["place_image"](self.app, f"{d}/image", True)
+        open(f"{d}/origin", "w").write(self.app)
+        return d
+
+    def test_restore_keep_copies_back_and_stays_installed(self):
+        d = self.moved_app()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            A["cmd_restore"](["Foo", "--keep"])
+        self.assertEqual(open(self.app, "rb").read(), b"data")                 # the file is back
+        self.assertTrue(os.path.isfile(f"{d}/image"))                          # the app still has its image
+        self.assertFalse(os.path.exists(f"{d}/origin"))                        # nothing left to protect
+        self.assertIn("stays installed", out.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()):
+            A["cmd_uninstall"](["Foo"])                                        # so uninstalling no longer refuses
+        self.assertFalse(os.path.exists(d))
+
+    def test_restore_to_another_folder(self):
+        d = self.moved_app()
+        other = f"{self.d}/other"; os.makedirs(other)
+        with contextlib.redirect_stdout(io.StringIO()):
+            A["cmd_restore"](["Foo", "--keep", "--to", other])
+        self.assertEqual(open(f"{other}/Foo.AppImage", "rb").read(), b"data")  # same file name, chosen folder
+        self.assertFalse(os.path.exists(self.app))                             # not at the old place
+        self.assertTrue(os.path.isfile(f"{d}/image"))
+
+    def test_restore_to_missing_folder_or_taken_name_refuses(self):
+        d = self.moved_app()
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit): A["cmd_restore"](["Foo", "--keep", "--to", f"{self.d}/nope"])
+            taken = f"{self.d}/taken"; os.makedirs(taken); open(f"{taken}/Foo.AppImage", "w").close()
+            with self.assertRaises(SystemExit): A["cmd_restore"](["Foo", "--to", taken])
+            with self.assertRaises(SystemExit): A["cmd_restore"](["Foo", "--to"])        # missing value
+        self.assertTrue(os.path.exists(f"{d}/origin")); self.assertTrue(os.path.isfile(f"{d}/image"))
+
+    def test_gui_restore_button_asks_for_a_folder(self):
+        with open(f"{HERE}/ajail-gui") as f: s = f.read()
+        self.assertIn('"restore", scope, "--keep", "--to", folder', s)
+        self.assertIn("Choose where to put the AppImage", s); self.assertIn("Get the AppImage back", s)
+
 class MountDefault(unittest.TestCase):
     def test_gui_has_global_switch_and_fallback(self):
         with open(f"{HERE}/ajail-gui") as f: s = f.read()

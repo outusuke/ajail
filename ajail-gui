@@ -654,8 +654,17 @@ class Win(Adw.ApplicationWindow):
         dlg.present(self)
 
     def uninstall(self, scope):
-        dlg = Adw.AlertDialog(heading=f"Uninstall {scope}?",
-                              body="It is removed from your app menu. Keep its saved data in case you reinstall it?")
+        origin = ""      # set when the install moved the AppImage into AppImage Jail: uninstalling would delete it
+        if os.path.isfile(f"{INSTALLED}/{scope}/origin") and os.path.isfile(f"{INSTALLED}/{scope}/image"):
+            try:
+                origin = open(f"{INSTALLED}/{scope}/origin").read().strip()
+            except OSError:
+                pass
+        body = "It is removed from your app menu. Keep its saved data in case you reinstall it?"
+        if origin:
+            body = (f"The AppImage was moved into AppImage Jail, so it is put back at {origin} first. "
+                    "Keep its saved data in case you reinstall it?")
+        dlg = Adw.AlertDialog(heading=f"Uninstall {scope}?", body=body)
         dlg.add_response("cancel", "Cancel")
         dlg.add_response("keep", "Keep data")
         dlg.add_response("purge", "Move data to Trash too")
@@ -663,16 +672,38 @@ class Win(Adw.ApplicationWindow):
         dlg.set_default_response("cancel")
         dlg.set_close_response("cancel")
 
-        def done(_d, r):
-            if r == "cancel":
-                return
-            res = run([SELF, "uninstall", scope] + (["--purge"] if r == "purge" else []))
+        def last_line(res, fallback):
+            return ((res.stderr or res.stdout).strip().splitlines() or [fallback])[-1][:120]
+
+        def finish(res, ok_msg):
             if res.returncode:
-                self.toast(((res.stderr or res.stdout).strip().splitlines() or ["Uninstall failed"])[-1][:120])
+                self.toast(last_line(res, "Uninstall failed"))
                 return
             self.nav.pop()
             self.fill_apps()
-            self.toast("Uninstalled")
+            self.toast(ok_msg)
+
+        def plain(purge, discard=False):
+            flags = (["--purge"] if purge else []) + (["--discard-image"] if discard else [])
+            finish(run([SELF, "uninstall", scope] + flags), "Uninstalled")
+
+        def done(_d, r):
+            if r == "cancel":
+                return
+            purge = r == "purge"
+            if not origin:
+                plain(purge)
+                return
+            res = run([SELF, "restore", scope])      # puts the file back and uninstalls (data is kept)
+            if res.returncode:
+                # Never leave the person stuck: say why, and let them choose to uninstall and delete the stored file.
+                self.confirm("Couldn't put the AppImage back",
+                             last_line(res, "Unknown error") + "\n\nUninstall anyway? The AppImage stored in "
+                             "AppImage Jail is deleted.", "Uninstall anyway", lambda: plain(purge, True))
+                return
+            if purge:
+                res = run([SELF, "uninstall", scope, "--purge"])
+            finish(res, f"Uninstalled. The AppImage was put back at {origin}")
 
         dlg.connect("response", done)
         self.dialog = dlg
@@ -787,6 +818,50 @@ class Win(Adw.ApplicationWindow):
             if not inst:
                 ag.add(packrow)
                 ag.add(askrow)
+            moved = ""       # the install moved the AppImage into AppImage Jail: offer to get it back without uninstalling
+            if kind == "mount" and os.path.isfile(f"{INSTALLED}/{scope}/origin"):
+                try:
+                    moved = open(f"{INSTALLED}/{scope}/origin").read().strip()
+                except OSError:
+                    pass
+            if moved:
+                rrow = Adw.ActionRow(title="Get the AppImage back",
+                                     subtitle="Choose a folder to put a copy in. The app stays installed and compressed.")
+                rbt = Gtk.Button(label="Restore…", valign=Gtk.Align.CENTER)
+
+                def do_restore(btn):
+                    fd = Gtk.FileDialog(title="Choose where to put the AppImage")
+                    if os.path.isdir(os.path.dirname(moved)):
+                        fd.set_initial_folder(Gio.File.new_for_path(os.path.dirname(moved)))     # where it came from
+
+                    def chosen(d, res):
+                        try:
+                            folder = d.select_folder_finish(res).get_path()
+                        except GLib.Error:
+                            return
+                        btn.set_sensitive(False)
+                        target = os.path.join(folder, os.path.basename(moved))
+
+                        def work():
+                            GLib.idle_add(done, run([SELF, "restore", scope, "--keep", "--to", folder]))
+
+                        def done(r):
+                            if r.returncode:
+                                self.toast(((r.stderr or r.stdout).strip().splitlines() or ["Restore failed"])[-1][:120])
+                                btn.set_sensitive(True)
+                            else:
+                                self.nav.pop()
+                                self.open_app(scope)
+                                self.toast(f"A copy of the AppImage is at {target}")
+                            return False
+
+                        threading.Thread(target=work, daemon=True).start()
+
+                    fd.select_folder(self, None, chosen)
+
+                rbt.connect("clicked", do_restore)
+                rrow.add_suffix(rbt)
+                ag.add(rrow)
             page.add(ag)
 
         def add_switch(g, key, t, sub):

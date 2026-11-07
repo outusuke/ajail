@@ -997,11 +997,15 @@ def cmd_install(args):
             print("ajail: could not move the AppImage to the Trash", file=sys.stderr)
 
 def cmd_uninstall(args):
-    purge = "--purge" in args
+    purge, discard = "--purge" in args, "--discard-image" in args
     names = [x for x in args if not x.startswith("--")]
-    if len(names) != 1: die("usage: ajail uninstall NAME [--purge]")
+    if len(names) != 1: die("usage: ajail uninstall NAME [--purge] [--discard-image]")
     name = clean(names[0])
     if running(name): die(f"{name} is running. Close it first")
+    d = f"{INSTALLED}/{name}"
+    if os.path.exists(f"{d}/origin") and os.path.isfile(f"{d}/image") and not discard:
+        die(f"{name}'s AppImage was moved into ajail and uninstalling would delete it. Run 'ajail restore {name}' to put "
+            f"it back (this also uninstalls), or add --discard-image to delete it")
     rm_tree(f"{INSTALLED}/{name}")
     try: os.unlink(f"{APPLICATIONS}/ajail-{name}.desktop")
     except OSError: pass
@@ -1025,20 +1029,39 @@ def cmd_uninstall(args):
 def cmd_restore(args):
     """Undo a compressed install that moved the AppImage: put the file back where it came from and uninstall the app
     (its data and settings are kept)."""
-    if len(args) != 1: die("usage: ajail restore NAME")
+    keep, dest = "--keep" in args, None
+    if "--to" in args:
+        i = args.index("--to")
+        if i + 1 >= len(args): die("--to needs a folder")
+        dest = args[i + 1]; del args[i:i + 2]
+    args = [x for x in args if x != "--keep"]
+    if len(args) != 1: die("usage: ajail restore NAME [--keep] [--to FOLDER]")
     name = clean(args[0])
-    if running(name): die(f"{name} is running. Close it first")
+    if running(name) and not keep: die(f"{name} is running. Close it first")
     d = f"{INSTALLED}/{name}"
     try: origin = open(f"{d}/origin").read().strip()
     except OSError: die(f"{name} was not moved into ajail, so there is nothing to put back")
     img = f"{d}/image"
     if not os.path.isfile(img): die(f"{name} has no stored AppImage")
-    if not os.path.isabs(origin) or not os.path.isdir(os.path.dirname(origin)):
-        die(f"the folder it came from no longer exists: {os.path.dirname(origin)}")
-    if os.path.lexists(origin): die(f"{origin} already exists, so the AppImage was not put back")
-    try: shutil.move(img, origin)
+    target = os.path.join(os.path.realpath(dest), os.path.basename(origin)) if dest else origin     # --to: another folder
+    if not os.path.isabs(target) or not os.path.isdir(os.path.dirname(target)):
+        die("the folder " + ("does not exist" if dest else "it came from no longer exists") + f": {os.path.dirname(target)}")
+    if os.path.lexists(target): die(f"{target} already exists, so the AppImage was not put back")
+    if keep:
+        # Put a copy back and leave the app installed (it still needs its stored image). Nothing is left to protect, so
+        # the marker goes and a later uninstall no longer refuses.
+        try:
+            place_image(img, target, False)
+            os.chmod(target, os.stat(img).st_mode & 0o777)
+            os.unlink(f"{d}/origin")
+        except OSError as e: die(f"could not put the AppImage back: {e.strerror or e}")
+        print(f"Put a copy of the AppImage back at {target}; {name} stays installed")
+        return
+    try: shutil.move(img, target)
     except OSError as e: die(f"could not put the AppImage back: {e.strerror or e}")
-    print(f"Put the AppImage back at {origin}")
+    print(f"Put the AppImage back at {target}")
+    try: os.unlink(f"{d}/origin")             # the file is back: uninstalling no longer needs to protect it
+    except OSError: pass
     cmd_uninstall([name])
 
 def ui_get(key):
@@ -1211,8 +1234,11 @@ ajail install FILE.AppImage      unpack it and add it to the app menu; the file 
                                  --mount, --move moves the file into ajail's folder instead of copying it, and falls
                                  back to a copy on a removable or network drive)
 ajail run NAME [args]            run an installed app
-ajail uninstall NAME [--purge]   remove it from the app menu (--purge also moves its data to the Trash)
-ajail restore NAME               undo a compressed install that moved the file: put it back and uninstall
+ajail uninstall NAME [--purge]   remove it from the app menu (--purge also moves its data to the Trash); refuses to
+                                 delete an AppImage that was moved into ajail (use restore, or --discard-image)
+ajail restore NAME [--keep] [--to FOLDER]
+                                 undo a compressed install that moved the file: put it back and uninstall
+                                 (--keep puts a copy back and leaves the app installed; --to picks the folder)
 ajail run-file [--once] [--mount] FILE
                                  run an AppImage without offering to install it (--once deletes its unpacked copy on exit;
                                  --mount mounts the file instead of unpacking it, experimental; ignored with --once)
