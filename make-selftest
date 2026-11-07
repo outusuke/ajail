@@ -5,7 +5,7 @@
 import os, shutil, struct, subprocess, sys, tempfile
 
 APPRUN = r'''#!/usr/bin/python3
-import ctypes, glob, os, platform, shutil, socket, subprocess, sys
+import ctypes, glob, os, platform, re, shutil, socket, subprocess, sys
 
 out = []
 def row(state, name, detail=""):
@@ -80,10 +80,33 @@ if bus and shutil.which("gdbus"):
                 "/org/freedesktop/Notifications", "--method", "org.freedesktop.Notifications.Notify",
                 "ajail-selftest", "0", "", "ajail self-test", "If you see this, notifications work.", "[]", "{}", "5000"])
     row(yn(rc == 0), "  Notifications", "popup sent" if rc == 0 else o[:70])
-    rc, o = sh(["gdbus", "call", "--session", "--dest", "org.freedesktop.portal.Desktop", "--object-path",
-                "/org/freedesktop/portal/desktop", "--method", "org.freedesktop.DBus.Properties.Get",
-                "org.freedesktop.portal.Settings", "version"])
-    row(yn(rc == 0), "  Desktop portal", o[:70])
+    def portal(method, *args):
+        return sh(["gdbus", "call", "--session", "--dest", "org.freedesktop.portal.Desktop", "--object-path",
+                   "/org/freedesktop/portal/desktop", "--method", method, *args])
+    def portal_version(iface):
+        rc, o = portal("org.freedesktop.DBus.Properties.Get", f"org.freedesktop.portal.{iface}", "version")
+        m = re.search(r"uint32 (\d+)", o)
+        return rc == 0, (f"v{m.group(1)}" if m else o[:60])
+    ok, v = portal_version("Settings")
+    row(yn(ok), "  Desktop portal", v)
+    if ok:
+        # Only the version property is read, so no dialogs open. "not offered" means the desktop's portal
+        # backend doesn't implement that portal; the bus itself is reachable (Settings just answered).
+        for iface, label in (("OpenURI", "open links"), ("FileChooser", "file chooser"),
+                             ("Notification", "notifications"), ("Print", "printing"),
+                             ("Screenshot", "screenshots"), ("ScreenCast", "screen sharing"),
+                             ("Inhibit", "keep awake"), ("Background", "background"),
+                             ("Account", "account info"), ("Camera", "camera access")):
+            ok, v = portal_version(iface)
+            row("ALLOWED" if ok else "INFO", f"  Portal: {label}", v if ok else "not offered by this desktop")
+        args = ("org.freedesktop.appearance", "color-scheme")
+        rc, o = portal("org.freedesktop.portal.Settings.Read", *args)
+        if rc != 0:
+            rc, o = portal("org.freedesktop.portal.Settings.ReadOne", *args)
+        m = re.search(r"uint32 (\d+)", o)
+        scheme = {"0": "no preference", "1": "prefers dark", "2": "prefers light"}
+        row(yn(rc == 0 and bool(m)), "  Portal call (dark mode)",
+            scheme.get(m.group(1), m.group(1)) if m else o[:60])
     rc, o = sh(["gdbus", "call", "--session", "--dest", "org.freedesktop.secrets", "--object-path",
                 "/org/freedesktop/secrets", "--method", "org.freedesktop.DBus.Peer.Ping"])
     row("blocked" if rc != 0 else "EXPOSED", "  Secret service (should be blocked)", "" if rc == 0 else o[:60])
@@ -110,7 +133,7 @@ DESKTOP = "[Desktop Entry]\nType=Application\nName=ajail selftest\nExec=AppRun\n
 
 def main():
     if not shutil.which("mksquashfs"):
-        sys.exit("mksquashfs missing: sudo dnf install squashfs-tools")
+        sys.exit("mksquashfs missing: install the squashfs-tools package for your distro")
     out = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else "ajail-selftest.AppImage")
     with tempfile.TemporaryDirectory() as t:
         d = f"{t}/AppDir"; os.makedirs(d)

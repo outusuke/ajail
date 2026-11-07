@@ -39,6 +39,30 @@ SYSCALLS_X86_64 = [246, 320, 298, 321, 103, 134, 163, 179, 248, 250, 249, 279, 2
 SYSCALLS_AARCH64 = [104, 294, 241, 280, 116, 89, 60, 217, 219, 218, 239, 235, 236, 237, 238, 265, 264]
 LEGACY_FLAGS = {"--net=none": ("net", 0), "--nosound": ("sound", 0), "--no3d": ("gpu", 0), "--x11": ("x11", 1)}
 
+# Install hints in error messages. Only families where the packages ajail asks for (bubblewrap, squashfs-tools,
+# xdg-dbus-proxy, squashfuse, fuse3) have the same names are listed; anywhere else gets a generic hint.
+OS_RELEASE = "/etc/os-release"
+INSTALL_CMD = {"fedora": "sudo dnf install", "debian": "sudo apt install", "arch": "sudo pacman -S"}
+
+def distro_family():
+    ids = []
+    try:
+        for ln in open(OS_RELEASE):
+            k, _, v = ln.strip().partition("=")
+            if k in ("ID", "ID_LIKE"): ids += v.strip('"').lower().split()
+    except OSError:
+        return None
+    for fam, keys in (("fedora", ("fedora", "rhel")), ("debian", ("debian", "ubuntu")),
+                      ("arch", ("arch",))):
+        if any(k in ids for k in keys): return fam
+    return None
+
+def install_hint(*pkgs):
+    """'sudo dnf install foo' style hint for this distro, or a generic one if it isn't recognised."""
+    fam = distro_family()
+    if fam not in INSTALL_CMD: return "install " + ", ".join(pkgs) + " with your package manager"
+    return f"{INSTALL_CMD[fam]} " + " ".join(pkgs)
+
 def die(msg, code=1):
     print(f"ajail: {msg}", file=sys.stderr); sys.exit(code)
 
@@ -209,7 +233,7 @@ def start_bus(cfg, name):
     if not want_bus(cfg): return None
     px = shutil.which("xdg-dbus-proxy")
     if not px:
-        print("ajail: xdg-dbus-proxy missing, so notifications/portals are off. Install: sudo dnf install xdg-dbus-proxy",
+        print("ajail: xdg-dbus-proxy missing, so notifications/portals are off. Install: " + install_hint("xdg-dbus-proxy"),
               file=sys.stderr)
         return None
     addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS") or f"unix:path={runtime_dir()}/bus"
@@ -360,7 +384,7 @@ def ensure_extracted(app, name, off):
                 return f"{d}/root"
         except OSError:
             pass
-        if not os.path.exists(UNSQ): die("unsquashfs missing: sudo dnf install squashfs-tools")
+        if not os.path.exists(UNSQ): die("unsquashfs missing: " + install_hint("squashfs-tools"))
         print(f"ajail: preparing {name} (first run or updated)...", file=sys.stderr)
         notify(f"Preparing {name} (first run or updated)")
         shutil.rmtree(d, ignore_errors=True)
@@ -406,7 +430,7 @@ def check_identity(name, root):
 def guard():
     if os.geteuid() == 0: die("refusing to run apps as root")
     if os.environ.get("AJAIL_ACTIVE"): die("recursion detected, aborting. Run: ajail off")
-    if not shutil.which("bwrap"): die("bubblewrap missing: sudo dnf install bubblewrap")
+    if not shutil.which("bwrap"): die("bubblewrap missing: " + install_hint("bubblewrap"))
 
 def check_display(cfg):
     if not cfg["x11"] and not wayland_path():
@@ -505,7 +529,7 @@ def installed_kind(name):
 
 def need_squashfuse():
     if not (shutil.which("squashfuse") and shutil.which("fusermount3")):
-        die("compressed installs need squashfuse: sudo dnf install squashfuse fuse3")
+        die("compressed installs need squashfuse: " + install_hint("squashfuse", "fuse3"))
     if not os.access("/dev/fuse", os.R_OK | os.W_OK):
         die("/dev/fuse is not accessible, so compressed installs cannot work on this system")
 
@@ -723,7 +747,7 @@ def cmd_on():
     need_root("on")
     if not os.path.exists(SELF) or os.stat(SELF).st_uid != 0: die(f"{SELF} must exist and be owned by root")
     for t in ("bwrap", "unsquashfs"):
-        if not shutil.which(t): die(f"{t} missing: sudo dnf install bubblewrap squashfs-tools")
+        if not shutil.which(t): die(f"{t} missing: " + install_hint("bubblewrap", "squashfs-tools"))
     open("/etc/binfmt.d/appimage-jail.conf", "w").write(RULE + "\n")
     subprocess.run(["systemctl", "restart", "systemd-binfmt"], check=True)
     print("ON: AppImages now run sandboxed")
@@ -748,7 +772,7 @@ def cmd_check():
     yes(os.path.exists("/dev/dri"), "GPU devices (/dev/dri) present", "no /dev/dri")
     if glob.glob("/dev/nvidia*"): line("OK", "NVIDIA devices will be shared when Graphics is on")
     yes(shutil.which("xdg-dbus-proxy"), "xdg-dbus-proxy installed (notifications, portals, tray)",
-        "xdg-dbus-proxy missing: sudo dnf install xdg-dbus-proxy")
+        "xdg-dbus-proxy missing: " + install_hint("xdg-dbus-proxy"))
     yes(seccomp_file(), "seccomp filter available", "seccomp filter not available on this CPU architecture")
     yes(bwrap_has("--disable-userns"), "bubblewrap supports disabling nested sandboxes",
         "bubblewrap too old for 'Allow the app's own sandbox = off'")

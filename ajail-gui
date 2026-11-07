@@ -181,8 +181,7 @@ def mount_install_cmd():
                         ("rhel", "sudo dnf install squashfuse fuse3"),
                         ("debian", "sudo apt install squashfuse fuse3"),
                         ("ubuntu", "sudo apt install squashfuse fuse3"),
-                        ("arch", "sudo pacman -S squashfuse fuse3"),
-                        ("suse", "sudo zypper install squashfuse fuse3")):
+                        ("arch", "sudo pacman -S squashfuse fuse3")):
         if family in ids:
             return cmd
     return None

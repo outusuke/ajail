@@ -25,14 +25,16 @@ Run AppImages inside a [bubblewrap](https://github.com/containers/bubblewrap) sa
 - Optional: `xdg-dbus-proxy` (notifications, portals, tray), `notify-send` (failure popups), `squashfuse` and `fuse3` (compressed installs, experimental)
 - For `ajail-gui`: PyGObject, GTK 4 and libadwaita (1.5 or newer, for `Adw.AlertDialog`)
 
-The error messages assume Fedora (`dnf`):
+On Fedora (the distro ajail was written on):
 
 ```bash
 sudo dnf install bubblewrap squashfs-tools xdg-dbus-proxy libnotify python3-gobject gtk4 libadwaita
 sudo dnf install squashfuse fuse3    # optional, for compressed installs
 ```
 
-Other distros need the equivalent packages.
+On other distros, install whatever your distro calls the same things: `bubblewrap`, `squashfs-tools` (for `unsquashfs`), `xdg-dbus-proxy`, `notify-send` (usually in a libnotify package), and for `ajail-gui` PyGObject with the GTK 4 and libadwaita bindings. Compressed installs also need `squashfuse` and `fuse3`. Package names differ between distros, so no commands are given for them here.
+
+For the tools ajail itself needs, its error messages and `ajail check` suggest the matching command on Fedora, Debian/Ubuntu and Arch (read from `/etc/os-release`, derivatives included), where those packages have the same names. Everywhere else they just name the packages.
 
 ## Install
 
@@ -143,7 +145,7 @@ Shared paths must be non-hidden items inside your home, or live under `/mnt/`, `
 ajail ./ajail-selftest.AppImage
 ```
 
-The test app isn't a real AppImage runtime, so it only runs through `ajail`. It reports what the sandbox exposes (network, sockets, devices, home folders, D-Bus, seccomp, nested sandboxes) and saves the report to `selftest-report.txt` in the app's private home.
+The test app isn't a real AppImage runtime, so it only runs through `ajail`. It reports what the sandbox exposes (network, sockets, devices, home folders, D-Bus, desktop portals, seccomp, nested sandboxes) and saves the report to `selftest-report.txt` in the app's private home.
 
 ## Files and logs
 
