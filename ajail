@@ -90,6 +90,14 @@ def log(msg, name=None):
     except OSError:
         pass
 
+LOG_RUN_MAX = 2_000_000    # bytes of one app run's output kept in the log
+NO_LOG = [False]      # set by 'preview' so that showing a command never writes to the log
+
+def warn(msg, name=None):
+    """A warning for the terminal and the log, so it also shows up on ajail-gui's Log page (menu launches have no terminal)."""
+    print(f"ajail: {msg}", file=sys.stderr)
+    if not NO_LOG[0]: log(f"WARNING {msg}", name)
+
 def notify(msg, critical=False):
     if shutil.which("notify-send"):
         try:
@@ -282,8 +290,7 @@ def start_bus(cfg, name):
     if not want_bus(cfg): return None
     px = shutil.which("xdg-dbus-proxy")
     if not px:
-        print("ajail: xdg-dbus-proxy missing, so notifications/portals are off. Install: " + install_hint("xdg-dbus-proxy"),
-              file=sys.stderr)
+        warn("xdg-dbus-proxy missing, so notifications/portals are off. Install: " + install_hint("xdg-dbus-proxy"), name)
         return None
     addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS") or f"unix:path={runtime_dir()}/bus"
     d = f"{runtime_dir()}/ajail"
@@ -442,10 +449,10 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None):
     a = ["bwrap", "--unshare-all", "--die-with-parent", "--new-session", "--clearenv"]
     if not cfg["userns"]:
         if bwrap_has("--disable-userns"): a.append("--disable-userns")
-        else: print("ajail: this bubblewrap is too old for --disable-userns; ignoring", file=sys.stderr)
+        else: warn("this bubblewrap is too old for --disable-userns; ignoring", name)
     if cfg["privacy"]:
         if bwrap_has("--hostname"): a += ["--hostname", "ajail"]
-        else: print("ajail: this bubblewrap is too old for --hostname; the computer name stays visible", file=sys.stderr)
+        else: warn("this bubblewrap is too old for --hostname; the computer name stays visible", name)
     if private_net(cfg):
         a += ["--uid", str(os.getuid()), "--gid", str(os.getgid())]     # keep your own ids inside pasta's namespace
     if cfg["net"]: a.append("--share-net")
@@ -512,7 +519,7 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None):
     for opt, p in share_list(cfg):
         ok = safe_path(p)
         if ok: a += [opt, ok, ok]
-        else: print(f"ajail: skipping unsafe or missing path '{p}'", file=sys.stderr)
+        else: warn(f"skipping unsafe or missing path '{p}'", name)
     for f in files:
         a += ["--bind", f, f]
     for item in cfg["env"]:
@@ -663,6 +670,8 @@ def launch(name, root, cfg, extra, source=None, once=False):
     sweep_runtime()
     bus = start_bus(cfg, name)
     sec = seccomp_file(cfg["harden"])
+    if sec is None and platform.machine() not in ("x86_64", "aarch64"):
+        warn(f"no system-call filter for the {platform.machine()} architecture; running without it", name)
     wd, gen, secpath = None, {}, None
     if cfg["privacy"] or priv or cfg["x11"]:
         wd = work_dir(); gen = make_files(cfg, wd)
@@ -687,11 +696,16 @@ def launch(name, root, cfg, extra, source=None, once=False):
     def tee():
         try:
             with open(LOG, "a") as lf:
+                n = 0                             # a chatty app must not fill the disk: cap what one run adds to the log
                 for line in p.stderr:
                     line = CTRL.sub("", line)     # an app must not inject terminal escape sequences (OSC 52 etc.)
                     try: sys.stderr.write(line); sys.stderr.flush()
                     except Exception: pass
-                    lf.write(f"[{name}] {line}"); lf.flush()
+                    if n < LOG_RUN_MAX:
+                        n += len(line)
+                        lf.write(f"[{name}] {line}")
+                        if n >= LOG_RUN_MAX: lf.write(f"[{name}] (more output not logged)\n")
+                        lf.flush()
         except Exception:
             pass
     t = threading.Thread(target=tee, daemon=True); t.start()
@@ -1034,6 +1048,7 @@ def cmd_check():
          else "compressed installs unavailable: needs squashfuse, fuse3 and access to /dev/fuse")
 
 def cmd_preview(n):
+    NO_LOG[0] = True
     name = clean(n) if n else "NAME"
     cfg = load_cfg(name)
     bus = f"{runtime_dir()}/ajail/PID.bus" if want_bus(cfg) else None
@@ -1046,6 +1061,32 @@ def cmd_preview(n):
     props = limit_props(cfg)
     if props: cmd = ["systemd-run", "--user", "--scope", "--quiet"] + props + ["--"] + cmd
     print(shlex.join(cmd))
+
+def app_list():
+    """Every app ajail knows about: installed, with a settings file, or with saved data."""
+    names = set()
+    for d, ext in ((f"{CONF}/apps", ".conf"), (HOMES, ""), (INSTALLED, "")):
+        try: entries = os.listdir(d)
+        except OSError: continue
+        for f in entries:
+            n = f[:-len(ext)] if ext and f.endswith(ext) else f
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", n): names.add(n)
+    return sorted(names)
+
+def cmd_list():
+    for n in app_list():
+        state = "running" if running(n) else "installed" if installed_kind(n) else "data only"
+        print(f"{n:32} {state}")
+
+def cmd_stop(args):
+    if len(args) != 1: die("usage: ajail stop NAME")
+    name = clean(args[0])
+    pids = running(name)
+    if not pids: die(f"{name} is not running")
+    for pid in pids:
+        try: os.kill(int(pid), signal.SIGTERM)
+        except OSError: pass
+    print(f"Stopping {name}")
 
 def cmd_dump(arg):
     """JSON of the raw settings, for ajail-gui."""
@@ -1064,6 +1105,8 @@ def cmd_dump(arg):
 
 HELP = """ajail on | off | status | check   force on/off for all AppImages, or check the setup
 ajail preview [NAME]             show the bwrap command that would run
+ajail list                       show your apps and which ones are running
+ajail stop NAME                  stop a running app
 ajail name FILE.AppImage         show the name ajail uses for this file
 ajail install FILE.AppImage      unpack it and add it to the app menu (--trash moves the file to the Trash;
                                  --mount keeps it compressed and mounts it at launch, experimental)
@@ -1086,6 +1129,8 @@ def main():
     elif c == "check": cmd_check()
     elif c == "preview": cmd_preview(a[1] if len(a) > 1 else "")
     elif c == "dump": cmd_dump(a[1] if len(a) > 1 else "")
+    elif c == "list" and len(a) == 1: cmd_list()
+    elif c == "stop": cmd_stop(a[1:])
     elif c == "name" and len(a) > 1: print(sanitize(a[1]))
     elif c == "install": cmd_install(a[1:])
     elif c == "uninstall": cmd_uninstall(a[1:])

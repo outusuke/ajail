@@ -126,11 +126,14 @@ def summary(G, A):
         for it in (src["xdg"] if src else []):
             k, _, m = it.partition(":")
             x[k] = m
+    extra = set(G.get("portal", []) + (A.get("portal", []) if A else []))
     folders = set(G["allow"] + G["allow_ro"] + (A["allow"] + A["allow_ro"] if A else []))
     n = len(folders) + sum(1 for m in x.values() if m != "none")
     parts = [t for k, t in LABEL.items() if e[k]]
     if n:
         parts.append(f"{n} shared folder" + ("" if n == 1 else "s"))
+    if extra:
+        parts.append(f"{len(extra)} extra portal" + ("" if len(extra) == 1 else "s"))
     return " · ".join(parts) or "Fully isolated"
 
 def path_ok(p):
@@ -370,6 +373,9 @@ class Win(Adw.ApplicationWindow):
                 write_cfg(None, empty())                    # default permissions
                 if os.path.exists(UICONF):
                     os.unlink(UICONF)                       # ask switch + every app's remembered choices
+                for fn in os.listdir(APPS) if os.path.isdir(APPS) else []:
+                    if fn.endswith(".conf"):                # every app's own permission toggles
+                        write_cfg(fn[:-5], empty())         # empty, not deleted: the file keeps the app listed
             except OSError as e:
                 self.toast(f"Could not reset: {e.strerror or e}")
                 return
@@ -381,8 +387,9 @@ class Win(Adw.ApplicationWindow):
 
         rbtn.connect("clicked", lambda *_: self.confirm(
             "Reset all settings?",
-            "The default permissions and every remembered open and disk-space choice go back to the built-in "
-            "settings. Each app's own permissions and data are not touched.", "Reset", do_reset_all))
+            "The default permissions, every app's own permissions and every remembered open and disk-space "
+            "choice go back to the built-in settings. The app menu entry, Sandbox every AppImage and each "
+            "app's data are not touched.", "Reset", do_reset_all))
         rg.add(rbtn)
         page.add(rg)
 
