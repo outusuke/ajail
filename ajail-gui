@@ -375,8 +375,8 @@ class Win(Adw.ApplicationWindow):
         opts.add_css_class("boxed-list")
         opts.append(opt_row(trash, "Move the AppImage to the Trash after installing",
                             "The installed app doesn't need the file. Run once never removes it."))
-        warn = ("Apps open a bit slower, and the file is read outside the sandbox. "
-                "Only for apps you trust. Experimental.")
+        warn = ("Applies to Install and Run once. Apps open a bit slower, and the file is read outside "
+                "the sandbox. Only for apps you trust. Experimental.")
         prow = opt_row(pack, "Use less disk space", warn)
         if not can_mount:
             # Dependencies missing: the checkbox is off, but clicking the row copies the install command.
@@ -411,7 +411,11 @@ class Win(Adw.ApplicationWindow):
                 self.install_file(path, trash.get_active(), lambda: self.open_app(name), pack.get_active())
                 return
             if r == "once":
-                subprocess.Popen([SELF, "run-file", "--once", path], start_new_session=True)
+                use_mount = can_mount and pack.get_active()
+                if can_mount:
+                    ui_set("install_mount", "1" if use_mount else "0")
+                subprocess.Popen([SELF, "run-file", "--once"] + (["--mount"] if use_mount else []) + [path],
+                                 start_new_session=True)
             if quit_on_close:
                 self.get_application().quit()
 

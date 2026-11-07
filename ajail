@@ -412,7 +412,7 @@ def check_display(cfg):
     if not cfg["x11"] and not wayland_path():
         die("no Wayland session found. Enable 'X11 compatibility' for this app in ajail-gui.")
 
-def run_app(arg, extra, once=False):
+def run_app(arg, extra, once=False, mount=False):
     guard()
     app = os.path.realpath(arg)
     if not os.path.isfile(app): die(f"not a file: {arg}")
@@ -420,6 +420,14 @@ def run_app(arg, extra, once=False):
     name = sanitize(app)
     cfg = load_cfg(name)
     check_display(cfg)
+    if mount:
+        # Nothing is unpacked: the AppImage itself is mounted for this run (squashfuse, outside the sandbox).
+        mp = mount_squashfs(app, off, name)
+        try:
+            launch(name, mp, cfg, extra, source=app)
+        finally:
+            unmount_image(mp)
+        return
     launch(name, ensure_extracted(app, name, off), cfg, extra, source=app, once=once)
 
 def run_installed(name, extra):
@@ -513,15 +521,18 @@ def sweep_mounts():
         except OSError: pass
 
 def mount_image(name):
+    d = f"{INSTALLED}/{name}"
+    return mount_squashfs(f"{d}/image", open(f"{d}/offset").read().strip(), name)
+
+def mount_squashfs(image, off, name):
+    """Mount the squashfs inside an AppImage with squashfuse and return the mountpoint."""
     need_squashfuse()
     sweep_mounts()
-    d = f"{INSTALLED}/{name}"
-    off = open(f"{d}/offset").read().strip()
     os.makedirs(MOUNTS, mode=0o700, exist_ok=True)
     mp = f"{MOUNTS}/{name}-{os.getpid()}"
     os.makedirs(mp, mode=0o700, exist_ok=True)
     try:
-        r = subprocess.run(["squashfuse", "-o", f"offset={off}", f"{d}/image", mp],
+        r = subprocess.run(["squashfuse", "-o", f"offset={off}", image, mp],
                            capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
     except subprocess.TimeoutExpired:
         r = subprocess.CompletedProcess([], 1, "", "timed out")
@@ -786,7 +797,9 @@ ajail install FILE.AppImage      unpack it and add it to the app menu (--trash m
                                  --mount keeps it compressed and mounts it at launch, experimental)
 ajail run NAME [args]            run an installed app
 ajail uninstall NAME [--purge]   remove it from the app menu (--purge also deletes its data)
-ajail run-file [--once] FILE     run an AppImage without offering to install it (--once deletes its unpacked copy on exit)
+ajail run-file [--once] [--mount] FILE
+                                 run an AppImage without offering to install it (--once deletes its unpacked copy on exit;
+                                 --mount mounts the file instead of unpacking it, experimental)
 ajail FILE.AppImage [args]       open an AppImage: offers Install or Run once when double-clicked,
                                  otherwise runs it sandboxed (files in args are shared for that run)
 Settings and everything else: ajail-gui"""
@@ -806,11 +819,11 @@ def main():
     elif c == "uninstall": cmd_uninstall(a[1:])
     elif c == "run" and len(a) > 1: run_installed(a[1], a[2:])
     elif c == "run-file":
-        rest = a[1:]
-        once = bool(rest) and rest[0] == "--once"
-        if once: rest = rest[1:]
-        if not rest: die("usage: ajail run-file [--once] FILE [args]")
-        run_app(rest[0], rest[1:], once)
+        rest, flags = a[1:], set()
+        while rest and rest[0] in ("--once", "--mount"):
+            flags.add(rest.pop(0))
+        if not rest: die("usage: ajail run-file [--once] [--mount] FILE [args]")
+        run_app(rest[0], rest[1:], "--once" in flags, "--mount" in flags)
     else: open_file(c, a[1:])
 
 main()
