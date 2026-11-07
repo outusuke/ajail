@@ -53,10 +53,19 @@ inp = glob.glob("/dev/input/*")
 row(yn(bool(inp)), "Input devices", f"{len(inp)} nodes")
 row("INFO", "/sys/devices entries", ", ".join(sorted(os.listdir("/sys/devices"))[:8]) if os.path.isdir("/sys/devices") else "none")
 
+# A folder only counts as shared if it is a mount point. An empty folder can be left over in the private
+# home from when the share was on (bwrap creates it as the mount point), and that is not the real folder.
+mounts = set()
+try:
+    for ln in open("/proc/self/mountinfo"):
+        mounts.add(ln.split()[4].replace("\\040", " "))
+except OSError: pass
 for k in ("Downloads", "Documents", "Pictures", "Music", "Videos", "Desktop"):
     p = f"{H}/{k}"
-    if os.path.isdir(p):
+    if p in mounts:
         row("ALLOWED", f"~/{k}", "read & write" if os.access(p, os.W_OK) else "read-only")
+    elif os.path.isdir(p):
+        row("blocked", f"~/{k}", "not shared (empty folder left in the private home)")
     else:
         row("blocked", f"~/{k}")
 for k in (".ssh", ".gnupg", ".config", ".mozilla", ".aws"):
@@ -64,7 +73,7 @@ for k in (".ssh", ".gnupg", ".config", ".mozilla", ".aws"):
 try: names = sorted(n for n in os.listdir(H) if not n.startswith("."))
 except OSError: names = []
 row("INFO", "Visible in ~ (non-hidden)", ", ".join(names) or "nothing (private home only)")
-row(yn(os.path.isdir(f"{H}/.local/share/fonts") or os.path.isdir(f"{H}/.fonts")), "Your fonts")
+row(yn(f"{H}/.local/share/fonts" in mounts or f"{H}/.fonts" in mounts), "Your fonts")
 for a in sys.argv[1:]:
     if os.path.exists(a):
         row("ALLOWED", "File argument", f"{a} ({'rw' if os.access(a, os.W_OK) else 'ro'})")
