@@ -176,10 +176,28 @@ def get_open_mode():
 def set_open_mode(v):
     ui_set("open_mode", v)
 
-def get_install_opt(key, default):
-    """Remembered state of a checkbox in the install window ('1' or '0')."""
-    v = ui_read().get(key)
-    return default if v not in ("0", "1") else v == "1"
+# What happens to the AppImage file you installed from. "move" only exists with "Use less disk space" (experimental),
+# because only then does the installed app need the file itself.
+ORIGINAL = {"trash": "Move to Trash", "keep": "Keep it", "move": "Move into app folder"}
+
+def original_choices(mount):
+    return ["trash", "keep"] + (["move"] if mount else [])
+
+def original_hint(choice, mount):
+    """A short note under the dropdown, only for choices that need one (the dialog is narrow)."""
+    if choice == "move":
+        return "No duplicate. Experimental: the file then only exists inside AppImage Jail."
+    if choice == "keep" and mount:
+        return "Uses about twice the space."
+    return ""
+
+def get_install_original():
+    """The remembered choice (also reads the old install_trash checkbox)."""
+    ui = ui_read()
+    v = ui.get("install_original")
+    if v in ORIGINAL:
+        return v
+    return "keep" if ui.get("install_trash") == "0" else "trash"
 
 def app_open_mode(name):
     """'ask' or 'run' for double-clicking this app's AppImage: its own setting, else the global default."""
@@ -187,8 +205,12 @@ def app_open_mode(name):
     return v if v in ("ask", "run") else get_open_mode()
 
 def app_mount(name):
-    """Whether this app was last set to 'Use less disk space'."""
-    return ui_read().get(f"mount.{name}") == "1"
+    """Whether this app uses 'Use less disk space': its own choice (mount.NAME), else the global default (mount)."""
+    ui = ui_read()
+    v = ui.get(f"mount.{name}")
+    if v not in ("0", "1"):
+        v = ui.get("mount")
+    return v == "1"
 
 def app_names():
     names = set()
@@ -349,6 +371,17 @@ class Win(Adw.ApplicationWindow):
         self.ask_handler = self.ask_row.connect(
             "notify::active", lambda r, _p: set_open_mode("ask" if r.get_active() else "run"))
         g.add(self.ask_row)
+        can_mount = bool(shutil.which("squashfuse") and shutil.which("fusermount3"))
+        self.mount_row = Adw.SwitchRow(
+            title="Use less disk space",
+            subtitle="Default for all apps. Keeps new installs compressed and mounts them at launch. Slower, and the "
+                     "file is read outside the sandbox, so only for apps you trust. Experimental. Each app can "
+                     "override it on its own page." + ("" if can_mount else " Needs squashfuse and fuse3."),
+            sensitive=can_mount)
+        self.mount_row.set_active(can_mount and ui_read().get("mount") == "1")
+        self.mount_handler = self.mount_row.connect(
+            "notify::active", lambda r, _p: ui_set("mount", "1" if r.get_active() else "0"))
+        g.add(self.mount_row)
         self.menu = Adw.SwitchRow(
             title="Show AppImage Jail in the app menu",
             subtitle="Adds a launcher for this window to your application menu.")
@@ -386,6 +419,9 @@ class Win(Adw.ApplicationWindow):
             self.ask_row.handler_block(self.ask_handler)
             self.ask_row.set_active(True)                   # the built-in default
             self.ask_row.handler_unblock(self.ask_handler)
+            self.mount_row.handler_block(self.mount_handler)
+            self.mount_row.set_active(False)                # the built-in default
+            self.mount_row.handler_unblock(self.mount_handler)
             self.fill_apps()
             self.toast("Settings reset to the defaults")
 
@@ -502,7 +538,6 @@ class Win(Adw.ApplicationWindow):
             heading=f"{'Update' if update else 'Install'} {name}?",
             body=f"It runs sandboxed and is added to your app menu. Allowed: {summary(d['global'], d.get('app'))}.")
         can_mount = bool(shutil.which("squashfuse") and shutil.which("fusermount3"))
-        trash = Gtk.CheckButton(active=get_install_opt("install_trash", True), valign=Gtk.Align.CENTER)
         pack = Gtk.CheckButton(active=can_mount and app_mount(name),
                                valign=Gtk.Align.CENTER)
 
@@ -514,8 +549,6 @@ class Win(Adw.ApplicationWindow):
 
         opts = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         opts.add_css_class("boxed-list")
-        opts.append(opt_row(trash, "Move the AppImage to the Trash after installing",
-                            "The installed app doesn't need the file. Run once never removes it."))
         warn = ("Applies to Install and Run once. Apps open a bit slower, and the file is read outside "
                 "the sandbox. Only for apps you trust. Experimental.")
         prow = opt_row(pack, "Use less disk space", warn)
@@ -536,6 +569,28 @@ class Win(Adw.ApplicationWindow):
 
                 prow.connect("activated", copy_cmd)
         opts.append(prow)
+        # One dropdown instead of a checkbox: what happens to the AppImage file after installing. The choices follow
+        # "Use less disk space": "Move into AppImage Jail" is offered only while it is on, and is never the default.
+        orow = Adw.ComboRow(title="Original file")
+        state = {"keys": []}
+
+        def cur_original():
+            i = orow.get_selected()
+            return state["keys"][i] if 0 <= i < len(state["keys"]) else "trash"
+
+        def refresh_hint(*_):
+            orow.set_subtitle(original_hint(cur_original(), pack.get_active() and can_mount))   # plain text: no markup
+
+        def fill_orig(want):
+            state["keys"] = original_choices(pack.get_active() and can_mount)
+            orow.set_model(Gtk.StringList.new([ORIGINAL[k] for k in state["keys"]]))
+            orow.set_selected(state["keys"].index(want) if want in state["keys"] else 0)
+            refresh_hint()
+
+        fill_orig(get_install_original())
+        orow.connect("notify::selected", refresh_hint)
+        pack.connect("toggled", lambda *_: fill_orig(cur_original()))
+        opts.append(orow)
         remember = None
         if quit_on_close:                    # only when opened by double-clicking an AppImage
             remember = Gtk.CheckButton(valign=Gtk.Align.CENTER)
@@ -552,10 +607,11 @@ class Win(Adw.ApplicationWindow):
 
         def done(_d, r):
             if r == "install":
-                ui_set("install_trash", "1" if trash.get_active() else "0")
                 if can_mount:
                     ui_set(f"mount.{name}", "1" if pack.get_active() else "0")
-                self.install_file(path, trash.get_active(), then or (lambda: self.open_app(name)), pack.get_active())
+                orig = cur_original()
+                ui_set("install_original", orig)
+                self.install_file(path, orig, then or (lambda: self.open_app(name)), pack.get_active() and can_mount)
                 return
             if r == "once":
                 if remember is not None and remember.get_active():
@@ -572,18 +628,27 @@ class Win(Adw.ApplicationWindow):
         self.dialog = dlg
         dlg.present(self)
 
-    def install_file(self, path, trash=False, then=None, mount=False):
+    def install_file(self, path, original="keep", then=None, mount=False):
+        """original is what happens to the AppImage file: "trash", "keep", or "move" (only with mount)."""
         self.toast("Installing…")
+        flags = (["--mount"] if mount else []) + (["--trash"] if original == "trash" else
+                                                  ["--move"] if original == "move" and mount else [])
 
         def work():
-            r = run([SELF, "install", path] + (["--trash"] if trash else []) + (["--mount"] if mount else []))
+            r = run([SELF, "install", path] + flags)
             GLib.idle_add(done, r)
 
         def done(r):
             if r.returncode:
                 self.toast(((r.stderr or r.stdout).strip().splitlines() or ["Install failed"])[-1][:120])
             else:
-                self.toast("Installed")
+                if "--move" in flags and os.path.exists(path):
+                    self.toast("Installed. The file couldn't be moved (removable or network drive?), so it was copied "
+                               "and the original kept")
+                elif "--move" in flags:
+                    self.toast("Installed. The AppImage was moved into AppImage Jail")
+                else:
+                    self.toast("Installed")
                 self.fill_apps()
                 if then:
                     then()
@@ -674,7 +739,7 @@ class Win(Adw.ApplicationWindow):
                 launch = Gtk.Button(label="Launch", valign=Gtk.Align.CENTER, sensitive=bool(src and os.path.isfile(src)))
                 # packrow (the "Use less disk space" toggle) is created below, before this can be clicked.
                 launch.connect("clicked", lambda *_: subprocess.Popen(
-                    [SELF, "run-file"] + (["--mount"] if packrow.get_active() else []) + [src],
+                    [SELF, "run-file", "--once"] + (["--mount"] if packrow.get_active() else []) + [src],
                     start_new_session=True))
             stop = Gtk.Button(label="Stop", valign=Gtk.Align.CENTER)
 
@@ -721,7 +786,7 @@ class Win(Adw.ApplicationWindow):
                 askrow.connect("notify::active",
                                lambda r, _p: ui_set(f"open_mode.{scope}", "ask" if r.get_active() else "run"))
                 mb.connect("clicked", lambda *_: self.install_file(
-                    src, False, lambda: (self.nav.pop(), self.open_app(scope)), packrow.get_active()))
+                    src, "keep", lambda: (self.nav.pop(), self.open_app(scope)), packrow.get_active()))
             mrow.add_suffix(mb)
             ag.add(mrow)
             if not inst:

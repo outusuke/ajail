@@ -205,5 +205,96 @@ class Sync(unittest.TestCase):
         r = open(f"{HERE}/README.md").read()
         for p in A["EXTRA_PORTALS"]: self.assertIn(f"`{p}`", r)
 
+class InstallMove(unittest.TestCase):
+    """Compressed installs move the AppImage into ajail's folder; 'restore' puts it back."""
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        for k, sub in (("INSTALLED", "apps"), ("CONF", "conf"), ("STATE", "state"), ("HOMES", "homes"),
+                       ("APPLICATIONS", "desk"), ("ICONS", "icons"), ("EXTRACT", "ext")):
+            A[k] = f"{self.d}/{sub}"
+        A["RUNNING"] = f"{self.d}/state/running"; A["SOURCES"] = f"{self.d}/state/sources"
+        A["LOG"] = f"{self.d}/state/ajail.log"
+        os.makedirs(f"{self.d}/src")
+        self.app = f"{self.d}/src/Foo.AppImage"
+        open(self.app, "wb").write(b"data")
+
+    def test_can_move_plain_file(self):
+        self.assertTrue(A["can_move"](self.app))
+
+    def test_can_move_refuses_removable_and_readonly(self):
+        self.assertFalse(A["can_move"]("/media/me/usb/Foo.AppImage"))
+        self.assertFalse(A["can_move"](f"/run/media/{A['USER']}/x/Foo.AppImage"))
+        os.chmod(f"{self.d}/src", 0o500)
+        try:
+            if os.geteuid() != 0: self.assertFalse(A["can_move"](self.app))
+        finally:
+            os.chmod(f"{self.d}/src", 0o700)
+
+    def test_place_image_move_and_copy(self):
+        dst = f"{self.d}/moved"
+        self.assertTrue(A["place_image"](self.app, dst, True))
+        self.assertFalse(os.path.exists(self.app)); self.assertEqual(open(dst, "rb").read(), b"data")
+        open(self.app, "wb").write(b"data2")
+        dst2 = f"{self.d}/copied"
+        self.assertFalse(A["place_image"](self.app, dst2, False))
+        self.assertTrue(os.path.exists(self.app)); self.assertEqual(open(dst2, "rb").read(), b"data2")
+
+    def test_restore_puts_file_back_and_uninstalls(self):
+        d = f"{A['INSTALLED']}/Foo"; os.makedirs(d)
+        A["place_image"](self.app, f"{d}/image", True)
+        open(f"{d}/origin", "w").write(self.app)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            A["cmd_restore"](["Foo"])
+        self.assertTrue(os.path.isfile(self.app)); self.assertFalse(os.path.exists(d))
+        self.assertIn("Put the AppImage back", out.getvalue())
+
+    def test_restore_refuses_when_nothing_was_moved_or_target_exists(self):
+        d = f"{A['INSTALLED']}/Foo"; os.makedirs(d); open(f"{d}/image", "wb").write(b"x")
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit): A["cmd_restore"](["Foo"])         # no origin file
+            open(f"{d}/origin", "w").write(self.app)
+            with self.assertRaises(SystemExit): A["cmd_restore"](["Foo"])         # original path is taken
+        self.assertTrue(os.path.exists(f"{d}/image"))
+
+class MountDefault(unittest.TestCase):
+    def test_app_choice_overrides_global_default(self):
+        d = tempfile.mkdtemp(); A["CONF"] = d
+        pref = A["mount_pref"]
+        self.assertFalse(pref("Foo"))                                   # off unless asked for
+        open(f"{d}/ui.conf", "w").write("mount=1\n")
+        self.assertTrue(pref("Foo"))                                    # global default applies
+        open(f"{d}/ui.conf", "w").write("mount=1\nmount.Foo=0\n")
+        self.assertFalse(pref("Foo")); self.assertTrue(pref("Bar"))     # the app's own choice wins
+
+    def test_gui_has_global_switch_and_fallback(self):
+        with open(f"{HERE}/ajail-gui") as f: s = f.read()
+        self.assertIn("self.mount_row", s); self.assertIn('ui.get("mount")', s)
+
+class GuiInstallFlow(unittest.TestCase):
+    def gui(self):
+        with open(f"{HERE}/ajail-gui") as f: return f.read()
+
+    def test_dropdown_replaces_trash_checkbox(self):
+        s = self.gui()
+        self.assertNotIn("get_install_opt", s); self.assertNotIn('"Undo"', s)
+        for t in ('title="Original file"', "install_original", '"--move"', "Move into app folder"):
+            self.assertIn(t, s)
+
+    def test_move_choice_only_with_less_disk_space(self):
+        ns = {}
+        s = self.gui()
+        for fn in ("original_choices", "original_hint", "get_install_original"):
+            i = s.index(f"def {fn}")
+            j = s.index("\n\n", i)
+            exec(s[i:j], ns)
+        ns["ORIGINAL"] = {"trash": "", "keep": "", "move": ""}
+        self.assertEqual(ns["original_choices"](False), ["trash", "keep"])
+        self.assertEqual(ns["original_choices"](True), ["trash", "keep", "move"])
+
+    def test_cli_move_is_opt_in(self):
+        with open(f"{HERE}/ajail") as f: s = f.read()
+        self.assertIn("movable = move and can_move", s)       # never moves unless --move was given
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -754,6 +754,47 @@ def file_stamp(path):
     st = os.stat(path)
     return f"{st.st_size}:{st.st_mtime_ns}"
 
+# Filesystems where a file is better copied than moved: the original lives on somebody else's disk.
+NETFS = ("nfs", "nfs4", "cifs", "smb3", "smbfs", "9p", "afs", "ceph", "glusterfs")
+
+def fs_type(path):
+    """Filesystem type of the mount that holds PATH ('' if unknown)."""
+    best, typ = "", ""
+    try:
+        for ln in open("/proc/self/mountinfo"):
+            p = ln.split()
+            if len(p) < 7 or "-" not in p: continue
+            mp = p[4].replace("\\040", " ")
+            if (path == mp or path.startswith(mp.rstrip("/") + "/")) and len(mp) >= len(best):
+                best, typ = mp, p[p.index("-") + 1]
+    except OSError:
+        pass
+    return typ
+
+def can_move(app):
+    """True if an install may take this AppImage out of its folder (like dragging an app into Applications).
+    Files on removable drives, network shares and FUSE mounts, and files in folders you can't write to, are copied."""
+    if any(app.startswith(b) for b in OUTSIDE): return False
+    ft = fs_type(app)
+    if ft in NETFS or ft.startswith("fuse."): return False
+    return os.access(os.path.dirname(app), os.W_OK | os.X_OK)
+
+def place_image(app, dst, move):
+    """Put the AppImage at DST: moved if MOVE is set and it works, otherwise copied. A copy shares disk blocks on
+    filesystems that support it (btrfs, XFS), so it costs no extra space there. Returns True if the file was moved."""
+    if move:
+        try:
+            shutil.move(app, dst)
+            return True
+        except OSError:
+            try: os.unlink(dst)           # a half-finished cross-device move leaves a partial file behind
+            except OSError: pass
+            if not os.path.isfile(app): raise
+    r = subprocess.run(["cp", "--reflink=auto", "--", app, dst], capture_output=True)
+    if r.returncode:
+        shutil.copyfile(app, dst)
+    return False
+
 def installed_kind(name):
     d = f"{INSTALLED}/{name}"
     return "root" if os.path.isdir(f"{d}/root") else "mount" if os.path.isfile(f"{d}/image") else None
@@ -893,9 +934,11 @@ def install_launcher(name, root):
     refresh_desktop_db()
 
 def cmd_install(args):
-    trash, mount = "--trash" in args, "--mount" in args
+    trash, mount, move = "--trash" in args, "--mount" in args, "--move" in args
     files = [x for x in args if not x.startswith("--")]
-    if len(files) != 1: die("usage: ajail install FILE.AppImage [--mount] [--trash]")
+    if len(files) != 1: die("usage: ajail install FILE.AppImage [--mount [--move]] [--trash]")
+    if move and not mount: die("--move only works together with --mount")
+    if move and trash: die("use either --move or --trash, not both")
     guard()
     if mount: need_squashfuse()
     app = os.path.realpath(files[0])
@@ -904,6 +947,11 @@ def cmd_install(args):
     name = sanitize(app)
     dest = f"{INSTALLED}/{name}"
     kind = "mount" if mount else "root"
+    moved = False
+    # A compressed install keeps the AppImage itself. By default it is copied (the original stays). With --move it is
+    # moved into ajail's folder instead (no duplicate). Symlinks, removable or network drives and read-only folders are
+    # always copied, even with --move.
+    movable = move and can_move(app) and not os.path.islink(files[0])
     if installed_stamp(name) == file_stamp(app) and installed_kind(name) == kind:
         print(f"{name} is already installed" + ("" if mount else ", refreshing its launcher"))
         if not mount: install_launcher(name, f"{dest}/root")
@@ -916,9 +964,15 @@ def cmd_install(args):
         rm_tree(dest)
         if mount:
             os.makedirs(dest, mode=0o700)
-            shutil.copyfile(app, f"{dest}/image")
+            stamp = file_stamp(app)                    # taken first: after a move the original is gone
+            try:
+                moved = place_image(app, f"{dest}/image", movable)
+            except OSError as e:
+                rm_tree(dest)
+                die(f"could not store the AppImage: {e.strerror or e}")
             open(f"{dest}/offset", "w").write(str(off))
-            open(f"{dest}/stamp", "w").write(file_stamp(app))
+            open(f"{dest}/stamp", "w").write(stamp)
+            if moved: open(f"{dest}/origin", "w").write(app)     # lets 'ajail restore' put it back
             install_launcher(name, root)
             rm_tree(f"{EXTRACT}/{name}")
         else:
@@ -926,8 +980,16 @@ def cmd_install(args):
             install_launcher(name, f"{dest}/root")
     os.makedirs(f"{CONF}/apps", exist_ok=True)
     open(f"{CONF}/apps/{name}.conf", "a").close()
-    log("installed (compressed)" if mount else "installed", name)
+    try:                                              # where the file came from, so ajail-gui can offer to trash it
+        os.makedirs(SOURCES, exist_ok=True)
+        open(f"{SOURCES}/{name}", "w").write(app)
+    except OSError:
+        pass
+    log("installed (compressed" + (", moved)" if moved else ")") if mount else "installed", name)
     print(f"Installed {name}" + (" (compressed, mounted at launch)" if mount else ""))
+    if mount and moved: print("Moved the AppImage into ajail")
+    elif mount and move: print("ajail: copied the AppImage instead of moving it (removable or network drive, symlink, "
+                               "or a folder you can't write to); the original was kept", file=sys.stderr)
     if trash:
         if shutil.which("gio") and subprocess.run(["gio", "trash", app]).returncode == 0:
             print("Moved the AppImage to the Trash")
@@ -960,6 +1022,25 @@ def cmd_uninstall(args):
     log("uninstalled" + (" and purged" if moved else ""), name)
     print(f"Uninstalled {name}" + (" and moved its data to the Trash" if moved else ", its data was kept"))
 
+def cmd_restore(args):
+    """Undo a compressed install that moved the AppImage: put the file back where it came from and uninstall the app
+    (its data and settings are kept)."""
+    if len(args) != 1: die("usage: ajail restore NAME")
+    name = clean(args[0])
+    if running(name): die(f"{name} is running. Close it first")
+    d = f"{INSTALLED}/{name}"
+    try: origin = open(f"{d}/origin").read().strip()
+    except OSError: die(f"{name} was not moved into ajail, so there is nothing to put back")
+    img = f"{d}/image"
+    if not os.path.isfile(img): die(f"{name} has no stored AppImage")
+    if not os.path.isabs(origin) or not os.path.isdir(os.path.dirname(origin)):
+        die(f"the folder it came from no longer exists: {os.path.dirname(origin)}")
+    if os.path.lexists(origin): die(f"{origin} already exists, so the AppImage was not put back")
+    try: shutil.move(img, origin)
+    except OSError as e: die(f"could not put the AppImage back: {e.strerror or e}")
+    print(f"Put the AppImage back at {origin}")
+    cmd_uninstall([name])
+
 def ui_get(key):
     try:
         for ln in open(f"{CONF}/ui.conf"):
@@ -975,6 +1056,13 @@ def open_mode(name=None):
         v = ui_get(key)
         if v in ("ask", "run"): return v
     return "ask"
+
+def mount_pref(name):
+    """'Use less disk space' for this app: its own choice (mount.NAME), else the global default (mount), else off."""
+    for key in (f"mount.{name}", "mount"):
+        v = ui_get(key)
+        if v in ("0", "1"): return v == "1"
+    return False
 
 def forget_app_ui(name):
     """Drop an app's remembered open/mount choices from ui.conf."""
@@ -1005,7 +1093,7 @@ def open_file(arg, extra):
     if app and from_desktop:
         if installed_stamp(name) == file_stamp(app): return run_installed(name, extra)
         can = shutil.which("squashfuse") and shutil.which("fusermount3") and os.access("/dev/fuse", os.R_OK | os.W_OK)
-        if ui_get(f"mount.{name}") == "1" and can: return run_app(arg, extra, mount=True)
+        if mount_pref(name) and can: return run_app(arg, extra, mount=True)
     run_app(arg, extra)
 
 def need_root(cmd):
@@ -1127,10 +1215,13 @@ ajail preview [NAME]             show the bwrap command that would run
 ajail list                       show your apps and which ones are running
 ajail stop NAME                  stop a running app
 ajail name FILE.AppImage         show the name ajail uses for this file
-ajail install FILE.AppImage      unpack it and add it to the app menu (--trash moves the file to the Trash;
-                                 --mount keeps it compressed and mounts it at launch, experimental)
+ajail install FILE.AppImage      unpack it and add it to the app menu; the file is left where it is (--trash moves it to
+                                 the Trash; --mount keeps it compressed and mounts it at launch, experimental; with
+                                 --mount, --move moves the file into ajail's folder instead of copying it, and falls
+                                 back to a copy on a removable or network drive)
 ajail run NAME [args]            run an installed app
 ajail uninstall NAME [--purge]   remove it from the app menu (--purge also moves its data to the Trash)
+ajail restore NAME               undo a compressed install that moved the file: put it back and uninstall
 ajail run-file [--once] [--mount] FILE
                                  run an AppImage without offering to install it (--once deletes its unpacked copy on exit;
                                  --mount mounts the file instead of unpacking it, experimental)
@@ -1153,6 +1244,7 @@ def main():
     elif c == "name" and len(a) > 1: print(sanitize(a[1]))
     elif c == "install": cmd_install(a[1:])
     elif c == "uninstall": cmd_uninstall(a[1:])
+    elif c == "restore": cmd_restore(a[1:])
     elif c == "run" and len(a) > 1: run_installed(a[1], a[2:])
     elif c == "run-file":
         rest, flags = a[1:], set()
