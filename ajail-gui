@@ -167,6 +167,26 @@ def running_pids(name=None):
                 out.setdefault(n, []).append(int(f))
     return out if name is None else out.get(name, [])
 
+def mount_install_cmd():
+    """Command that installs squashfuse and fuse3 on this distro, or None if the distro isn't recognised."""
+    ids = []
+    try:
+        for ln in open("/etc/os-release"):
+            k, _, v = ln.strip().partition("=")
+            if k in ("ID", "ID_LIKE"):
+                ids += v.strip('"').lower().split()
+    except OSError:
+        return None
+    for family, cmd in (("fedora", "sudo dnf install squashfuse fuse3"),
+                        ("rhel", "sudo dnf install squashfuse fuse3"),
+                        ("debian", "sudo apt install squashfuse fuse3"),
+                        ("ubuntu", "sudo apt install squashfuse fuse3"),
+                        ("arch", "sudo pacman -S squashfuse fuse3"),
+                        ("suse", "sudo zypper install squashfuse fuse3")):
+        if family in ids:
+            return cmd
+    return None
+
 def dir_size(path):
     if not os.path.isdir(path):
         return "none yet"
@@ -345,20 +365,36 @@ class Win(Adw.ApplicationWindow):
         pack = Gtk.CheckButton(active=can_mount and get_install_opt("install_mount", False),
                                valign=Gtk.Align.CENTER)
 
-        def opt_row(check, title, sub, enabled=True):
-            row = Adw.ActionRow(title=title, subtitle=sub, sensitive=enabled)
+        def opt_row(check, title, sub):
+            row = Adw.ActionRow(title=title, subtitle=sub)
             row.add_prefix(check)
             row.set_activatable_widget(check)
             return row
 
         opts = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         opts.add_css_class("boxed-list")
-        opts.append(opt_row(trash, "Delete the AppImage afterwards",
-                            "Moves it to the Trash. The installed app doesn't need it."))
-        opts.append(opt_row(
-            pack, "Use less disk space",
-            "Apps open a bit slower, and the file is read outside the sandbox. Only for apps you trust. Experimental."
-            if can_mount else "Needs squashfuse and fuse3: sudo dnf install squashfuse fuse3", can_mount))
+        opts.append(opt_row(trash, "Move the AppImage to the Trash after installing",
+                            "The installed app doesn't need the file. Run once never removes it."))
+        warn = ("Apps open a bit slower, and the file is read outside the sandbox. "
+                "Only for apps you trust. Experimental.")
+        prow = opt_row(pack, "Use less disk space", warn)
+        if not can_mount:
+            # Dependencies missing: the checkbox is off, but clicking the row copies the install command.
+            cmd = mount_install_cmd()
+            pack.set_sensitive(False)
+            prow.set_activatable_widget(None)
+            prow.set_activatable(True)
+            prow.set_subtitle(esc(warn + "\nNeeds squashfuse and fuse3. " +
+                                  (f"Click to copy: {cmd}" if cmd else "Install them with your package manager.")))
+            if cmd:
+                prow.add_suffix(Gtk.Image.new_from_icon_name("edit-copy-symbolic"))
+
+                def copy_cmd(_r):
+                    self.get_clipboard().set(cmd)
+                    prow.set_subtitle(esc(warn + "\nCopied to the clipboard. Run it in a terminal, then reopen this window."))
+
+                prow.connect("activated", copy_cmd)
+        opts.append(prow)
         dlg.set_extra_child(opts)
         dlg.add_response("cancel", "Cancel")
         dlg.add_response("once", "Run once")
