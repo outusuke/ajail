@@ -145,6 +145,15 @@ def get_install_opt(key, default):
     v = ui_read().get(key)
     return default if v not in ("0", "1") else v == "1"
 
+def app_open_mode(name):
+    """'ask' or 'run' for double-clicking this app's AppImage: its own setting, else the global default."""
+    v = ui_read().get(f"open_mode.{name}")
+    return v if v in ("ask", "run") else get_open_mode()
+
+def app_mount(name):
+    """Whether this app was last set to 'Use less disk space'."""
+    return ui_read().get(f"mount.{name}") == "1"
+
 def app_names():
     names = set()
     for d, ext in ((APPS, ".conf"), (HOMES, ""), (INSTALLED, "")):
@@ -287,12 +296,14 @@ class Win(Adw.ApplicationWindow):
         self.force.set_active(os.path.exists(RULE))
         self.force.connect("notify::active", self.on_force)
         g.add(self.force)
-        self.ask = Adw.SwitchRow(
+        self.ask_row = Adw.SwitchRow(      # not "ask": that name is the dialog helper method
             title="Ask before opening a new AppImage",
-            subtitle="Offers Install or Run once when you double-click one. Needs Sandbox every AppImage.")
-        self.ask.set_active(get_open_mode() == "ask")
-        self.ask.connect("notify::active", lambda r, _p: set_open_mode("ask" if r.get_active() else "run"))
-        g.add(self.ask)
+            subtitle="Default for all apps. Offers Install or Run once when you double-click one. Each app can "
+                     "override it on its own page. Needs Sandbox every AppImage.")
+        self.ask_row.set_active(get_open_mode() == "ask")
+        self.ask_handler = self.ask_row.connect(
+            "notify::active", lambda r, _p: set_open_mode("ask" if r.get_active() else "run"))
+        g.add(self.ask_row)
         self.menu = Adw.SwitchRow(
             title="Show AppImage Jail in the app menu",
             subtitle="Adds a launcher for this window to your application menu.")
@@ -311,6 +322,31 @@ class Win(Adw.ApplicationWindow):
 
         self.apps_group = Adw.PreferencesGroup(title="Apps")
         page.add(self.apps_group)
+
+        rg = Adw.PreferencesGroup()
+        rbtn = Gtk.Button(label="Reset all settings…", halign=Gtk.Align.CENTER)
+        rbtn.add_css_class("destructive-action")
+
+        def do_reset_all():
+            try:
+                write_cfg(None, empty())                    # default permissions
+                if os.path.exists(UICONF):
+                    os.unlink(UICONF)                       # ask switch + every app's remembered choices
+            except OSError as e:
+                self.toast(f"Could not reset: {e.strerror or e}")
+                return
+            self.ask_row.handler_block(self.ask_handler)
+            self.ask_row.set_active(True)                   # the built-in default
+            self.ask_row.handler_unblock(self.ask_handler)
+            self.fill_apps()
+            self.toast("Settings reset to the defaults")
+
+        rbtn.connect("clicked", lambda *_: self.confirm(
+            "Reset all settings?",
+            "The default permissions and every remembered open and disk-space choice go back to the built-in "
+            "settings. Each app's own permissions and data are not touched.", "Reset", do_reset_all))
+        rg.add(rbtn)
+        page.add(rg)
 
         header = Adw.HeaderBar()
         add = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add an AppImage")
@@ -418,7 +454,7 @@ class Win(Adw.ApplicationWindow):
             body=f"It runs sandboxed and is added to your app menu. Allowed: {summary(d['global'], d.get('app'))}.")
         can_mount = bool(shutil.which("squashfuse") and shutil.which("fusermount3"))
         trash = Gtk.CheckButton(active=get_install_opt("install_trash", True), valign=Gtk.Align.CENTER)
-        pack = Gtk.CheckButton(active=can_mount and get_install_opt("install_mount", False),
+        pack = Gtk.CheckButton(active=can_mount and app_mount(name),
                                valign=Gtk.Align.CENTER)
 
         def opt_row(check, title, sub):
@@ -451,6 +487,12 @@ class Win(Adw.ApplicationWindow):
 
                 prow.connect("activated", copy_cmd)
         opts.append(prow)
+        remember = None
+        if quit_on_close:                    # only when opened by double-clicking an AppImage
+            remember = Gtk.CheckButton(valign=Gtk.Align.CENTER)
+            opts.append(opt_row(remember, f"Don't ask again for {name}",
+                                "Double-clicking this AppImage will run it straight away. "
+                                "You can change that on its page in AppImage Jail."))
         dlg.set_extra_child(opts)
         dlg.add_response("cancel", "Cancel")
         dlg.add_response("once", "Run once")
@@ -463,13 +505,15 @@ class Win(Adw.ApplicationWindow):
             if r == "install":
                 ui_set("install_trash", "1" if trash.get_active() else "0")
                 if can_mount:
-                    ui_set("install_mount", "1" if pack.get_active() else "0")
+                    ui_set(f"mount.{name}", "1" if pack.get_active() else "0")
                 self.install_file(path, trash.get_active(), then or (lambda: self.open_app(name)), pack.get_active())
                 return
             if r == "once":
+                if remember is not None and remember.get_active():
+                    ui_set(f"open_mode.{name}", "run")
                 use_mount = can_mount and pack.get_active()
                 if can_mount:
-                    ui_set("install_mount", "1" if use_mount else "0")
+                    ui_set(f"mount.{name}", "1" if use_mount else "0")
                 subprocess.Popen([SELF, "run-file", "--once"] + (["--mount"] if use_mount else []) + [path],
                                  start_new_session=True)
             if quit_on_close:
@@ -614,17 +658,26 @@ class Win(Adw.ApplicationWindow):
                     title="Use less disk space",
                     subtitle="Keeps the app compressed and mounts it at launch. Slower, and the file is read outside "
                              "the sandbox, so only for apps you trust. Experimental.",
-                    active=False, sensitive=can_mount)    # always starts off; not remembered
+                    active=can_mount and app_mount(scope), sensitive=can_mount)   # remembered per app
                 if not can_mount:
                     cmd = mount_install_cmd()
                     packrow.set_subtitle("Needs squashfuse and fuse3. " +
                                          (f"Install them with: {esc(cmd)}" if cmd else "Install them with your package manager."))
+                else:
+                    packrow.connect("notify::active", lambda r, _p: ui_set(f"mount.{scope}", "1" if r.get_active() else "0"))
+                askrow = Adw.SwitchRow(
+                    title="Ask before opening this AppImage",
+                    subtitle="Offers Install or Run once when you double-click the file. Turn off to run it straight away.",
+                    active=app_open_mode(scope) == "ask")
+                askrow.connect("notify::active",
+                               lambda r, _p: ui_set(f"open_mode.{scope}", "ask" if r.get_active() else "run"))
                 mb.connect("clicked", lambda *_: self.install_file(
                     src, False, lambda: (self.nav.pop(), self.open_app(scope)), packrow.get_active()))
             mrow.add_suffix(mb)
             ag.add(mrow)
             if not inst:
                 ag.add(packrow)
+                ag.add(askrow)
             page.add(ag)
 
         def add_switch(g, key, t, sub):
