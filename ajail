@@ -1,0 +1,541 @@
+#!/usr/bin/python3
+# ajail - run AppImages in a bubblewrap sandbox with a persistent private home
+import errno, fcntl, glob, json, os, platform, pwd, re, select, shlex, shutil, signal, struct, subprocess
+import sys, tempfile, threading, time, urllib.parse
+
+_pw     = pwd.getpwuid(os.getuid())
+HOME    = os.path.realpath(_pw.pw_dir)
+USER    = _pw.pw_name
+CONF    = f"{HOME}/.config/ajail"
+STATE   = f"{HOME}/.local/state/ajail"
+RUNNING = f"{STATE}/running"
+SOURCES = f"{STATE}/sources"
+LOG     = f"{STATE}/ajail.log"
+HOMES   = f"{HOME}/.appimage-homes"
+EXTRACT = f"{HOME}/.local/share/ajail/extracted"
+SELF    = "/usr/local/bin/ajail"
+BM      = "/proc/sys/fs/binfmt_misc"
+RULE    = r":appimage-jail:M:8:AI\x02::/usr/local/bin/ajail:"
+UNSQ    = "/usr/bin/unsquashfs"
+ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch.conf", "hosts",
+       "resolv.conf", "localtime", "os-release", "fonts", "ssl", "pki", "crypto-policies",
+       "alternatives", "vulkan", "drirc", "mime.types", "protocols", "services"]
+
+# Permission defaults. Keep in sync with DEFAULTS in ajail-gui.
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
+            "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1}
+LISTS = ("allow", "allow_ro", "xdg", "env", "talk")
+XDG_DEFAULT = {"download": "Downloads", "documents": "Documents", "pictures": "Pictures",
+               "music": "Music", "videos": "Videos", "desktop": "Desktop"}
+THEME = [".local/share/fonts", ".fonts", ".local/share/icons", ".icons", ".local/share/themes", ".themes"]
+OUTSIDE = ("/mnt/", "/media/", f"/run/media/{USER}/")
+# Blocked syscalls: kexec_load kexec_file_load perf_event_open bpf syslog uselib acct quotactl add_key
+# keyctl request_key move_pages mbind get_mempolicy set_mempolicy migrate_pages open_by_handle_at name_to_handle_at
+SYSCALLS_X86_64 = [246, 320, 298, 321, 103, 134, 163, 179, 248, 250, 249, 279, 237, 239, 238, 256, 304, 303]
+SYSCALLS_AARCH64 = [104, 294, 241, 280, 116, 89, 60, 217, 219, 218, 239, 235, 236, 237, 238, 265, 264]
+LEGACY_FLAGS = {"--net=none": ("net", 0), "--nosound": ("sound", 0), "--no3d": ("gpu", 0), "--x11": ("x11", 1)}
+
+def die(msg, code=1):
+    print(f"ajail: {msg}", file=sys.stderr); sys.exit(code)
+
+def log(msg, name=None):
+    try:
+        os.makedirs(STATE, exist_ok=True)
+        if os.path.exists(LOG) and os.path.getsize(LOG) > 1_000_000:
+            tail = open(LOG, errors="replace").readlines()[-500:]
+            open(LOG, "w").writelines(tail)
+        with open(LOG, "a") as f:
+            f.write(f"[{time.strftime('%F %T')}] " + (f"[{name}] " if name else "") + f"{msg}\n")
+    except OSError:
+        pass
+
+def notify(msg, critical=False):
+    if shutil.which("notify-send"):
+        try:
+            subprocess.run(["notify-send", "-u", "critical" if critical else "normal", "ajail", msg],
+                           timeout=5, check=False)
+        except Exception:
+            pass
+
+_act = []
+def notify_failure(name):
+    """Critical notification; clicking it (or its 'Open log' button) opens ajail-gui on this app's log."""
+    msg = f"{name} failed to start. Click to open the log."
+    if not shutil.which("notify-send"): return
+    if not _act:
+        try: _act.append("--action" in subprocess.run(["notify-send", "--help"], capture_output=True, text=True).stdout)
+        except Exception: _act.append(False)
+    if not _act[0]:
+        notify(f"{name} failed to start. Open ajail-gui > Log.", critical=True); return
+    try:
+        if os.fork(): return                      # parent carries on and exits
+    except OSError:
+        return
+    try:                                          # child waits for the click, detached from the terminal
+        os.setsid()
+        dn = os.open(os.devnull, os.O_RDWR)
+        for fd in (0, 1, 2): os.dup2(dn, fd)
+        r = subprocess.run(["notify-send", "-u", "critical", "-A", "default=Open log", "--wait", "ajail", msg],
+                           capture_output=True, text=True, timeout=900)
+        if r.stdout.strip() == "default":
+            subprocess.Popen([f"{os.path.dirname(SELF)}/ajail-gui", "--log", name], start_new_session=True)
+    except Exception:
+        pass
+    finally:
+        os._exit(0)
+
+def clean(n):
+    return (re.sub(r"[^A-Za-z0-9._-]", "_", n).lstrip("._-")[:64]) or "app"
+
+def sanitize(path):
+    n = re.sub(r"\.appimage$", "", os.path.basename(path), flags=re.I)
+    s = re.sub(r"[-_](?:v?\d[\w.+~]*|x86[-_]64|amd64|x64|aarch64|arm64|linux\w*)(?=[-_]|$)", "", n, flags=re.I)
+    return clean(s or n)
+
+def safe_path(p):
+    """A file or folder an app may be given: non-hidden inside $HOME, or on a mounted drive."""
+    try:
+        p = os.path.realpath(p)
+    except Exception:
+        return None
+    if "\n" in p or not os.path.exists(p):
+        return None
+    if p.startswith(HOME + "/"):
+        return None if p[len(HOME) + 1:].split("/")[0].startswith(".") else p
+    return p if any(p.startswith(b) for b in OUTSIDE) else None
+
+def xdg_dir(kind):
+    path = None
+    try:
+        for ln in open(f"{HOME}/.config/user-dirs.dirs"):
+            m = re.match(rf'XDG_{kind.upper()}_DIR="(.*)"', ln.strip())
+            if m: path = m.group(1).replace("$HOME", HOME)
+    except OSError:
+        pass
+    return path or f"{HOME}/{XDG_DEFAULT[kind]}"
+
+def empty_cfg():
+    return {"s": {}, **{k: [] for k in LISTS}}
+
+def parse_cfg(path):
+    try:
+        lines = open(path).read().splitlines()
+    except OSError:
+        return None
+    d = empty_cfg()
+    for ln in lines:
+        k, _, v = ln.partition("=")
+        if k in LISTS and v: d[k].append(v)
+        elif k in DEFAULTS and v in ("0", "1"): d["s"][k] = int(v)
+        elif k == "profile" and v == "strict": d["s"].update(net=0, sound=0)
+        elif k == "flag":
+            if v in LEGACY_FLAGS: d["s"][LEGACY_FLAGS[v][0]] = LEGACY_FLAGS[v][1]
+            else: print(f"ajail: ignoring unknown flag '{v}'", file=sys.stderr)
+    return d
+
+def load_cfg(name):
+    """Built-in defaults < default.conf < apps/NAME.conf. Lists add up, except xdg (per folder)."""
+    g = parse_cfg(f"{CONF}/default.conf") or empty_cfg()
+    a = parse_cfg(f"{CONF}/apps/{name}.conf") or empty_cfg()
+    cfg = {**DEFAULTS, **g["s"], **a["s"]}
+    for k in ("allow", "allow_ro", "env", "talk"):
+        cfg[k] = list(dict.fromkeys(g[k] + a[k]))
+    xd = {}
+    for x in g["xdg"] + a["xdg"]:
+        k, _, m = x.partition(":"); xd[k] = m
+    cfg["xdg"] = [f"{k}:{m}" if m else k for k, m in xd.items()]
+    return cfg
+
+def share_list(cfg):
+    out = [("--bind", p) for p in cfg["allow"]] + [("--ro-bind", p) for p in cfg["allow_ro"]]
+    for x in cfg["xdg"]:
+        kind, _, mode = x.partition(":")
+        if kind in XDG_DEFAULT and mode != "none":
+            out.append(("--ro-bind" if mode == "ro" else "--bind", xdg_dir(kind)))
+    return out
+
+def runtime_dir():
+    return os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+
+def wayland_path():
+    wl = os.environ.get("WAYLAND_DISPLAY", "")
+    if not wl: return None
+    p = wl if wl.startswith("/") else f"{runtime_dir()}/{wl}"
+    return p if os.path.exists(p) else None
+
+_has = {}
+def bwrap_has(opt):
+    if opt not in _has:
+        try:
+            r = subprocess.run(["bwrap", "--help"], capture_output=True, text=True)
+            _has[opt] = opt in (r.stdout + r.stderr)
+        except Exception:
+            _has[opt] = False
+    return _has[opt]
+
+BASE = ["--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
+        "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin"]
+
+def seccomp_file():
+    """Syscall blocklist (like Flatpak's), generated as a raw BPF program. No extra packages needed."""
+    arch = {"x86_64": (0xC000003E, SYSCALLS_X86_64), "aarch64": (0xC00000B7, SYSCALLS_AARCH64)}.get(platform.machine())
+    if not arch:
+        return None
+    audit, nrs = arch
+    deny = 0x00050000 | errno.EPERM
+    ins = [(0x20, 0, 0, 4),                    # load arch
+           (0x15, 1, 0, audit),                # native arch? skip the next instruction
+           (0x06, 0, 0, deny),                 # other ABI (32-bit/x32): deny
+           (0x20, 0, 0, 0)]                    # load syscall number
+    n = len(nrs)
+    ins += [(0x15, n - i, 0, nr) for i, nr in enumerate(nrs)]   # listed syscall: jump to deny
+    ins += [(0x06, 0, 0, 0x7FFF0000), (0x06, 0, 0, deny)]       # allow, deny
+    try:
+        tf = tempfile.TemporaryFile()
+        tf.write(b"".join(struct.pack("=HBBI", *i) for i in ins)); tf.flush(); tf.seek(0)
+        return tf
+    except OSError as e:
+        log(f"seccomp disabled: {e}")
+        return None
+
+def want_bus(cfg):
+    return bool(cfg["portals"] or cfg["tray"] or cfg["talk"])
+
+def start_bus(cfg, name):
+    if not want_bus(cfg): return None
+    px = shutil.which("xdg-dbus-proxy")
+    if not px:
+        print("ajail: xdg-dbus-proxy missing, so notifications/portals are off. Install: sudo dnf install xdg-dbus-proxy",
+              file=sys.stderr)
+        return None
+    addr = os.environ.get("DBUS_SESSION_BUS_ADDRESS") or f"unix:path={runtime_dir()}/bus"
+    d = f"{runtime_dir()}/ajail"
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    sock = f"{d}/{os.getpid()}.bus"
+    rules = ["--filter"]
+    if cfg["portals"]:
+        rules += ["--talk=org.freedesktop.Notifications", "--talk=org.freedesktop.portal.Desktop",
+                  "--call=org.freedesktop.portal.*=*", "--broadcast=org.freedesktop.portal.*=@/org/freedesktop/portal/*"]
+    if cfg["tray"]:
+        rules += ["--talk=org.kde.StatusNotifierWatcher", "--own=org.kde.*", "--own=org.mpris.MediaPlayer2.*"]
+    rules += [f"--talk={n}" for n in cfg["talk"] if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]*(\.\*)?", n)]
+    r, w = os.pipe()
+    proc = subprocess.Popen([px, f"--fd={w}", addr, sock] + rules, pass_fds=[w],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    os.close(w)
+    ok = False
+    try:
+        ok = bool(select.select([r], [], [], 3)[0]) and bool(os.read(r, 1))
+    except OSError:
+        pass
+    b = (proc, r, sock)
+    if not ok:
+        stop_bus(b)
+        print("ajail: could not start xdg-dbus-proxy; running without D-Bus", file=sys.stderr)
+        log("xdg-dbus-proxy failed to start", name)
+        return None
+    return b
+
+def stop_bus(b):
+    if not b: return
+    proc, r, sock = b
+    try: os.close(r)
+    except OSError: pass
+    try: proc.terminate(); proc.wait(2)
+    except Exception: pass
+    try: os.unlink(sock)
+    except OSError: pass
+
+def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=()):
+    rt = runtime_dir()
+    a = ["bwrap", "--unshare-all", "--die-with-parent", "--new-session", "--clearenv"]
+    if not cfg["userns"]:
+        if bwrap_has("--disable-userns"): a.append("--disable-userns")
+        else: print("ajail: this bubblewrap is too old for --disable-userns; ignoring", file=sys.stderr)
+    if cfg["net"]: a.append("--share-net")
+    if sec is not None: a += ["--seccomp", str(sec)]
+    a += BASE + ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/run",
+                 "--dir", "/var", "--symlink", "../tmp", "/var/tmp", "--perms", "0700", "--dir", rt]
+    for p in ETC:
+        a += ["--ro-bind-try", f"/etc/{p}", f"/etc/{p}"]
+    env = {"HOME": HOME, "USER": USER, "LOGNAME": USER, "PATH": "/usr/local/bin:/usr/bin:/usr/sbin",
+           "XDG_RUNTIME_DIR": rt, "APPDIR": "/app", "AJAIL_ACTIVE": "1",
+           "ELECTRON_OZONE_PLATFORM_HINT": "auto" if cfg["x11"] else "wayland"}
+    for k in ("LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_TIME", "TZ", "TERM",
+              "XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "XCURSOR_THEME", "XCURSOR_SIZE"):
+        if k in os.environ: env[k] = os.environ[k]
+    wp = wayland_path()
+    if wp:
+        a += ["--ro-bind", wp, wp]
+        env["WAYLAND_DISPLAY"] = os.environ["WAYLAND_DISPLAY"]; env["XDG_SESSION_TYPE"] = "wayland"
+    if cfg["x11"]:
+        disp = os.environ.get("DISPLAY", "")
+        if disp.startswith(":"):
+            sock = f"/tmp/.X11-unix/X{disp[1:].split('.')[0]}"
+            a += ["--ro-bind-try", sock, sock]; env["DISPLAY"] = disp
+        xa = os.environ.get("XAUTHORITY")
+        if xa and os.path.isfile(xa):
+            a += ["--ro-bind", xa, xa]; env["XAUTHORITY"] = xa
+    if cfg["sound"]:
+        for s in ("pipewire-0", "pulse/native"):
+            a += ["--ro-bind-try", f"{rt}/{s}", f"{rt}/{s}"]
+        env["PULSE_SERVER"] = f"unix:{rt}/pulse/native"
+    if cfg["gpu"]:
+        a += ["--dev-bind-try", "/dev/dri", "/dev/dri"]
+        for p in glob.glob("/dev/nvidia*"):
+            a += ["--dev-bind", p, p]
+    if cfg["camera"]:
+        for p in glob.glob("/dev/video*") + glob.glob("/dev/media*"):
+            a += ["--dev-bind", p, p]
+    if cfg["input"]:
+        a += ["--dev-bind-try", "/dev/input", "/dev/input", "--ro-bind-try", "/run/udev", "/run/udev"]
+    if cfg["gpu"] or cfg["camera"] or cfg["input"]:
+        a += ["--ro-bind-try", "/sys/dev/char", "/sys/dev/char"]
+        for p in glob.glob("/sys/devices/pci*") or ["/sys/devices"]:
+            a += ["--ro-bind", p, p]
+    if cfg["printing"]:
+        a += ["--ro-bind-try", "/run/cups/cups.sock", "/run/cups/cups.sock"]
+        env["CUPS_SERVER"] = "/run/cups/cups.sock"
+    sa = os.environ.get("SSH_AUTH_SOCK", "")
+    if cfg["ssh_agent"] and sa and os.path.exists(sa):
+        a += ["--ro-bind", sa, sa]; env["SSH_AUTH_SOCK"] = sa
+    if bus:
+        a += ["--ro-bind", bus, f"{rt}/bus"]
+        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={rt}/bus"
+    a += ["--ro-bind", root, "/app", "--bind", f"{HOMES}/{name}", HOME]
+    if cfg["theme"]:
+        for rel in THEME:
+            a += ["--ro-bind-try", f"{HOME}/{rel}", f"{HOME}/{rel}"]
+    for opt, p in share_list(cfg):
+        ok = safe_path(p)
+        if ok: a += [opt, ok, ok]
+        else: print(f"ajail: skipping unsafe or missing path '{p}'", file=sys.stderr)
+    for f in files:
+        a += ["--bind", f, f]
+    for item in cfg["env"]:
+        k, _, v = item.partition("=")
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k): env[k] = v
+    for k, v in env.items():
+        a += ["--setenv", k, v]
+    return a + ["--chdir", HOME] + inner
+
+def forward_files(extra):
+    """Files/folders passed on the command line (double-click, Open with) are shared for this run."""
+    out = []
+    for x in extra:
+        p = urllib.parse.unquote(x[7:]) if x.startswith("file://") else x
+        if p.startswith("-") or not os.path.exists(p): continue
+        sp = safe_path(p)
+        if sp and sp not in out: out.append(sp)
+    return out
+
+def appimage_offset(path):
+    with open(path, "rb") as f:
+        h = f.read(64)
+        if len(h) < 64 or h[:4] != b"\x7fELF": die("not an AppImage (not an ELF file)")
+        if h[8:11] == b"AI\x01": die("type 1 AppImages are not supported")
+        if h[8:11] != b"AI\x02": die("not a type 2 AppImage")
+        e = "<" if h[5] == 1 else ">"
+        if h[4] == 2:
+            shoff, = struct.unpack_from(e + "Q", h, 0x28); sz, num = struct.unpack_from(e + "HH", h, 0x3A)
+        else:
+            shoff, = struct.unpack_from(e + "I", h, 0x20); sz, num = struct.unpack_from(e + "HH", h, 0x2E)
+        off = shoff + sz * num
+        f.seek(off)
+        if f.read(4) not in (b"hsqs", b"sqsh"): die("could not find the squashfs image inside this file")
+    return off
+
+def ensure_extracted(app, name, off):
+    st = os.stat(app); stamp = f"{st.st_size}:{st.st_mtime_ns}"
+    d = f"{EXTRACT}/{name}"
+    os.makedirs(EXTRACT, mode=0o700, exist_ok=True)
+    with open(f"{EXTRACT}/.{name}.lock", "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        try:
+            if open(f"{d}/stamp").read() == stamp and os.path.isdir(f"{d}/root"):
+                return f"{d}/root"
+        except OSError:
+            pass
+        if not os.path.exists(UNSQ): die("unsquashfs missing: sudo dnf install squashfs-tools")
+        print(f"ajail: preparing {name} (first run or updated)...", file=sys.stderr)
+        notify(f"Preparing {name} (first run or updated)")
+        shutil.rmtree(d, ignore_errors=True)
+        tmp = f"{EXTRACT}/{name}.tmp{os.getpid()}"
+        shutil.rmtree(tmp, ignore_errors=True); os.makedirs(tmp, mode=0o700)
+        cmd = ["bwrap", "--unshare-all", "--die-with-parent", "--new-session", "--clearenv"] + BASE + \
+              ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
+               "--ro-bind", app, "/in.AppImage", "--bind", tmp, "/out",
+               UNSQ, "-no-progress", "-no-xattrs", "-o", str(off), "-d", "/out/root", "/in.AppImage"]
+        r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
+        if r.returncode != 0:
+            shutil.rmtree(tmp, ignore_errors=True)
+            die("extraction failed:\n" + r.stderr[-800:])
+        subprocess.run(["chmod", "-R", "u+rwX", f"{tmp}/root"], check=False)
+        open(f"{tmp}/stamp", "w").write(stamp)
+        os.replace(tmp, d)
+        return f"{d}/root"
+
+def check_identity(name, root):
+    """The private home is keyed by file name. Remember what the app calls itself and refuse
+    a different app that merely has the same file name (it would inherit data and permissions)."""
+    ident = ""
+    try:
+        for f in sorted(glob.glob(f"{root}/*.desktop"))[:1]:
+            m = re.search(r"^Name=(.+)$", open(f, errors="replace").read(), re.M)
+            ident = m.group(1).strip() if m else ""
+    except OSError:
+        pass
+    if not ident: return
+    p = f"{CONF}/ids/{name}"
+    try: old = open(p).read().strip()
+    except OSError: old = None
+    if old is None:
+        os.makedirs(f"{CONF}/ids", exist_ok=True)
+        open(p, "w").write(ident + "\n")
+        log(f"first run, identity '{ident}'", name)
+        notify(f"New app '{name}' runs with your default permissions. Adjust them in ajail-gui.")
+    elif old != ident:
+        die(f"'{name}' was first used by an app called '{old}', but this file calls itself '{ident}'.\n"
+            f"It would share that app's private data and permissions. Rename the file, or delete {p} "
+            f"if it really is the same app.")
+
+def run_app(arg, extra):
+    if os.geteuid() == 0: die("refusing to run apps as root")
+    if os.environ.get("AJAIL_ACTIVE"): die("recursion detected, aborting. Run: ajail off")
+    if not shutil.which("bwrap"): die("bubblewrap missing: sudo dnf install bubblewrap")
+    app = os.path.realpath(arg)
+    if not os.path.isfile(app): die(f"not a file: {arg}")
+    off = appimage_offset(app)
+    name = sanitize(app)
+    cfg = load_cfg(name)
+    if not cfg["x11"] and not wayland_path():
+        die("no Wayland session found. Enable 'X11 compatibility' for this app in ajail-gui.")
+    root = ensure_extracted(app, name, off)
+    if not os.path.lexists(f"{root}/AppRun"): die("no AppRun found inside this AppImage")
+    check_identity(name, root)
+    os.makedirs(HOMES, mode=0o700, exist_ok=True)
+    os.makedirs(f"{HOMES}/{name}", mode=0o700, exist_ok=True); os.chmod(f"{HOMES}/{name}", 0o700)
+    os.makedirs(RUNNING, exist_ok=True); os.makedirs(SOURCES, exist_ok=True)
+    try: open(f"{SOURCES}/{name}", "w").write(app)
+    except OSError: pass
+    bus = start_bus(cfg, name)
+    sec = seccomp_file()
+    cmd = bwrap_args(name, root, cfg, ["/app/AppRun"] + extra, bus[2] if bus else None,
+                     sec.fileno() if sec else None, forward_files(extra))
+    on = ",".join(k for k in DEFAULTS if cfg[k])
+    log(f"START allow=[{on}] seccomp={'on' if sec else 'off'} dbus={'on' if bus else 'off'}", name)
+    start = time.time()
+    p = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True, errors="replace",
+                         pass_fds=[sec.fileno()] if sec else ())
+    pidfile = f"{RUNNING}/{os.getpid()}"
+    open(pidfile, "w").write(name)
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, lambda *_: p.terminate())
+    def tee():
+        try:
+            with open(LOG, "a") as lf:
+                for line in p.stderr:
+                    try: sys.stderr.write(line); sys.stderr.flush()
+                    except Exception: pass
+                    lf.write(f"[{name}] {line}"); lf.flush()
+        except Exception:
+            pass
+    t = threading.Thread(target=tee, daemon=True); t.start()
+    rc = p.wait(); t.join(2)
+    stop_bus(bus)
+    try: os.unlink(pidfile)
+    except OSError: pass
+    log(f"EXIT code={rc}", name)
+    if rc != 0 and time.time() - start < 10:
+        notify_failure(name)
+    sys.exit(rc)
+
+def need_root(cmd):
+    if os.geteuid() != 0:
+        os.execvp("pkexec", ["pkexec", SELF, cmd])
+
+def cmd_on():
+    need_root("on")
+    if not os.path.exists(SELF) or os.stat(SELF).st_uid != 0: die(f"{SELF} must exist and be owned by root")
+    for t in ("bwrap", "unsquashfs"):
+        if not shutil.which(t): die(f"{t} missing: sudo dnf install bubblewrap squashfs-tools")
+    open("/etc/binfmt.d/appimage-jail.conf", "w").write(RULE + "\n")
+    subprocess.run(["systemctl", "restart", "systemd-binfmt"], check=True)
+    print("ON: AppImages now run sandboxed")
+
+def cmd_off():
+    need_root("off")
+    try: open(f"{BM}/appimage-jail", "w").write("-1")
+    except OSError: pass
+    try: os.unlink("/etc/binfmt.d/appimage-jail.conf")
+    except OSError: pass
+    print("OFF")
+
+def cmd_check():
+    def line(k, m): print(f"{k:5} {m}")
+    def yes(c, ok, no, lvl="INFO"): line("OK" if c else lvl, ok if c else no)
+    yes(shutil.which("bwrap"), "bubblewrap installed", "bubblewrap missing", "WARN")
+    yes(os.path.exists(UNSQ), "squashfs-tools installed", "squashfs-tools missing", "WARN")
+    r = subprocess.run(["bwrap"] + BASE + ["--unshare-all", "/usr/bin/true"], capture_output=True)
+    line("OK" if r.returncode == 0 else "WARN", "unprivileged sandboxes work" if r.returncode == 0
+         else "bwrap test failed: " + r.stderr.decode(errors="replace").strip()[:150])
+    yes(wayland_path(), "Wayland socket found", "no Wayland socket visible to this process")
+    yes(os.path.exists("/dev/dri"), "GPU devices (/dev/dri) present", "no /dev/dri")
+    if glob.glob("/dev/nvidia*"): line("OK", "NVIDIA devices will be shared when Graphics is on")
+    yes(shutil.which("xdg-dbus-proxy"), "xdg-dbus-proxy installed (notifications, portals, tray)",
+        "xdg-dbus-proxy missing: sudo dnf install xdg-dbus-proxy")
+    yes(seccomp_file(), "seccomp filter available", "seccomp filter not available on this CPU architecture")
+    yes(bwrap_has("--disable-userns"), "bubblewrap supports disabling nested sandboxes",
+        "bubblewrap too old for 'Allow the app's own sandbox = off'")
+    on = os.path.exists(f"{BM}/appimage-jail")
+    line("OK" if on else "INFO", "forcing is ON" if on else "forcing is OFF")
+    try:
+        for n in os.listdir(BM):
+            if n in ("register", "status", "appimage-jail"): continue
+            if "4149" in open(f"{BM}/{n}").read().lower():
+                line("WARN", f"another AppImage handler is registered: {n} (may conflict)")
+    except OSError:
+        pass
+    if not shutil.which("notify-send"): line("INFO", "notify-send missing (no failure popups)")
+
+def cmd_preview(n):
+    name = clean(n) if n else "NAME"
+    cfg = load_cfg(name)
+    bus = f"{runtime_dir()}/ajail/PID.bus" if want_bus(cfg) else None
+    print(shlex.join(bwrap_args(name, f"{EXTRACT}/{name}/root", cfg, ["/app/AppRun"], bus)))
+
+def cmd_dump(arg):
+    """JSON of the raw settings, for ajail-gui."""
+    g = parse_cfg(f"{CONF}/default.conf") or empty_cfg()
+    if arg == "--all":
+        apps = {}
+        try:
+            for f in os.listdir(f"{CONF}/apps"):
+                if f.endswith(".conf"): apps[f[:-5]] = parse_cfg(f"{CONF}/apps/{f}") or empty_cfg()
+        except OSError:
+            pass
+        out = {"global": g, "apps": apps}
+    else:
+        out = {"global": g, "app": (parse_cfg(f"{CONF}/apps/{clean(arg)}.conf") or empty_cfg()) if arg else None}
+    print(json.dumps(out))
+
+HELP = """ajail on | off | status | check   force on/off for all AppImages, or check the setup
+ajail preview [NAME]             show the bwrap command that would run
+ajail name FILE.AppImage         show the name ajail uses for this file
+ajail FILE.AppImage [args]       run one AppImage sandboxed (files in args are shared for that run)
+Settings and everything else: ajail-gui"""
+
+def main():
+    a = sys.argv[1:]
+    c = a[0] if a else "help"
+    if c in ("help", "-h", "--help"): print(HELP)
+    elif c == "on": cmd_on()
+    elif c == "off": cmd_off()
+    elif c == "status": print("Forcing: ON" if os.path.exists(f"{BM}/appimage-jail") else "Forcing: OFF")
+    elif c == "check": cmd_check()
+    elif c == "preview": cmd_preview(a[1] if len(a) > 1 else "")
+    elif c == "dump": cmd_dump(a[1] if len(a) > 1 else "")
+    elif c == "name" and len(a) > 1: print(sanitize(a[1]))
+    else: run_app(c, a[1:])
+
+main()

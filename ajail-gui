@@ -1,0 +1,673 @@
+#!/usr/bin/python3
+# ajail-gui - GTK4 + libadwaita front-end for ajail (a Flatseal-style permission editor)
+import json, os, re, signal, shutil, subprocess, sys, threading
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gio, GLib, Gtk
+
+SELF    = "/usr/local/bin/ajail"
+HOME    = os.path.realpath(os.path.expanduser("~"))
+USER    = os.environ.get("USER", "")
+CONF    = HOME + "/.config/ajail"
+APPS    = CONF + "/apps"
+HOMES   = HOME + "/.appimage-homes"
+EXTRACT = HOME + "/.local/share/ajail/extracted"
+STATE   = HOME + "/.local/state/ajail"
+RUNNING = STATE + "/running"
+SOURCES = STATE + "/sources"
+LOG     = STATE + "/ajail.log"
+RULE    = "/proc/sys/fs/binfmt_misc/appimage-jail"
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+OUTSIDE = ("/mnt/", "/media/", f"/run/media/{USER}/")
+os.makedirs(APPS, exist_ok=True)
+
+# Keep in sync with DEFAULTS in ajail.
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
+            "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1}
+LISTS = ("allow", "allow_ro", "xdg", "env", "talk")
+XDG = [("download", "Downloads"), ("documents", "Documents"), ("pictures", "Pictures"),
+       ("music", "Music"), ("videos", "Videos"), ("desktop", "Desktop")]
+MODES = ["No access", "Read-only", "Read & write"]
+LABEL = {"net": "Internet", "sound": "Audio", "gpu": "Graphics", "camera": "Camera",
+         "input": "Input devices", "x11": "X11", "ssh_agent": "SSH agent", "printing": "Printing"}
+SECTIONS = [
+    ("What can this app use?",
+     "Changes apply the next time the app starts. Everything else on your computer stays hidden from it.", [
+        ("net", "Internet", "Network access. Also reaches localhost and your local network."),
+        ("sound", "Audio", "Play sound. Also allows microphone access."),
+        ("x11", "X11 compatibility", "Only for apps that won't start otherwise. Weaker isolation."),
+        ("printing", "Printing", "Talk to the print service (CUPS)"),
+        ("ssh_agent", "SSH agent", "Use your SSH keys without seeing them. The app can sign as you.")]),
+    ("Devices", None, [
+        ("gpu", "Graphics acceleration", "Needed by most apps; turn off only if the app crashes"),
+        ("camera", "Camera", "Webcams (/dev/video*)"),
+        ("input", "Game controllers and input devices", "Raw access to /dev/input")]),
+    ("Desktop integration", None, [
+        ("portals", "Notifications and portals", "Notifications, opening links, dark mode (needs xdg-dbus-proxy)"),
+        ("tray", "Tray icon and media keys", "Show a tray icon and answer media keys (needs xdg-dbus-proxy)"),
+        ("theme", "Your fonts and themes", "Read-only access to your installed fonts, icons and themes")]),
+    ("Hardening", None, [
+        ("userns", "Allow the app's own sandbox",
+         "Electron and Chromium apps need this. Turn off for stricter isolation (needs bubblewrap 0.8+).")]),
+]
+
+
+def esc(s):
+    return GLib.markup_escape_text(s)
+
+def empty():
+    return {"s": {}, **{k: [] for k in LISTS}}
+
+def path_for(scope):
+    return CONF + "/default.conf" if scope is None else f"{APPS}/{scope}.conf"
+
+def write_cfg(scope, raw):
+    out = [f"{k}={int(v)}" for k, v in raw["s"].items()]
+    for k in LISTS:
+        out += [f"{k}={v}" for v in raw[k]]
+    path = path_for(scope)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write("\n".join(out) + "\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+def run(cmd, timeout=None):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return subprocess.CompletedProcess(cmd, 127, "", f"{cmd[0]} not available")
+
+def dump(arg=""):
+    r = run([SELF, "dump"] + ([arg] if arg else []))
+    try:
+        d = json.loads(r.stdout)
+    except ValueError:
+        d = {}
+    d.setdefault("global", empty())
+    return d
+
+def summary(G, A):
+    e = {**DEFAULTS, **G["s"], **(A["s"] if A else {})}
+    x = {}
+    for src in (G, A):
+        for it in (src["xdg"] if src else []):
+            k, _, m = it.partition(":")
+            x[k] = m
+    folders = set(G["allow"] + G["allow_ro"] + (A["allow"] + A["allow_ro"] if A else []))
+    n = len(folders) + sum(1 for m in x.values() if m != "none")
+    parts = [t for k, t in LABEL.items() if e[k]]
+    if n:
+        parts.append(f"{n} shared folder" + ("" if n == 1 else "s"))
+    return " · ".join(parts) or "Fully isolated"
+
+def path_ok(p):
+    p = os.path.realpath(p)
+    if "\n" in p or not os.path.exists(p):
+        return None
+    if p.startswith(HOME + "/"):
+        return None if p[len(HOME) + 1:].split("/")[0].startswith(".") else p
+    return p if any(p.startswith(b) for b in OUTSIDE) else None
+
+def app_names():
+    names = set()
+    for d, ext in ((APPS, ".conf"), (HOMES, "")):
+        if os.path.isdir(d):
+            for f in os.listdir(d):
+                n = f[:-len(ext)] if ext and f.endswith(ext) else f
+                if NAME_RE.match(n):
+                    names.add(n)
+    return sorted(names)
+
+def running_pids(name=None):
+    out = {}
+    if os.path.isdir(RUNNING):
+        for f in os.listdir(RUNNING):
+            if f.isdigit() and os.path.exists(f"/proc/{f}"):
+                try:
+                    n = open(f"{RUNNING}/{f}").read().strip()
+                except OSError:
+                    continue
+                out.setdefault(n, []).append(int(f))
+    return out if name is None else out.get(name, [])
+
+def dir_size(path):
+    if not os.path.isdir(path):
+        return "none yet"
+    r = run(["du", "-sh", path], timeout=5)
+    return r.stdout.split()[0] if r.stdout else "unknown"
+
+
+class Win(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="AppImage Jail", default_width=560, default_height=800)
+        self._busy = False
+        self.rows, self.badges = [], {}
+        self.toasts = Adw.ToastOverlay()
+        self.nav = Adw.NavigationView()
+        self.toasts.set_child(self.nav)
+        self.set_content(self.toasts)
+        self.nav.add(self.build_main())
+        GLib.timeout_add_seconds(3, self.tick)
+
+    def toast(self, msg):
+        self.toasts.add_toast(Adw.Toast(title=msg))
+
+    def confirm(self, heading, body, label, cb):
+        dlg = Adw.AlertDialog(heading=heading, body=body)
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("ok", label)
+        dlg.set_response_appearance("ok", Adw.ResponseAppearance.DESTRUCTIVE)
+        dlg.set_default_response("cancel")
+        dlg.set_close_response("cancel")
+        dlg.connect("response", lambda d, r: cb() if r == "ok" else None)
+        dlg.present(self)
+
+    def ask(self, heading, labels, cb):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        ents = []
+        for l in labels:
+            e = Gtk.Entry(placeholder_text=l, activates_default=True)
+            box.append(e)
+            ents.append(e)
+        dlg = Adw.AlertDialog(heading=heading)
+        dlg.set_extra_child(box)
+        dlg.add_response("cancel", "Cancel")
+        dlg.add_response("ok", "Add")
+        dlg.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_default_response("ok")
+        dlg.set_close_response("cancel")
+        dlg.connect("response", lambda d, r: cb([e.get_text().strip() for e in ents]) if r == "ok" else None)
+        dlg.present(self)
+
+    def build_main(self):
+        page = Adw.PreferencesPage()
+        g = Adw.PreferencesGroup()
+        self.force = Adw.SwitchRow(
+            title="Sandbox every AppImage",
+            subtitle="Applies however an app is started. Asks for your password when changed.")
+        self.force.set_active(os.path.exists(RULE))
+        self.force.connect("notify::active", self.on_force)
+        g.add(self.force)
+        page.add(g)
+
+        self.apps_group = Adw.PreferencesGroup(title="Apps")
+        page.add(self.apps_group)
+
+        header = Adw.HeaderBar()
+        add = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add an AppImage")
+        add.connect("clicked", self.on_add)
+        header.pack_start(add)
+        ts = Gtk.Button(icon_name="utilities-terminal-symbolic", tooltip_text="Troubleshooting")
+        ts.connect("clicked", lambda *_: self.open_trouble(None))
+        header.pack_end(ts)
+
+        view = Adw.ToolbarView()
+        view.add_top_bar(header)
+        view.set_content(page)
+        self.main = Adw.NavigationPage(title="AppImage Jail", child=view)
+        self.fill_apps()
+        return self.main
+
+    def fill_apps(self):
+        for r in self.rows:
+            self.apps_group.remove(r)
+        self.rows, self.badges = [], {}
+        d = dump("--all")
+        G, apps = d["global"], d.get("apps", {})
+        names = app_names()
+        self.apps_group.set_description(
+            "Select an app to change what it can access." if names else
+            "No apps yet. Press + to add an AppImage, or just launch one.")
+        for scope, title in [(None, "All apps (default)")] + [(n, n) for n in names]:
+            A = None if scope is None else apps.get(scope, empty())
+            row = Adw.ActionRow(title=esc(title), subtitle=esc(summary(G, A)), activatable=True)
+            if scope:
+                b = Gtk.Label(label="Running", visible=False)
+                b.add_css_class("success")
+                b.add_css_class("caption")
+                row.add_suffix(b)
+                self.badges[scope] = b
+            row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+            row.connect("activated", lambda r, s=scope: self.open_app(s))
+            self.apps_group.add(row)
+            self.rows.append(row)
+        self.tick()
+
+    def tick(self):
+        on = os.path.exists(RULE)
+        if self.force.get_sensitive() and self.force.get_active() != on:
+            self._busy = True
+            self.force.set_active(on)
+            self._busy = False
+        names = running_pids()
+        for n, b in self.badges.items():
+            b.set_visible(n in names)
+        return True
+
+    def on_force(self, row, _):
+        if self._busy:
+            return
+        want = row.get_active()
+        if want == os.path.exists(RULE):
+            return
+        row.set_sensitive(False)
+
+        def done(r):
+            self._busy = True
+            row.set_active(os.path.exists(RULE))
+            self._busy = False
+            row.set_sensitive(True)
+            if r.returncode:
+                msg = (r.stderr or r.stdout or "Cancelled").strip().splitlines()
+                self.toast((msg[-1] if msg else "Cancelled")[:120])
+            return False
+
+        def work():
+            r = run([SELF, "on" if want else "off"])
+            GLib.idle_add(done, r)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_add(self, *_):
+        dlg = Gtk.FileDialog(title="Choose an AppImage")
+        flt = Gtk.FileFilter()
+        flt.set_name("AppImage")
+        flt.add_pattern("*.AppImage")
+        flt.add_pattern("*.appimage")
+        store = Gio.ListStore.new(Gtk.FileFilter)
+        store.append(flt)
+        dlg.set_filters(store)
+
+        def cb(d, res):
+            try:
+                f = d.open_finish(res)
+            except GLib.Error:
+                return
+            name = run([SELF, "name", f.get_path()]).stdout.strip()
+            if not NAME_RE.match(name):
+                self.toast("Could not read that file. Is ajail installed?")
+                return
+            if not os.path.exists(path_for(name)):
+                write_cfg(name, empty())
+            self.fill_apps()
+            self.open_app(name)
+
+        dlg.open(self, None, cb)
+
+    def open_app(self, scope):
+        d = dump(scope or "")
+        G = d["global"]
+        A = d.get("app") or empty()
+        R = G if scope is None else A      # the settings being edited
+        title = scope or "All apps (default)"
+        page = Adw.PreferencesPage()
+        marks, syncing = [], [False]
+
+        tech = Adw.ActionRow(title="Command", subtitle_selectable=True)
+        tech.add_css_class("monospace")
+
+        def refresh_tech():
+            r = run([SELF, "preview"] + ([scope] if scope else []))
+            tech.set_subtitle(esc((r.stdout or r.stderr).strip()))
+
+        def commit():
+            write_cfg(scope, R)
+            for m in marks:
+                m()
+            refresh_tech()
+
+        def eff(k):
+            v = dict(DEFAULTS)
+            v.update(G["s"])
+            if scope:
+                v.update(A["s"])
+            return bool(v[k])
+
+        if scope:
+            ag = Adw.PreferencesGroup(title="App")
+            try:
+                src = open(f"{SOURCES}/{scope}").read().strip()
+            except OSError:
+                src = ""
+            arow = Adw.ActionRow(title="AppImage file", subtitle=esc(src or "Unknown until the first launch"))
+            launch = Gtk.Button(label="Launch", valign=Gtk.Align.CENTER, sensitive=bool(src and os.path.isfile(src)))
+            launch.connect("clicked", lambda *_: subprocess.Popen([SELF, src], start_new_session=True))
+            stop = Gtk.Button(label="Stop", valign=Gtk.Align.CENTER)
+
+            def do_stop(*_):
+                for pid in running_pids(scope):
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except OSError:
+                        pass
+                self.toast("Stopping…")
+
+            stop.connect("clicked", do_stop)
+            logb = Gtk.Button(label="Log", valign=Gtk.Align.CENTER)
+            logb.connect("clicked", lambda *_: self.open_trouble(scope))
+            for b in (logb, stop, launch):
+                arow.add_suffix(b)
+            ag.add(arow)
+            page.add(ag)
+
+        def add_switch(g, key, t, sub):
+            sw = Adw.SwitchRow(title=t, subtitle=sub, active=eff(key))
+            rb = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER,
+                            tooltip_text="Use the default" if scope else "Use the built-in default")
+            rb.add_css_class("flat")
+            sw.add_suffix(rb)
+
+            def on_sw(row, _p):
+                if syncing[0]:
+                    return
+                R["s"][key] = int(row.get_active())
+                commit()
+
+            def on_reset(_b):
+                R["s"].pop(key, None)
+                syncing[0] = True
+                sw.set_active(eff(key))
+                syncing[0] = False
+                commit()
+
+            sw.connect("notify::active", on_sw)
+            rb.connect("clicked", on_reset)
+            marks.append(lambda: rb.set_visible(key in R["s"]))
+            rb.set_visible(key in R["s"])
+            g.add(sw)
+
+        for gtitle, desc, items in SECTIONS:
+            g = Adw.PreferencesGroup(title=gtitle, description=desc or "")
+            for key, t, sub in items:
+                add_switch(g, key, t, sub)
+            page.add(g)
+
+        def xmap(*srcs):
+            m = {}
+            for s in srcs:
+                for x in s["xdg"]:
+                    k, _, v = x.partition(":")
+                    m[k] = v
+            return m
+
+        xg = Adw.PreferencesGroup(title="Standard folders",
+                                  description="Everything else in your home stays hidden from the app.")
+        cur = xmap(G, A) if scope else xmap(G)
+        for kind, label in XDG:
+            v = cur.get(kind)
+            row = Adw.ComboRow(title=label, model=Gtk.StringList.new(MODES))
+            row.set_selected(2 if v == "" else 1 if v == "ro" else 0)
+
+            def on_xdg(r, _p, kind=kind):
+                idx = r.get_selected()
+                R["xdg"] = [x for x in R["xdg"] if x.partition(":")[0] != kind]
+                if idx == 2:
+                    R["xdg"].append(kind)
+                elif idx == 1:
+                    R["xdg"].append(kind + ":ro")
+                elif scope and xmap(G).get(kind) not in (None, "none"):
+                    R["xdg"].append(kind + ":none")
+                commit()
+
+            row.connect("notify::selected", on_xdg)
+            xg.add(row)
+        page.add(xg)
+
+        fg = Adw.PreferencesGroup(title="Other folders and files",
+                                  description="Folders or files in your home (not hidden ones) or on a mounted drive.")
+        hb = Gtk.Box(spacing=6)
+        addf = Gtk.Button(label="Add folder", valign=Gtk.Align.CENTER)
+        addfile = Gtk.Button(label="Add file", valign=Gtk.Align.CENTER)
+        hb.append(addf)
+        hb.append(addfile)
+        fg.set_header_suffix(hb)
+        frows = []
+
+        def refill():
+            for r in frows:
+                fg.remove(r)
+            frows.clear()
+            inh = [(p, False) for p in G["allow"]] + [(p, True) for p in G["allow_ro"]] if scope else []
+            mine = [(p, False) for p in R["allow"]] + [(p, True) for p in R["allow_ro"]]
+            if not inh and not mine:
+                r = Adw.ActionRow(title="None", subtitle="The app only sees its own private folder")
+                fg.add(r)
+                frows.append(r)
+            for p, ro in inh:
+                r = Adw.ActionRow(title=esc(p), subtitle="From default settings · " + ("read-only" if ro else "read & write"))
+                fg.add(r)
+                frows.append(r)
+            for p, ro in mine:
+                r = Adw.ActionRow(title=esc(p))
+                tog = Gtk.ToggleButton(label="Read-only", active=ro, valign=Gtk.Align.CENTER)
+                tog.connect("toggled", lambda b, path=p: move(path, b.get_active()))
+                rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Remove")
+                rm.add_css_class("flat")
+                rm.connect("clicked", lambda b, path=p: remove(path))
+                r.add_suffix(tog)
+                r.add_suffix(rm)
+                fg.add(r)
+                frows.append(r)
+
+        def drop(path):
+            for k in ("allow", "allow_ro"):
+                if path in R[k]:
+                    R[k].remove(path)
+
+        def move(path, ro):
+            drop(path)
+            R["allow_ro" if ro else "allow"].append(path)
+            commit()
+
+        def remove(path):
+            drop(path)
+            commit()
+            refill()
+
+        def pick(folder):
+            dlg = Gtk.FileDialog(title="Choose a folder to share" if folder else "Choose a file to share")
+
+            def cb(d, res):
+                try:
+                    f = d.select_folder_finish(res) if folder else d.open_finish(res)
+                except GLib.Error:
+                    return
+                ok = path_ok(f.get_path())
+                if not ok:
+                    self.toast("Only non-hidden items in your home, or on a mounted drive, can be shared")
+                    return
+                drop(ok)
+                R["allow"].append(ok)
+                commit()
+                refill()
+
+            (dlg.select_folder if folder else dlg.open)(self, None, cb)
+
+        addf.connect("clicked", lambda *_: pick(True))
+        addfile.connect("clicked", lambda *_: pick(False))
+        page.add(fg)
+
+        def list_group(gtitle, desc, key, labels, build):
+            lg = Adw.PreferencesGroup(title=gtitle, description=desc)
+            addb = Gtk.Button(label="Add", valign=Gtk.Align.CENTER)
+            lg.set_header_suffix(addb)
+            lrows = []
+
+            def refill_l():
+                for r in lrows:
+                    lg.remove(r)
+                lrows.clear()
+                items = [(v, True) for v in (G[key] if scope else [])] + [(v, False) for v in R[key]]
+                if not items:
+                    r = Adw.ActionRow(title="None")
+                    lg.add(r)
+                    lrows.append(r)
+                for v, inherited in items:
+                    r = Adw.ActionRow(title=esc(v))
+                    if inherited:
+                        r.set_subtitle("From default settings")
+                    else:
+                        rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Remove")
+                        rm.add_css_class("flat")
+                        rm.connect("clicked", lambda b, v=v: (R[key].remove(v), commit(), refill_l()))
+                        r.add_suffix(rm)
+                    lg.add(r)
+                    lrows.append(r)
+
+            def got(vals):
+                v = build(vals)
+                if not v:
+                    self.toast("That value is not valid")
+                    return
+                if v not in R[key]:
+                    R[key].append(v)
+                commit()
+                refill_l()
+
+            addb.connect("clicked", lambda *_: self.ask(gtitle, labels, got))
+            refill_l()
+            page.add(lg)
+
+        list_group("Environment variables", "Extra variables set for this app.", "env",
+                   ["Name", "Value"],
+                   lambda v: f"{v[0]}={v[1]}" if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v[0]) else None)
+        list_group("D-Bus services", "Extra session-bus names the app may talk to (advanced).", "talk",
+                   ["Service name, e.g. org.gnome.SessionManager"],
+                   lambda v: v[0] if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]*(\.\*)?", v[0]) else None)
+
+        if scope:
+            dg = Adw.PreferencesGroup(title="Storage")
+            home_dir, ext_dir = f"{HOMES}/{scope}", f"{EXTRACT}/{scope}"
+            data_row = Adw.ActionRow(title="App data", subtitle=dir_size(home_dir))
+            openb = Gtk.Button(label="Open", valign=Gtk.Align.CENTER)
+            openb.connect("clicked", lambda *_: (os.makedirs(home_dir, exist_ok=True),
+                                                 subprocess.Popen(["xdg-open", home_dir])))
+            resetb = Gtk.Button(label="Reset…", valign=Gtk.Align.CENTER)
+            resetb.add_css_class("destructive-action")
+
+            def do_reset_data():
+                if os.path.isdir(home_dir) and not os.path.islink(home_dir):
+                    shutil.rmtree(home_dir, ignore_errors=True)
+                data_row.set_subtitle(dir_size(home_dir))
+                self.toast("App data deleted")
+
+            resetb.connect("clicked", lambda *_: self.confirm(
+                f"Delete all data of {scope}?",
+                "Settings, logins and files the app saved will be permanently removed.",
+                "Delete", do_reset_data))
+            data_row.add_suffix(openb)
+            data_row.add_suffix(resetb)
+            dg.add(data_row)
+
+            ext_row = Adw.ActionRow(title="Extracted copy",
+                                    subtitle=dir_size(ext_dir) + " · rebuilt on next launch if removed")
+            clearb = Gtk.Button(label="Clear", valign=Gtk.Align.CENTER)
+
+            def do_clear():
+                if os.path.isdir(ext_dir) and not os.path.islink(ext_dir):
+                    shutil.rmtree(ext_dir, ignore_errors=True)
+                ext_row.set_subtitle(dir_size(ext_dir) + " · rebuilt on next launch if removed")
+
+            clearb.connect("clicked", lambda *_: do_clear())
+            ext_row.add_suffix(clearb)
+            dg.add(ext_row)
+            page.add(dg)
+
+        tg = Adw.PreferencesGroup()
+        exp = Adw.ExpanderRow(title="Technical details")
+        exp.add_row(tech)
+        tg.add(exp)
+        page.add(tg)
+
+        rg = Adw.PreferencesGroup()
+        rbtn = Gtk.Button(label="Reset permissions…", halign=Gtk.Align.CENTER)
+        rbtn.add_css_class("destructive-action")
+
+        def do_reset():
+            write_cfg(scope, empty())
+            self.nav.pop()
+
+        rbtn.connect("clicked", lambda *_: self.confirm(
+            "Reset permissions?",
+            "All changes for this " + ("app" if scope else "default") + " go back to " +
+            ("the defaults." if scope else "the built-in settings."), "Reset", do_reset))
+        rg.add(rbtn)
+        page.add(rg)
+
+        for m in marks:
+            m()
+        refill()
+        refresh_tech()
+
+        header = Adw.HeaderBar()
+        view = Adw.ToolbarView()
+        view.add_top_bar(header)
+        view.set_content(page)
+        np = Adw.NavigationPage(title=title, child=view)
+        np.connect("hidden", lambda *_: self.fill_apps())
+        self.nav.push(np)
+
+    def open_trouble(self, scope):
+        page = Adw.PreferencesPage()
+        hg = Adw.PreferencesGroup(title="Health")
+        hl = Gtk.Label(xalign=0, wrap=True, selectable=True, margin_top=6, margin_bottom=6)
+        hl.add_css_class("monospace")
+        hg.add(hl)
+        page.add(hg)
+
+        lg = Adw.PreferencesGroup(title="Recent activity" + (f" · {scope}" if scope else ""),
+                                  description="Errors from apps appear here. Paste them when asking for help.")
+        tv = Gtk.TextView(editable=False, cursor_visible=False, monospace=True,
+                          wrap_mode=Gtk.WrapMode.WORD_CHAR, left_margin=8, right_margin=8,
+                          top_margin=8, bottom_margin=8)
+        sw = Gtk.ScrolledWindow(min_content_height=320, child=tv)
+        sw.add_css_class("card")
+        lg.add(sw)
+        page.add(lg)
+
+        def refresh(*_):
+            r = run([SELF, "check"])
+            hl.set_text((r.stdout + r.stderr).strip() or "No output. Is ajail installed?")
+            try:
+                lines = open(LOG, errors="replace").readlines()
+                if scope:
+                    lines = [l for l in lines if f"[{scope}]" in l]
+                txt = "".join(lines[-200:]) or "Nothing logged yet."
+            except OSError:
+                txt = "No launches logged yet."
+            tv.get_buffer().set_text(txt)
+
+        header = Adw.HeaderBar()
+        rb = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh")
+        rb.connect("clicked", refresh)
+        header.pack_end(rb)
+        view = Adw.ToolbarView()
+        view.add_top_bar(header)
+        view.set_content(page)
+        refresh()
+        self.nav.push(Adw.NavigationPage(title="Troubleshooting", child=view))
+
+
+class App(Adw.Application):
+    def __init__(self, log=None):
+        kw = {"flags": Gio.ApplicationFlags.NON_UNIQUE} if log is not None else {}
+        super().__init__(application_id="org.ajail.Gui", **kw)
+        self.log_scope = log
+
+    def do_activate(self):
+        first = self.props.active_window is None
+        win = self.props.active_window or Win(self)
+        win.present()
+        if first and self.log_scope is not None:
+            win.open_trouble(self.log_scope or None)
+
+
+argv, log = sys.argv[:], None
+if "--log" in argv:                      # ajail-gui --log [NAME]  opens the log page
+    i = argv.index("--log")
+    nxt = argv[i + 1] if i + 1 < len(argv) else ""
+    log = nxt if NAME_RE.match(nxt) else ""
+    del argv[i:i + (2 if log else 1)]
+sys.exit(App(log).run(argv))

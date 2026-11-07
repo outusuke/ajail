@@ -1,0 +1,130 @@
+#!/usr/bin/python3
+# make-selftest - builds ajail-selftest.AppImage, a tiny AppImage that reports what the sandbox allows.
+# It only runs through ajail (it has no real AppImage runtime):   ajail ./ajail-selftest.AppImage
+# Needs: mksquashfs (package squashfs-tools).
+import os, shutil, struct, subprocess, sys, tempfile
+
+APPRUN = r'''#!/usr/bin/python3
+import ctypes, glob, os, platform, shutil, socket, subprocess, sys
+
+out = []
+def row(state, name, detail=""):
+    out.append(f"{state:8} {name:<26} {detail}")
+def yn(c): return "ALLOWED" if c else "blocked"
+def sh(cmd, t=4):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=t)
+        return r.returncode, (r.stdout + r.stderr).strip()
+    except Exception as e:
+        return 127, str(e)
+
+H = os.path.expanduser("~")
+rt = os.environ.get("XDG_RUNTIME_DIR", "")
+
+try:
+    s = socket.create_connection(("1.1.1.1", 443), timeout=3); s.close(); net = True
+except OSError as e:
+    net = False; err = str(e)
+row(yn(net), "Internet", "" if net else err)
+ports = set()
+for f in ("/proc/net/tcp", "/proc/net/tcp6"):
+    try:
+        for ln in open(f).read().splitlines()[1:]:
+            p = ln.split()
+            if p[3] == "0A": ports.add(int(p[1].split(":")[1], 16))
+    except OSError: pass
+row("INFO", "Host services visible", f"{len(ports)} listening TCP ports" + (" (host network is shared)" if ports else " (isolated network)"))
+
+row(yn(os.path.exists(f"{rt}/pipewire-0") or os.path.exists(f"{rt}/pulse/native")), "Audio sockets")
+row(yn(bool(os.environ.get("WAYLAND_DISPLAY")) and os.path.exists(f"{rt}/{os.environ.get('WAYLAND_DISPLAY','')}")), "Wayland socket")
+row(yn(bool(os.environ.get("DISPLAY"))), "X11", os.environ.get("DISPLAY", ""))
+row(yn(os.path.exists("/run/cups/cups.sock")), "Printing (CUPS)")
+sa = os.environ.get("SSH_AUTH_SOCK", "")
+row(yn(bool(sa) and os.path.exists(sa)), "SSH agent", sa)
+if sa and shutil.which("ssh-add"):
+    row("INFO", "  ssh-add -l", sh(["ssh-add", "-l"])[1].splitlines()[0] if sh(["ssh-add", "-l"])[1] else "")
+
+dri = glob.glob("/dev/dri/*"); nv = glob.glob("/dev/nvidia*")
+row(yn(bool(dri)), "Graphics (/dev/dri)", " ".join(os.path.basename(x) for x in dri))
+row(yn(bool(nv)), "NVIDIA devices", f"{len(nv)} nodes")
+cam = glob.glob("/dev/video*")
+row(yn(bool(cam)), "Camera", " ".join(os.path.basename(x) for x in cam))
+inp = glob.glob("/dev/input/*")
+row(yn(bool(inp)), "Input devices", f"{len(inp)} nodes")
+row("INFO", "/sys/devices entries", ", ".join(sorted(os.listdir("/sys/devices"))[:8]) if os.path.isdir("/sys/devices") else "none")
+
+for k in ("Downloads", "Documents", "Pictures", "Music", "Videos", "Desktop"):
+    p = f"{H}/{k}"
+    if os.path.isdir(p):
+        row("ALLOWED", f"~/{k}", "read & write" if os.access(p, os.W_OK) else "read-only")
+    else:
+        row("blocked", f"~/{k}")
+for k in (".ssh", ".gnupg", ".config", ".mozilla", ".aws"):
+    row("EXPOSED" if os.path.exists(f"{H}/{k}") and k in (".ssh", ".gnupg", ".aws") else "hidden", f"~/{k}")
+try: names = sorted(n for n in os.listdir(H) if not n.startswith("."))
+except OSError: names = []
+row("INFO", "Visible in ~ (non-hidden)", ", ".join(names) or "nothing (private home only)")
+row(yn(os.path.isdir(f"{H}/.local/share/fonts") or os.path.isdir(f"{H}/.fonts")), "Your fonts")
+for a in sys.argv[1:]:
+    if os.path.exists(a):
+        row("ALLOWED", "File argument", f"{a} ({'rw' if os.access(a, os.W_OK) else 'ro'})")
+    else:
+        row("blocked", "File argument", f"{a} not visible")
+
+row("INFO", "AJAIL_TEST variable", os.environ.get("AJAIL_TEST", "(not set)"))
+
+bus = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "")
+row(yn(bool(bus)), "Session bus", bus)
+if bus and shutil.which("gdbus"):
+    rc, o = sh(["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications", "--object-path",
+                "/org/freedesktop/Notifications", "--method", "org.freedesktop.Notifications.Notify",
+                "ajail-selftest", "0", "", "ajail self-test", "If you see this, notifications work.", "[]", "{}", "5000"])
+    row(yn(rc == 0), "  Notifications", "popup sent" if rc == 0 else o[:70])
+    rc, o = sh(["gdbus", "call", "--session", "--dest", "org.freedesktop.portal.Desktop", "--object-path",
+                "/org/freedesktop/portal/desktop", "--method", "org.freedesktop.DBus.Properties.Get",
+                "org.freedesktop.portal.Settings", "version"])
+    row(yn(rc == 0), "  Desktop portal", o[:70])
+    rc, o = sh(["gdbus", "call", "--session", "--dest", "org.freedesktop.secrets", "--object-path",
+                "/org/freedesktop/secrets", "--method", "org.freedesktop.DBus.Peer.Ping"])
+    row("blocked" if rc != 0 else "EXPOSED", "  Secret service (should be blocked)", "" if rc == 0 else o[:60])
+
+nr = {"x86_64": 298, "aarch64": 241}.get(platform.machine())
+if nr:
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall(nr, None, 0, -1, -1, 0)
+    e = ctypes.get_errno()
+    row("ACTIVE" if e == 1 else "off", "seccomp filter", "perf_event_open returns EPERM" if e == 1 else f"perf_event_open errno={e}")
+rc, o = sh(["unshare", "-U", "true"]) if shutil.which("unshare") else (127, "unshare missing")
+row(yn(rc == 0), "Nested sandboxes (userns)", "" if rc == 0 else o[:60])
+
+text = "ajail self-test\n" + "=" * 15 + "\n" + "\n".join(out) + "\n"
+print(text)
+try: open(f"{H}/selftest-report.txt", "w").write(text)
+except OSError: pass
+if sys.stdin.isatty():
+    try: input("Press Enter to close...")
+    except EOFError: pass
+'''
+
+DESKTOP = "[Desktop Entry]\nType=Application\nName=ajail selftest\nExec=AppRun\nIcon=ajail-selftest\nCategories=Utility;\n"
+
+def main():
+    if not shutil.which("mksquashfs"):
+        sys.exit("mksquashfs missing: sudo dnf install squashfs-tools")
+    out = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else "ajail-selftest.AppImage")
+    with tempfile.TemporaryDirectory() as t:
+        d = f"{t}/AppDir"; os.makedirs(d)
+        open(f"{d}/AppRun", "w").write(APPRUN); os.chmod(f"{d}/AppRun", 0o755)
+        open(f"{d}/ajail-selftest.desktop", "w").write(DESKTOP)
+        open(f"{d}/ajail-selftest.svg", "w").write('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#3584e4"/></svg>')
+        subprocess.run(["mksquashfs", d, f"{t}/fs.sqfs", "-noappend", "-no-progress", "-quiet", "-root-owned", "-no-xattrs"], check=True)
+        # minimal 64-byte ELF header marked "AI\x02", no section headers -> squashfs starts at offset 64
+        h = bytearray(64)
+        h[0:4] = b"\x7fELF"; h[4] = 2; h[5] = 1; h[6] = 1; h[8:11] = b"AI\x02"
+        struct.pack_into("<HHIQQQIHHHHHH", h, 16, 2, 62, 1, 0, 0, 64, 0, 64, 0, 0, 64, 0, 0)
+        with open(out, "wb") as f:
+            f.write(h); f.write(open(f"{t}/fs.sqfs", "rb").read())
+    os.chmod(out, 0o755)
+    print(f"built {out}\nrun it with:  ajail {out}")
+
+main()
