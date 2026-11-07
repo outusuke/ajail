@@ -45,6 +45,8 @@ sudo install -m 755 -o root -g root ajail ajail-gui /usr/local/bin/
 ajail check
 ```
 
+To put **AppImage Jail** in your application menu, open `ajail-gui` (from a terminal the first time) and turn on **Show AppImage Jail in the app menu**. It writes a launcher and icon under `~/.local/share/` and needs no root; turn the switch off to remove them.
+
 `ajail check` reports what is available and what is missing.
 
 ## Installing apps
@@ -55,7 +57,7 @@ Installing works like dragging an app into Applications:
 2. Choose **Install**. The app is unpacked once, added to your application menu with its own name and icon, and can handle its file types.
 3. The AppImage is moved to the Trash afterwards by default (untick the box to keep it). The installed copy doesn't need it.
 4. To update, open the newer AppImage and choose **Update**. Settings and data are kept.
-5. To remove it, press **Uninstall…** on the app's page, or run `ajail uninstall NAME`. You choose whether to keep its data.
+5. To remove it, press **Uninstall…** on the app's page, or run `ajail uninstall NAME`. You choose whether to keep its data or move it to the Trash.
 
 **Run once** runs the AppImage without installing it and deletes its unpacked copy when the app closes, so nothing is left behind except the app's private data. If you'd rather never see the window, turn off **Ask before opening a new AppImage** in `ajail-gui`; double-clicking then runs the app immediately and installing is done from the GUI.
 
@@ -82,7 +84,7 @@ ajail FILE.AppImage [args]   # open an AppImage (offers Install or Run once when
 ajail run-file [--once] [--mount] FILE # run an AppImage, never offering to install it (--once deletes the unpacked copy on exit, --mount mounts it instead of unpacking)
 ajail install FILE           # unpack it and add it to the app menu (--trash: move the file to the Trash, --mount: keep it compressed)
 ajail run NAME [args]        # run an installed app
-ajail uninstall NAME         # remove it from the app menu (--purge also deletes its data)
+ajail uninstall NAME         # remove it from the app menu (--purge also moves its data to the Trash)
 ajail on                     # force every AppImage through ajail (asks for your password)
 ajail off                    # undo that
 ajail status                 # is forcing on or off

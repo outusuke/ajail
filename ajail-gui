@@ -186,6 +186,49 @@ def mount_install_cmd():
             return cmd
     return None
 
+MENU_DESKTOP = HOME + "/.local/share/applications/org.ajail.Gui.desktop"
+MENU_ICON = HOME + "/.local/share/icons/hicolor/scalable/apps/org.ajail.Gui.svg"
+MENU_ENTRY = f"""[Desktop Entry]
+Type=Application
+Name=AppImage Jail
+GenericName=AppImage Sandbox Manager
+Comment=Install sandboxed AppImages and edit their permissions
+Exec={os.path.realpath(sys.argv[0]) if os.path.basename(sys.argv[0]) == "ajail-gui" else "/usr/local/bin/ajail-gui"}
+Icon=org.ajail.Gui
+Terminal=false
+StartupNotify=true
+Categories=System;Settings;Security;GTK;
+Keywords=appimage;sandbox;bubblewrap;permissions;flatseal;
+"""
+MENU_SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#3584e4"/>
+  <path d="M64 24 L94 36 V62 C94 80 81 94 64 102 C47 94 34 80 34 62 V36 Z" fill="#fff" opacity=".95"/>
+  <rect x="50" y="58" width="28" height="22" rx="4" fill="#3584e4"/>
+  <path d="M55 58 V51 a9 9 0 0 1 18 0 V58" fill="none" stroke="#3584e4" stroke-width="5"/>
+</svg>
+"""
+
+def menu_entry_exists():
+    return os.path.isfile(MENU_DESKTOP)
+
+def set_menu_entry(on):
+    """Add or remove AppImage Jail's own launcher in the user's app menu (no root needed)."""
+    if on:
+        os.makedirs(os.path.dirname(MENU_DESKTOP), exist_ok=True)
+        os.makedirs(os.path.dirname(MENU_ICON), exist_ok=True)
+        for path, text in ((MENU_ICON, MENU_SVG), (MENU_DESKTOP, MENU_ENTRY)):
+            with open(path + ".tmp", "w") as f:
+                f.write(text)
+            os.replace(path + ".tmp", path)
+    else:
+        for path in (MENU_DESKTOP, MENU_ICON):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    if shutil.which("update-desktop-database"):
+        run(["update-desktop-database", os.path.dirname(MENU_DESKTOP)], timeout=10)
+
 def dir_size(path):
     if not os.path.isdir(path):
         return "none yet"
@@ -250,6 +293,20 @@ class Win(Adw.ApplicationWindow):
         self.ask.set_active(get_open_mode() == "ask")
         self.ask.connect("notify::active", lambda r, _p: set_open_mode("ask" if r.get_active() else "run"))
         g.add(self.ask)
+        self.menu = Adw.SwitchRow(
+            title="Show AppImage Jail in the app menu",
+            subtitle="Adds a launcher for this window to your application menu.")
+        self.menu.set_active(menu_entry_exists())
+
+        def on_menu(r, _p):
+            try:
+                set_menu_entry(r.get_active())
+                self.toast("Added to the app menu" if r.get_active() else "Removed from the app menu")
+            except OSError as e:
+                self.toast(f"Could not change it: {e.strerror or e}")
+
+        self.menu.connect("notify::active", on_menu)
+        g.add(self.menu)
         page.add(g)
 
         self.apps_group = Adw.PreferencesGroup(title="Apps")
@@ -349,7 +406,7 @@ class Win(Adw.ApplicationWindow):
 
         dlg.open(self, None, cb)
 
-    def offer_install(self, path, quit_on_close=False):
+    def offer_install(self, path, quit_on_close=False, then=None):
         name = run([SELF, "name", path]).stdout.strip()
         if not NAME_RE.match(name):
             self.toast("Could not read that file. Is ajail installed?")
@@ -407,7 +464,7 @@ class Win(Adw.ApplicationWindow):
                 ui_set("install_trash", "1" if trash.get_active() else "0")
                 if can_mount:
                     ui_set("install_mount", "1" if pack.get_active() else "0")
-                self.install_file(path, trash.get_active(), lambda: self.open_app(name), pack.get_active())
+                self.install_file(path, trash.get_active(), then or (lambda: self.open_app(name)), pack.get_active())
                 return
             if r == "once":
                 use_mount = can_mount and pack.get_active()
@@ -446,7 +503,7 @@ class Win(Adw.ApplicationWindow):
                               body="It is removed from your app menu. Keep its saved data in case you reinstall it?")
         dlg.add_response("cancel", "Cancel")
         dlg.add_response("keep", "Keep data")
-        dlg.add_response("purge", "Delete data too")
+        dlg.add_response("purge", "Move data to Trash too")
         dlg.set_response_appearance("purge", Adw.ResponseAppearance.DESTRUCTIVE)
         dlg.set_default_response("cancel")
         dlg.set_close_response("cancel")
@@ -522,7 +579,10 @@ class Win(Adw.ApplicationWindow):
             else:
                 arow = Adw.ActionRow(title="AppImage file", subtitle=esc(src or "Unknown until the first launch"))
                 launch = Gtk.Button(label="Launch", valign=Gtk.Align.CENTER, sensitive=bool(src and os.path.isfile(src)))
-                launch.connect("clicked", lambda *_: subprocess.Popen([SELF, "run-file", src], start_new_session=True))
+                # packrow (the "Use less disk space" toggle) is created below, before this can be clicked.
+                launch.connect("clicked", lambda *_: subprocess.Popen(
+                    [SELF, "run-file"] + (["--mount"] if packrow.get_active() else []) + [src],
+                    start_new_session=True))
             stop = Gtk.Button(label="Stop", valign=Gtk.Align.CENTER)
 
             def do_stop(*_):
@@ -541,7 +601,7 @@ class Win(Adw.ApplicationWindow):
             ag.add(arow)
             if inst:
                 mrow = Adw.ActionRow(title="Remove from app menu",
-                                     subtitle="Deletes the installed copy. You choose whether to keep the app data.")
+                                     subtitle="Deletes the installed copy. You choose whether to keep the app data or move it to the Trash.")
                 mb = Gtk.Button(label="Uninstall…", valign=Gtk.Align.CENTER)
                 mb.add_css_class("destructive-action")
                 mb.connect("clicked", lambda *_: self.uninstall(scope))
@@ -549,10 +609,22 @@ class Win(Adw.ApplicationWindow):
                 mrow = Adw.ActionRow(title="Add to app menu",
                                      subtitle="Keeps an unpacked copy, so the AppImage file can be deleted.")
                 mb = Gtk.Button(label="Install", valign=Gtk.Align.CENTER, sensitive=bool(src and os.path.isfile(src)))
+                can_mount = bool(shutil.which("squashfuse") and shutil.which("fusermount3"))
+                packrow = Adw.SwitchRow(
+                    title="Use less disk space",
+                    subtitle="Keeps the app compressed and mounts it at launch. Slower, and the file is read outside "
+                             "the sandbox, so only for apps you trust. Experimental.",
+                    active=False, sensitive=can_mount)    # always starts off; not remembered
+                if not can_mount:
+                    cmd = mount_install_cmd()
+                    packrow.set_subtitle("Needs squashfuse and fuse3. " +
+                                         (f"Install them with: {esc(cmd)}" if cmd else "Install them with your package manager."))
                 mb.connect("clicked", lambda *_: self.install_file(
-                    src, False, lambda: (self.nav.pop(), self.open_app(scope))))
+                    src, False, lambda: (self.nav.pop(), self.open_app(scope)), packrow.get_active()))
             mrow.add_suffix(mb)
             ag.add(mrow)
+            if not inst:
+                ag.add(packrow)
             page.add(ag)
 
         def add_switch(g, key, t, sub):
@@ -756,14 +828,17 @@ class Win(Adw.ApplicationWindow):
 
             def do_reset_data():
                 if os.path.isdir(home_dir) and not os.path.islink(home_dir):
-                    shutil.rmtree(home_dir, ignore_errors=True)
+                    r = run(["gio", "trash", home_dir], timeout=120)
+                    if r.returncode:
+                        self.toast("Could not move the data to the Trash")
+                        return
                 data_row.set_subtitle(dir_size(home_dir))
-                self.toast("App data deleted")
+                self.toast("App data moved to the Trash")
 
             resetb.connect("clicked", lambda *_: self.confirm(
-                f"Delete all data of {scope}?",
-                "Settings, logins and files the app saved will be permanently removed.",
-                "Delete", do_reset_data))
+                f"Move all data of {scope} to the Trash?",
+                "Settings, logins and files the app saved are moved to the Trash. You can restore them from there.",
+                "Move to Trash", do_reset_data))
             data_row.add_suffix(openb)
             data_row.add_suffix(resetb)
             dg.add(data_row)

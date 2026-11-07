@@ -516,6 +516,10 @@ def inside(root, p):
     r, q = os.path.realpath(root), os.path.realpath(p)
     return q == r or q.startswith(r + "/")
 
+def trash_path(p):
+    """Move a file or folder to the Trash (needs gio). Returns False if that did not work."""
+    return bool(shutil.which("gio")) and subprocess.run(["gio", "trash", p], capture_output=True).returncode == 0
+
 def rm_tree(p):
     if os.path.isdir(p) and not os.path.islink(p): shutil.rmtree(p, ignore_errors=True)
 
@@ -704,14 +708,21 @@ def cmd_uninstall(args):
     try: os.unlink(f"{APPLICATIONS}/ajail-{name}.desktop")
     except OSError: pass
     remove_icons(name)
+    moved = False
     if purge:
-        rm_tree(f"{HOMES}/{name}"); rm_tree(f"{EXTRACT}/{name}")
-        for p in (f"{CONF}/apps/{name}.conf", f"{CONF}/ids/{name}", f"{SOURCES}/{name}"):
-            try: os.unlink(p)
-            except OSError: pass
+        home = f"{HOMES}/{name}"
+        if not os.path.lexists(home): moved = True
+        elif os.path.isdir(home) and not os.path.islink(home):
+            moved = trash_path(home)      # the data goes to the Trash, never deleted outright
+            if not moved: print(f"ajail: could not move {home} to the Trash, so its data was kept", file=sys.stderr)
+        if moved:                          # settings go with the data; if the data stayed, so do they
+            rm_tree(f"{EXTRACT}/{name}")
+            for p in (f"{CONF}/apps/{name}.conf", f"{CONF}/ids/{name}", f"{SOURCES}/{name}"):
+                try: os.unlink(p)
+                except OSError: pass
     refresh_desktop_db()
-    log("uninstalled" + (" and purged" if purge else ""), name)
-    print(f"Uninstalled {name}" + (" and deleted its data" if purge else ", its data was kept"))
+    log("uninstalled" + (" and purged" if moved else ""), name)
+    print(f"Uninstalled {name}" + (" and moved its data to the Trash" if moved else ", its data was kept"))
 
 def open_mode():
     try:
@@ -820,7 +831,7 @@ ajail name FILE.AppImage         show the name ajail uses for this file
 ajail install FILE.AppImage      unpack it and add it to the app menu (--trash moves the file to the Trash;
                                  --mount keeps it compressed and mounts it at launch, experimental)
 ajail run NAME [args]            run an installed app
-ajail uninstall NAME [--purge]   remove it from the app menu (--purge also deletes its data)
+ajail uninstall NAME [--purge]   remove it from the app menu (--purge also moves its data to the Trash)
 ajail run-file [--once] [--mount] FILE
                                  run an AppImage without offering to install it (--once deletes its unpacked copy on exit;
                                  --mount mounts the file instead of unpacking it, experimental)
