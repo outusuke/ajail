@@ -386,5 +386,37 @@ class GuiInstallFlow(unittest.TestCase):
         with open(f"{HERE}/ajail") as f: s = f.read()
         self.assertIn("movable = move and can_move", s)       # never moves unless --move was given
 
+class ButtonLayout(unittest.TestCase):
+    """The host's window button layout reaches the app as a read-only GSettings key file."""
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def test_keyfile_holds_only_the_layout(self):
+        A["host_button_layout"] = lambda: "menu:minimize,maximize,close"
+        p = A["make_gsettings_keyfile"](self.d)
+        self.assertEqual(open(p).read(),
+                         "[org/gnome/desktop/wm/preferences]\nbutton-layout='menu:minimize,maximize,close'\n")
+
+    def test_no_host_value_means_no_file(self):
+        A["host_button_layout"] = lambda: None
+        self.assertIsNone(A["make_gsettings_keyfile"](self.d))
+        self.assertFalse(os.path.exists(f"{self.d}/gsettings-keyfile"))
+
+    def test_layout_is_validated(self):
+        for bad in ("a'b", "x\ny", "close;rm", "A" * 5):
+            self.assertIsNone(A["LAYOUT_RE"].fullmatch(bad), bad)
+        self.assertTrue(A["LAYOUT_RE"].fullmatch("appmenu:minimize,maximize,close"))
+
+    def test_bwrap_binds_keyfile_only_with_theme(self):
+        c = A["load_cfg"]("Foo")
+        a = A["bwrap_args"]("Foo", "/x", c, ["/app/AppRun"], gset="/run/user/1/ajail/1.d/gsettings-keyfile")
+        i = a.index("GSETTINGS_BACKEND"); self.assertEqual(a[i + 1], "keyfile")
+        j = a.index(f"{A['HOME']}/.config/glib-2.0/settings/keyfile"); self.assertEqual(a[j - 2], "--ro-bind")
+        c["theme"] = 0
+        a = A["bwrap_args"]("Foo", "/x", c, ["/app/AppRun"], gset="/run/user/1/ajail/1.d/gsettings-keyfile")
+        self.assertNotIn("GSETTINGS_BACKEND", a)
+        a = A["bwrap_args"]("Foo", "/x", A["load_cfg"]("Foo"), ["/app/AppRun"])
+        self.assertNotIn("GSETTINGS_BACKEND", a)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

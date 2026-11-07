@@ -390,6 +390,42 @@ def preview_files(cfg):
     n = (["passwd", "group", "hosts"] if cfg["privacy"] else []) + (["resolv.conf"] if private_net(cfg) else [])
     return {x: f"{d}/{x}" for x in n}
 
+# The title-bar button layout (minimize, maximize, close) lives in the desktop's settings, which the sandbox can't read.
+# ajail runs outside the sandbox, so it reads the value on the host and gives the app only that one setting, as a
+# GSettings key file (GTK reads the layout from GSettings, and that beats a settings.ini). The app is pointed at it with
+# GSETTINGS_BACKEND=keyfile. Nothing is hardcoded: no desktop setting found, nothing is shared.
+LAYOUT_KEYS = (("org.gnome.desktop.wm.preferences", "button-layout"),     # GNOME (stored in dconf)
+               ("org.cinnamon.muffin", "button-layout"),
+               ("org.mate.Marco.general", "button-layout"))
+LAYOUT_RE = re.compile(r"[a-z,:_]{0,64}")       # only button names, commas and the colon; anything else is ignored
+
+def host_button_layout():
+    """The button layout from the desktop settings (gsettings/dconf), else from your own GTK settings.ini, else None."""
+    gs = shutil.which("gsettings")
+    for schema, key in (LAYOUT_KEYS if gs else ()):
+        try: r = subprocess.run([gs, "get", schema, key], capture_output=True, text=True, timeout=3)
+        except Exception: continue
+        v = r.stdout.strip().strip("'\"")
+        if r.returncode == 0 and LAYOUT_RE.fullmatch(v): return v
+    for ver in ("gtk-4.0", "gtk-3.0"):
+        try:
+            for ln in open(f"{HOME}/.config/{ver}/settings.ini"):
+                k, _, v = ln.partition("=")
+                if k.strip() == "gtk-decoration-layout" and LAYOUT_RE.fullmatch(v.strip()): return v.strip()
+        except OSError:
+            pass
+    return None
+
+def make_gsettings_keyfile(d):
+    """GSettings key file holding just the host's button layout, written into the per-run folder D. None if there is none.
+    Always written under GNOME's schema, which is the one GTK reads, whichever desktop the value came from."""
+    v = host_button_layout()
+    if v is None: return None
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    p = f"{d}/gsettings-keyfile"
+    with open(p, "w") as f: f.write(f"[org/gnome/desktop/wm/preferences]\nbutton-layout='{v}'\n")
+    return p
+
 def limit_props(cfg):
     props = []
     if cfg["mem_max"]: props += ["-p", f"MemoryMax={cfg['mem_max']}M"]
@@ -462,7 +498,7 @@ def scoped_xauth(src, disp):
         return None
     return dst
 
-def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None):
+def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, gset=None):
     rt = runtime_dir()
     a = ["bwrap", "--unshare-all", "--die-with-parent", "--new-session", "--clearenv"]
     if not cfg["userns"]:
@@ -535,6 +571,9 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None):
     if cfg["theme"]:
         for rel in THEME:
             a += ["--ro-bind-try", f"{HOME}/{rel}", f"{HOME}/{rel}"]
+        if gset:     # the host's title-bar button layout, read-only (see host_button_layout)
+            a += ["--ro-bind", gset, f"{HOME}/.config/glib-2.0/settings/keyfile"]
+            env["GSETTINGS_BACKEND"] = "keyfile"
     for opt, p in share_list(cfg):
         ok = safe_path(p)
         if ok: a += [opt, ok, ok]
@@ -691,16 +730,17 @@ def launch(name, root, cfg, extra, source=None, once=False):
     sec = seccomp_file(cfg["harden"])
     if sec is None and platform.machine() not in ("x86_64", "aarch64"):
         warn(f"no system-call filter for the {platform.machine()} architecture; running without it", name)
-    wd, gen, secpath = None, {}, None
-    if cfg["privacy"] or priv or cfg["x11"]:
+    wd, gen, secpath, gset = None, {}, None, None
+    if cfg["privacy"] or priv or cfg["x11"] or cfg["theme"]:
         wd = work_dir(); gen = make_files(cfg, wd)
+    if cfg["theme"]: gset = make_gsettings_keyfile(wd)
     if priv and sec:
         secpath = f"{wd}/seccomp.bpf"
         sec.seek(0)
         with open(secpath, "wb") as f: f.write(sec.read())
     secfd = (SEC_FD if secpath else None) if priv else (sec.fileno() if sec else None)
     inner = bwrap_args(name, root, cfg, ["/app/AppRun"] + extra, bus[2] if bus else None,
-                       secfd, forward_files(extra), gen)
+                       secfd, forward_files(extra), gen, gset)
     cmd = limit_prefix(cfg, name) + (net_wrap(inner, secpath) if priv else inner)
     on = ",".join(k for k in DEFAULTS if cfg[k])
     lim = ",".join(f"{k}={cfg[k]}" for k in NUM if cfg[k])
@@ -1177,7 +1217,8 @@ def cmd_preview(n):
     if installed_kind(name) == "mount": root = f"{MOUNTS}/{name}"
     elif not os.path.isdir(root): root = f"{EXTRACT}/{name}/root"
     priv = private_net(cfg)
-    cmd = bwrap_args(name, root, cfg, ["/app/AppRun"], bus, SEC_FD if priv else None, (), preview_files(cfg))
+    gset = f"{runtime_dir()}/ajail/PID.d/gsettings-keyfile" if cfg["theme"] and host_button_layout() is not None else None
+    cmd = bwrap_args(name, root, cfg, ["/app/AppRun"], bus, SEC_FD if priv else None, (), preview_files(cfg), gset)
     if priv: cmd = net_wrap(cmd, f"{runtime_dir()}/ajail/PID.d/seccomp.bpf")
     props = limit_props(cfg)
     if props: cmd = ["systemd-run", "--user", "--scope", "--quiet"] + props + ["--"] + cmd
