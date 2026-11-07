@@ -175,7 +175,8 @@ def parse_cfg(path):
     for ln in lines:
         k, _, v = ln.partition("=")
         if k == "portal" and v:
-            if v in EXTRA_PORTALS: d[k].append(v)
+            # "portal=NAME" turns a portal on; "portal=-NAME" (in an app's file) turns off one the defaults turned on
+            if v.lstrip("-") in EXTRA_PORTALS and v.count("-") <= 1: d[k].append(v)
             else: print(f"ajail: ignoring unknown portal '{v}'", file=sys.stderr)
         elif k in LISTS and v: d[k].append(v)
         elif k in DEFAULTS and v in ("0", "1"): d["s"][k] = int(v)
@@ -191,8 +192,14 @@ def load_cfg(name):
     g = parse_cfg(f"{CONF}/default.conf") or empty_cfg()
     a = parse_cfg(f"{CONF}/apps/{name}.conf") or empty_cfg()
     cfg = {**DEFAULTS, **NUM, **g["s"], **a["s"]}
-    for k in ("allow", "allow_ro", "env", "talk", "portal"):
+    for k in ("allow", "allow_ro", "env", "talk"):
         cfg[k] = list(dict.fromkeys(g[k] + a[k]))
+    on = []
+    for p in g["portal"] + a["portal"]:          # in order, so an app's "-NAME" undoes the default's NAME
+        if p.startswith("-"):
+            if p[1:] in on: on.remove(p[1:])
+        elif p not in on: on.append(p)
+    cfg["portal"] = on
     xd = {}
     for x in g["xdg"] + a["xdg"]:
         k, _, m = x.partition(":"); xd[k] = m

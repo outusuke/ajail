@@ -89,6 +89,36 @@ class Config(unittest.TestCase):
         self.assertEqual(A["load_cfg"]("Foo")["portal"], ["Location", "Secret"])
         self.assertEqual(A["load_cfg"]("Other")["portal"], ["Location"])
 
+    def test_app_can_opt_out_of_default_portal(self):
+        self.put("default.conf", "portal=Location\nportal=Secret\n")
+        self.put("apps/Foo.conf", "portal=-Location\n")
+        self.assertEqual(A["load_cfg"]("Foo")["portal"], ["Secret"])
+        self.assertEqual(A["load_cfg"]("Other")["portal"], ["Location", "Secret"])
+
+    def test_optout_order_and_edge_cases(self):
+        self.put("default.conf", "portal=Location\nportal=-Secret\n")
+        self.put("apps/A.conf", "portal=-Location\nportal=Location\n")      # later line wins
+        self.put("apps/B.conf", "portal=-Bogus\nportal=--Location\nportal=-Wallpaper\n")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(A["load_cfg"]("A")["portal"], ["Location"])
+            self.assertEqual(A["load_cfg"]("B")["portal"], ["Location"])    # opting out of an off portal is harmless
+        self.assertIn("-Bogus", err.getvalue()); self.assertIn("--Location", err.getvalue())
+
+    def test_optout_removes_rules(self):
+        self.put("default.conf", "portal=Location\n")
+        self.put("apps/Foo.conf", "portal=-Location\n")
+        self.assertNotIn("Location", calls(A["portal_rules"](A["load_cfg"]("Foo"))))
+        self.assertIn("Location", calls(A["portal_rules"](A["load_cfg"]("Other"))))
+
+    def test_dump_keeps_optout_for_gui(self):
+        import json
+        self.put("apps/Foo.conf", "portal=-Location\n")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            A["cmd_dump"]("Foo")
+        self.assertEqual(json.loads(out.getvalue())["app"]["portal"], ["-Location"])
+
     def test_dump_json_roundtrip_keeps_portal(self):
         import json
         self.put("apps/Foo.conf", "portal=Wallpaper\nnet=0\n")

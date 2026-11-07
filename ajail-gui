@@ -126,7 +126,11 @@ def summary(G, A):
         for it in (src["xdg"] if src else []):
             k, _, m = it.partition(":")
             x[k] = m
-    extra = set(G.get("portal", []) + (A.get("portal", []) if A else []))
+    extra = []
+    for p in G.get("portal", []) + (A.get("portal", []) if A else []):     # "-NAME" in an app turns one off
+        if p.startswith("-"):
+            if p[1:] in extra: extra.remove(p[1:])
+        elif p not in extra: extra.append(p)
     folders = set(G["allow"] + G["allow_ro"] + (A["allow"] + A["allow_ro"] if A else []))
     n = len(folders) + sum(1 for m in x.values() if m != "none")
     parts = [t for k, t in LABEL.items() if e[k]]
@@ -958,8 +962,8 @@ class Win(Adw.ApplicationWindow):
         list_group("Environment variables", "Extra variables set for this app.", "env",
                    ["Name", "Value"],
                    lambda v: f"{v[0]}={v[1]}" if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v[0]) else None)
-        # One switch per opt-in portal. Lists only add up, so a portal enabled in the default settings
-        # shows as on (and locked) on an app's page; it can only be turned off in the default settings.
+        # One switch per opt-in portal. A portal enabled in the default settings shows as on on an app's page;
+        # turning it off there stores "portal=-NAME" in that app's settings, which undoes the default for this app only.
         pg = Adw.PreferencesGroup(
             title="Extra portals",
             description="Off by default. Each switch lets the app use one more desktop portal. "
@@ -969,16 +973,16 @@ class Win(Adw.ApplicationWindow):
             inherited = bool(scope) and pname in G["portal"]
             psw = Adw.SwitchRow(
                 title=ptitle,
-                subtitle=psub + ("\nOn in the default settings." if inherited else ""),
-                active=inherited or pname in R["portal"], sensitive=not inherited)
+                subtitle=psub + ("\nOn in the default settings. Turn it off here for this app only." if inherited else ""),
+                active=pname in R["portal"] or (inherited and "-" + pname not in R["portal"]))
 
-            def on_portal(row, _p, pname=pname):
+            def on_portal(row, _p, pname=pname, inherited=inherited):
+                R["portal"] = [x for x in R["portal"] if x not in (pname, "-" + pname)]
                 if row.get_active():
-                    if pname not in R["portal"]:
+                    if not inherited:
                         R["portal"].append(pname)
-                else:
-                    while pname in R["portal"]:
-                        R["portal"].remove(pname)
+                elif inherited:
+                    R["portal"].append("-" + pname)
                 commit()
 
             psw.connect("notify::active", on_portal)
