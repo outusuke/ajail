@@ -258,27 +258,42 @@ class InstallMove(unittest.TestCase):
         self.assertTrue(os.path.exists(f"{d}/image"))
 
 class MountDefault(unittest.TestCase):
-    def test_app_choice_overrides_global_default(self):
-        d = tempfile.mkdtemp(); A["CONF"] = d
-        pref = A["mount_pref"]
-        self.assertFalse(pref("Foo"))                                   # off unless asked for
-        open(f"{d}/ui.conf", "w").write("mount=1\n")
-        self.assertTrue(pref("Foo"))                                    # global default applies
-        open(f"{d}/ui.conf", "w").write("mount=1\nmount.Foo=0\n")
-        self.assertFalse(pref("Foo")); self.assertTrue(pref("Bar"))     # the app's own choice wins
-
     def test_gui_has_global_switch_and_fallback(self):
         with open(f"{HERE}/ajail-gui") as f: s = f.read()
         self.assertIn("self.mount_row", s); self.assertIn('ui.get("mount")', s)
+        self.assertIn('title="Installing"', s)                # the storage options live in settings, not the install dialog
+
+    def test_mount_only_applies_to_install(self):
+        with open(f"{HERE}/ajail") as f: s = f.read()
+        self.assertNotIn("def mount_pref", s)
+        self.assertIn('"--mount" in flags and "--once" not in flags', s)      # run-file --once ignores --mount
 
 class GuiInstallFlow(unittest.TestCase):
     def gui(self):
         with open(f"{HERE}/ajail-gui") as f: return f.read()
 
-    def test_dropdown_replaces_trash_checkbox(self):
+    def offer_install_src(self):
+        s = self.gui()
+        return s[s.index("    def offer_install"):s.index("    def install_file")]
+
+    def test_install_dialog_is_only_the_decision(self):
+        d = self.offer_install_src()
+        for gone in ("Use less disk space", "Original file", "CheckButton(active=can_mount", "original_choices"):
+            self.assertNotIn(gone, d)
+        for kept in ('"Run once"', '"Install"', "Don't ask again for"):
+            self.assertIn(kept, d)
+
+    def test_run_once_never_mounts(self):
+        s = self.gui()
+        self.assertIn('[SELF, "run-file", "--once", path]', s)
+        self.assertIn('[SELF, "run-file", "--once", src]', s)
+        self.assertNotIn('"run-file", "--once"] + (["--mount"]', s)
+
+    def test_settings_dropdown_and_ask_after_install(self):
         s = self.gui()
         self.assertNotIn("get_install_opt", s); self.assertNotIn('"Undo"', s)
-        for t in ('title="Original file"', "install_original", '"--move"', "Move into app folder"):
+        for t in ('title="After installing, the AppImage file"', "install_original", '"--move"',
+                  "Move into app folder", "def ask_trash", "Move the AppImage to the Trash?"):
             self.assertIn(t, s)
 
     def test_move_choice_only_with_less_disk_space(self):
@@ -288,9 +303,21 @@ class GuiInstallFlow(unittest.TestCase):
             i = s.index(f"def {fn}")
             j = s.index("\n\n", i)
             exec(s[i:j], ns)
-        ns["ORIGINAL"] = {"trash": "", "keep": "", "move": ""}
-        self.assertEqual(ns["original_choices"](False), ["trash", "keep"])
-        self.assertEqual(ns["original_choices"](True), ["trash", "keep", "move"])
+        ns["ORIGINAL"] = {"ask": "", "trash": "", "keep": "", "move": ""}
+        self.assertEqual(ns["original_choices"](False), ["ask", "trash", "keep"])
+        self.assertEqual(ns["original_choices"](True), ["ask", "trash", "keep", "move"])
+
+    def test_original_defaults_to_ask(self):
+        ns = {}
+        s = self.gui()
+        i = s.index("def get_install_original"); exec(s[i:s.index("\n\n", i)], ns)
+        ns["ORIGINAL"] = {"ask": "", "trash": "", "keep": "", "move": ""}
+        ns["ui_read"] = lambda: {}
+        self.assertEqual(ns["get_install_original"](), "ask")
+        ns["ui_read"] = lambda: {"install_original": "keep"}
+        self.assertEqual(ns["get_install_original"](), "keep")
+        ns["ui_read"] = lambda: {"install_original": "bogus"}
+        self.assertEqual(ns["get_install_original"](), "ask")
 
     def test_cli_move_is_opt_in(self):
         with open(f"{HERE}/ajail") as f: s = f.read()

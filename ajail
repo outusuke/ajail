@@ -1057,13 +1057,6 @@ def open_mode(name=None):
         if v in ("ask", "run"): return v
     return "ask"
 
-def mount_pref(name):
-    """'Use less disk space' for this app: its own choice (mount.NAME), else the global default (mount), else off."""
-    for key in (f"mount.{name}", "mount"):
-        v = ui_get(key)
-        if v in ("0", "1"): return v == "1"
-    return False
-
 def forget_app_ui(name):
     """Drop an app's remembered open/mount choices from ui.conf."""
     try:
@@ -1088,12 +1081,10 @@ def open_file(arg, extra):
         except subprocess.TimeoutExpired:
             pass
         return
-    # No prompt for this app. From the desktop: use its installed copy if it is the same file, otherwise honour
-    # its "Use less disk space" choice. Terminal launches never prompt and never mount unless asked to.
+    # No prompt for this app. From the desktop: use its installed copy if it is the same file, otherwise run the file
+    # unpacked in the sandbox. "Use less disk space" only applies to installs. Terminal launches never prompt.
     if app and from_desktop:
         if installed_stamp(name) == file_stamp(app): return run_installed(name, extra)
-        can = shutil.which("squashfuse") and shutil.which("fusermount3") and os.access("/dev/fuse", os.R_OK | os.W_OK)
-        if mount_pref(name) and can: return run_app(arg, extra, mount=True)
     run_app(arg, extra)
 
 def need_root(cmd):
@@ -1224,7 +1215,7 @@ ajail uninstall NAME [--purge]   remove it from the app menu (--purge also moves
 ajail restore NAME               undo a compressed install that moved the file: put it back and uninstall
 ajail run-file [--once] [--mount] FILE
                                  run an AppImage without offering to install it (--once deletes its unpacked copy on exit;
-                                 --mount mounts the file instead of unpacking it, experimental)
+                                 --mount mounts the file instead of unpacking it, experimental; ignored with --once)
 ajail FILE.AppImage [args]       open an AppImage: offers Install or Run once when double-clicked,
                                  otherwise runs it sandboxed (files in args are shared for that run)
 Settings and everything else: ajail-gui"""
@@ -1251,7 +1242,7 @@ def main():
         while rest and rest[0] in ("--once", "--mount"):
             flags.add(rest.pop(0))
         if not rest: die("usage: ajail run-file [--once] [--mount] FILE [args]")
-        run_app(rest[0], rest[1:], "--once" in flags, "--mount" in flags)
+        run_app(rest[0], rest[1:], "--once" in flags, "--mount" in flags and "--once" not in flags)   # once never mounts
     else: open_file(c, a[1:])
 
 main()

@@ -23,13 +23,13 @@ Needs Linux, Wayland (X11 is a per-app option), Python 3, `bubblewrap`, `squashf
 
 Double-click an AppImage (with `ajail on`) and choose **Install** or **Run once**. Terminal launches never prompt.
 
-- **Install** unpacks the app once and adds it to your app menu with its name, icon and file types. **Original file** decides what happens to the AppImage: **Move to Trash** (the default) or **Keep it**. Open a newer file and choose **Update** to upgrade; data and settings are kept.
-- **Run once** runs it without installing and deletes the unpacked copy afterwards. Tick **Don't ask again** to skip the window for that app.
-- **Use less disk space** (experimental, off by default; set it for all apps on the main page of `ajail-gui`, and override it per app) keeps the AppImage compressed and mounts it with `squashfuse` at launch. Smaller, slower, and the image is read outside the sandbox, so only use it for apps you trust. While it is on, **Original file** gains a third choice, **Move into app folder**, which moves the file into ajail's folder: no duplicate and nothing in the Trash. It is never the default. **Keep it** then leaves you with two copies, and a file on a removable or network drive (or a symlink, or in a folder you can't write to) is copied instead of moved. `ajail restore NAME` puts a moved file back and uninstalls the app.
+- **Install** unpacks the app once and adds it to your app menu with its name, icon and file types. When it is done, ajail asks whether to move the AppImage to the Trash (you can restore it from there). To skip the question, choose **Move to Trash** or **Keep it** under **Installing** on the main page of `ajail-gui`. Open a newer file and choose **Update** to upgrade; data and settings are kept.
+- **Run once** always unpacks the app inside the sandbox and deletes the unpacked copy afterwards. Tick **Don't ask again** to skip the window for that app.
+- **Use less disk space** (experimental, off by default; under **Installing** on the main page of `ajail-gui`, with a per-app override on the page of an app that is not installed yet) keeps the AppImage compressed and mounts it with `squashfuse` at launch. It applies to Install only; Run once never uses it. Smaller, slower, and the image is read outside the sandbox, so only use it for apps you trust. While it is on, **After installing** gains **Move into app folder**, which moves the file into ajail's folder: no duplicate and nothing in the Trash. It is never the default. A file on a removable or network drive (or a symlink, or in a folder you can't write to) is copied instead of moved. `ajail restore NAME` puts a moved file back and uninstalls the app.
 
 ```bash
 ajail FILE.AppImage [args]       # open (prompts when double-clicked)
-ajail run-file [--once] [--mount] FILE
+ajail run-file [--once] [--mount] FILE   # --once never mounts
 ajail install FILE [--trash] [--mount [--move]]
 ajail run NAME [args]
 ajail uninstall NAME [--purge]   # --purge moves its data to the Trash
