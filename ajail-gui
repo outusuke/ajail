@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 # ajail-gui - GTK4 + libadwaita front-end for ajail (a Flatseal-style permission editor)
 import json, os, re, signal, shutil, subprocess, sys, threading
 import gi

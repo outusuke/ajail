@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 # ajail - run AppImages in a bubblewrap sandbox with a persistent private home
 import errno, fcntl, glob, grp, json, os, platform, pwd, re, select, shlex, shutil, signal, struct, subprocess
 import sys, tempfile, threading, time, urllib.parse

@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Unit tests for the extra-portals feature. Run from the folder holding ajail, ajail-gui and make-selftest.
 import ast, os, re, sys, tempfile, unittest, io, contextlib
 

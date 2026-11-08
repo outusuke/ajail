@@ -160,3 +160,7 @@ ajail is a convenience layer over bubblewrap, not a security guarantee.
 - Resource limits protect your session, not your privacy.
 
 Check the result with the self-test or `ajail preview NAME`.
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE).

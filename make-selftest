@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 # make-selftest - builds ajail-selftest.AppImage, a tiny AppImage that reports what the sandbox allows.
 # It only runs through ajail (it has no real AppImage runtime):   ajail ./ajail-selftest.AppImage
 # Needs: mksquashfs (package squashfs-tools).
