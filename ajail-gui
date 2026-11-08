@@ -216,7 +216,9 @@ def app_names():
     for d, ext in ((APPS, ".conf"), (HOMES, ""), (INSTALLED, "")):
         if os.path.isdir(d):
             for f in os.listdir(d):
-                n = f[:-len(ext)] if ext and f.endswith(ext) else f
+                if ext and not f.endswith(ext):
+                    continue                # e.g. NAME.machine-id belongs to an app but is not an app
+                n = f[:-len(ext)] if ext else f
                 if NAME_RE.match(n):
                     names.add(n)
     return sorted(names)
@@ -240,6 +242,50 @@ def running_pids(name=None):
                     continue
                 out.setdefault(n, []).append(int(f))
     return out if name is None else out.get(name, [])
+
+def ui_drop(keys):
+    """Remove keys from ui.conf and keep the others."""
+    d = ui_read()
+    if not any(k in d for k in keys):
+        return
+    for k in keys:
+        d.pop(k, None)
+    tmp = UICONF + ".tmp"
+    with open(tmp, "w") as f:
+        f.write("".join(f"{k}={v}\n" for k, v in d.items()))
+    os.replace(tmp, UICONF)
+
+def forget_app(name):
+    """Remove everything AppImage Jail keeps for an app that is not installed: its saved data (moved to the Trash, so a
+    failure stops before anything else is touched), settings, machine-id, remembered identity and source, unpacked copy and
+    remembered choices.
+    The AppImage file itself is never touched. Returns an error message, or None when done."""
+    if not NAME_RE.match(name):
+        return "That is not a valid app name"
+    if running_pids(name):
+        return "It is running. Stop it first"
+    if os.path.isdir(f"{INSTALLED}/{name}"):
+        return "It is installed. Use Uninstall instead"
+    home = f"{HOMES}/{name}"
+    if os.path.islink(home):
+        os.unlink(home)
+    elif os.path.isdir(home):
+        if run(["gio", "trash", home], timeout=120).returncode:
+            return "Could not move the saved data to the Trash"
+    for p in (f"{APPS}/{name}.conf", f"{APPS}/{name}.machine-id", f"{CONF}/ids/{name}", f"{SOURCES}/{name}"):
+        try:
+            os.unlink(p)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            return f"Could not remove {os.path.basename(p)}: {e.strerror}"
+    ext = f"{EXTRACT}/{name}"
+    if os.path.islink(ext):
+        os.unlink(ext)
+    else:
+        shutil.rmtree(ext, ignore_errors=True)
+    ui_drop([f"open_mode.{name}", f"mount.{name}"])
+    return None
 
 def mount_install_cmd():
     """Command that installs squashfuse and fuse3 on this distro, or None if the distro isn't recognised."""
@@ -1197,6 +1243,28 @@ class Win(Adw.ApplicationWindow):
             ("the defaults." if scope else "the built-in settings."), "Reset", do_reset))
         rg.add(rbtn)
         page.add(rg)
+
+        if scope and not inst:
+            forget_group = Adw.PreferencesGroup(description="This app is not installed but still listed because settings or saved data are left. "
+                                                  "Forgetting it removes them. The AppImage file is not touched.")
+            forget_btn = Gtk.Button(label="Forget this app…", halign=Gtk.Align.CENTER)
+            forget_btn.add_css_class("destructive-action")
+
+            def do_forget():
+                err = forget_app(scope)
+                if err:
+                    self.toast(err)
+                    return
+                self.nav.pop()
+                self.fill_apps()
+                self.toast(f"{scope} forgotten")
+
+            forget_btn.connect("clicked", lambda *_: self.confirm(
+                f"Forget {scope}?",
+                "Its settings and remembered identity are removed and its saved data is moved to the Trash "
+                "(you can restore it from there).", "Forget", do_forget))
+            forget_group.add(forget_btn)
+            page.add(forget_group)
 
         for m in marks:
             m()
