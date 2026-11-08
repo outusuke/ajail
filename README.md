@@ -75,7 +75,7 @@ ajail preview [NAME]             # print the bwrap command
 
 ## Permissions
 
-Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.config/ajail/apps/NAME.conf` (one app). The app file overrides the default. List entries add up, except `xdg`.
+Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.config/ajail/apps/NAME.conf` (one app). The app file overrides the default. List entries add up, except `xdg`. Spaces around `=` are fine and `#` starts a comment (so a path containing ` #` can't be stored). A line ajail can't use (unknown key, a value other than `0`/`1`, no `=`) is skipped with a warning in the terminal and on the Log page, so a typo is never silent.
 
 | Key | Default | Grants |
 | --- | --- | --- |
@@ -97,6 +97,26 @@ Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.confi
 | `tmp_home` | 0 | Private home is erased on exit |
 | `privacy` | 0 | Minimal `/etc/passwd`, `/etc/group`, `/etc/hosts`; hostname `ajail` |
 | `harden` | 0 | Also blocks `io_uring_*`, `userfaultfd`, `process_vm_*`, `kcmp`. May break apps |
+
+### Defaults that favor compatibility
+
+Two defaults trade isolation for apps that work out of the box. Both are one switch away from stricter.
+
+| Key | Default | What you give up | Stricter setting |
+| --- | --- | --- | --- |
+| `userns` | 1 | The app can create its own user namespaces. Electron and Chromium apps (Discord, Slack, VS Code, most browsers) need this for their internal sandbox, and break without it. Nested namespaces also give the app a larger kernel attack surface to try. | `userns=0` (needs bubblewrap 0.8+). Try it per app; if an app won't start or shows a sandbox error, turn it back on. |
+| `harden` | 0 | `io_uring_*`, `userfaultfd`, `process_vm_readv/writev` and `kcmp` stay available. They are rarely needed, but they have been a source of kernel bugs. Blocking them can slow down or break some apps (databases, some game engines and runtimes use `io_uring`). | `harden=1`. Run the app, and check the Log page if it fails. |
+
+Other defaults that open things up on purpose: `net=1`, `sound=1` (includes the microphone), `gpu=1`, `portals=1` with `portal_screenshot=1` and `portal_screencast=1` (the desktop still asks you each time), `theme=1`. Run the [self-test](#self-test) after changing any of them.
+
+For an app you don't fully trust, a stricter starting point is:
+
+```ini
+userns=0
+harden=1
+net=0
+sound=0
+```
 
 Resource limits (`0` = none, needs `systemd-run --user`): `mem_max=2048` (MB), `cpu_max=150` (% of one core), `tasks_max=300`.
 
@@ -136,6 +156,16 @@ In `ajail-gui` each portal is a switch on the app's page. A portal enabled in th
 ```
 
 Prints what the sandbox exposes and saves it to `selftest-report.txt` in the app's private home. Opt-in portals should read `blocked`; `EXPOSED` means one is reachable without being enabled. Portal rows only appear when the app has a session bus (`portals=1`).
+
+## Tests
+
+```bash
+python3 test_portals.py     # unit tests, no sandbox needed
+python3 test_parse.py       # settings parser: spaces, comments, warnings
+python3 test_hostile.py     # hostile AppImages (needs bubblewrap and squashfs-tools; run as a normal user)
+```
+
+`test_hostile.py` builds AppImages with links pointing outside the app, link loops, huge icons and `.desktop` files, injected `Exec=` lines, odd file names and impostors of an installed app. It runs a copy of `ajail` in a temporary home and checks that nothing outside the AppImage was copied, shown or run, and that the canary files it planted stayed untouched.
 
 ## Files
 

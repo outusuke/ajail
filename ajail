@@ -167,25 +167,46 @@ def xdg_dir(kind):
 def empty_cfg():
     return {"s": {}, **{k: [] for k in LISTS}}
 
+COMMENT = re.compile(r"(^|\s)#.*$")     # '#' starts a comment at the start of a line or after whitespace
+
 def parse_cfg(path):
+    """Read one settings file. Whitespace around keys and values is ignored, and '#' starts a comment (so
+    'net = 0  # no network' works). A line that can't be used is skipped with a warning (terminal and log),
+    never silently, so a typo can't leave an app with more access than you meant."""
     try:
         lines = open(path).read().splitlines()
     except OSError:
         return None
     d = empty_cfg()
-    for ln in lines:
-        k, _, v = ln.partition("=")
-        if k == "portal" and v:
+    for no, raw in enumerate(lines, 1):
+        ln = COMMENT.sub("", raw).strip()
+        if not ln: continue
+        def bad(why):
+            warn(f"{path}:{no}: ignoring '{ln[:60]}': {why}")
+        if "=" not in ln:
+            bad("expected key=value"); continue
+        k, _, v = (x.strip() for x in ln.partition("="))
+        if k == "portal":
             # "portal=NAME" turns a portal on; "portal=-NAME" (in an app's file) turns off one the defaults turned on
-            if v.lstrip("-") in EXTRA_PORTALS and v.count("-") <= 1: d[k].append(v)
-            else: print(f"ajail: ignoring unknown portal '{v}'", file=sys.stderr)
-        elif k in LISTS and v: d[k].append(v)
-        elif k in DEFAULTS and v in ("0", "1"): d["s"][k] = int(v)
-        elif k in NUM and v.isdigit(): d["s"][k] = min(int(v), 10**7)
-        elif k == "profile" and v == "strict": d["s"].update(net=0, sound=0)
+            if v and v.lstrip("-") in EXTRA_PORTALS and v.count("-") <= 1: d[k].append(v)
+            else: bad(f"unknown portal '{v}'")
+        elif k in LISTS:
+            if v: d[k].append(v)
+            else: bad("empty value")
+        elif k in DEFAULTS:
+            if v in ("0", "1"): d["s"][k] = int(v)
+            else: bad("expected 0 or 1")
+        elif k in NUM:
+            if v.isdigit(): d["s"][k] = min(int(v), 10**7)
+            else: bad("expected a whole number")
+        elif k == "profile":
+            if v == "strict": d["s"].update(net=0, sound=0)
+            else: bad("only 'strict' is known")
         elif k == "flag":
             if v in LEGACY_FLAGS: d["s"][LEGACY_FLAGS[v][0]] = LEGACY_FLAGS[v][1]
-            else: print(f"ajail: ignoring unknown flag '{v}'", file=sys.stderr)
+            else: bad("unknown flag")
+        else:
+            bad("unknown setting")
     return d
 
 def load_cfg(name):
@@ -715,10 +736,18 @@ def check_identity(name, root):
             ident = CTRL.sub("", m.group(1)).strip() if m else ""
     except OSError:
         pass
-    if not ident: return
+    ident = ident[:IDENT_MAX]
     p = f"{CONF}/ids/{name}"
     try: old = open(p).read().strip()
     except OSError: old = None
+    if not ident:
+        # No usable name (no .desktop file, or only links and unreadable files). That must not be a way around the
+        # check: an app that already has an identity only runs again if the file can still prove it is that app.
+        if old is not None:
+            die(f"'{name}' was first used by an app called '{old}', but this file has no readable .desktop file "
+                f"to say what it is.\nIt would share that app's private data and permissions. Rename the file, or "
+                f"delete {p} if it really is the same app.")
+        return
     if old is None:
         os.makedirs(f"{CONF}/ids", exist_ok=True)
         open(p, "w").write(ident + "\n")
@@ -960,6 +989,8 @@ def running(name):
     except OSError:
         return []
 
+DESKTOP_LINE_MAX = 1000     # longer lines of an app's .desktop file are not copied into its launcher
+IDENT_MAX = 200
 DESKTOP_KEEP = re.compile(r"(Name|GenericName|Comment|Keywords)(\[[A-Za-z0-9_@.-]+\])?=|(Categories|MimeType|StartupWMClass)=")
 
 def read_desktop(root):
@@ -976,7 +1007,7 @@ def read_desktop(root):
             if ln.startswith("["):
                 if ln != "[Desktop Entry]": break
                 continue
-            if any(ord(c) < 32 and c != "\t" for c in ln): continue
+            if CTRL.search(ln) or len(ln) > DESKTOP_LINE_MAX: continue     # control characters (incl. DEL and C1) and huge lines
             if ln.startswith("Icon="): icon = ln[5:]
             elif DESKTOP_KEEP.match(ln): keep.append(ln)
     return keep, icon
@@ -1311,6 +1342,7 @@ def cmd_stop(args):
 
 def cmd_dump(arg):
     """JSON of the raw settings, for ajail-gui."""
+    NO_LOG[0] = True          # the GUI calls this on every refresh; warnings must not flood the log
     g = parse_cfg(f"{CONF}/default.conf") or empty_cfg()
     if arg == "--all":
         apps = {}

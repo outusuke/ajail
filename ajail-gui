@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # ajail-gui - GTK4 + libadwaita front-end for ajail (a Flatseal-style permission editor)
-import json, os, re, signal, shutil, subprocess, sys, threading
+import json, os, pwd, re, signal, shutil, subprocess, sys, threading
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -9,7 +9,7 @@ from gi.repository import Adw, Gio, GLib, Gtk
 
 SELF    = "/usr/local/bin/ajail"
 HOME    = os.path.realpath(os.path.expanduser("~"))
-USER    = os.environ.get("USER", "")
+USER    = pwd.getpwuid(os.getuid()).pw_name      # from the account, not from the environment
 CONF    = HOME + "/.config/ajail"
 APPS    = CONF + "/apps"
 HOMES   = HOME + "/.appimage-homes"
@@ -141,9 +141,13 @@ def summary(G, A):
         parts.append(f"{len(extra)} extra portal" + ("" if len(extra) == 1 else "s"))
     return " · ".join(parts) or "Fully isolated"
 
+def has_comment(v):
+    """ajail reads " #..." in a settings line as a comment, so such a value could not be stored faithfully."""
+    return bool(re.search(r"(^|\s)#", v))
+
 def path_ok(p):
     p = os.path.realpath(p)
-    if "\n" in p or not os.path.exists(p):
+    if "\n" in p or has_comment(p) or not os.path.exists(p):
         return None
     if p.startswith(HOME + "/"):
         return None if p[len(HOME) + 1:].split("/")[0].startswith(".") else p
@@ -1041,7 +1045,7 @@ class Win(Adw.ApplicationWindow):
                     return
                 ok = path_ok(f.get_path())
                 if not ok:
-                    self.toast("Only non-hidden items in your home, or on a mounted drive, can be shared")
+                    self.toast("Only non-hidden items in your home, or on a mounted drive, can be shared. Names containing ' #' can't be stored.")
                     return
                 drop(ok)
                 R["allow"].append(ok)
@@ -1083,7 +1087,7 @@ class Win(Adw.ApplicationWindow):
 
             def got(vals):
                 v = build(vals)
-                if not v:
+                if not v or has_comment(v):
                     self.toast("That value is not valid")
                     return
                 if v not in R[key]:

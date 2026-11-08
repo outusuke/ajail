@@ -77,6 +77,7 @@ class Config(unittest.TestCase):
         self.d = tempfile.mkdtemp()
         A["CONF"] = self.d
         os.makedirs(f"{self.d}/apps")
+        A["LOG"] = f"{self.d}/ajail.log"; A["STATE"] = self.d      # config warnings must not touch your real log
 
     def put(self, rel, text):
         open(f"{self.d}/{rel}", "w").write(text)
