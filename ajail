@@ -366,7 +366,22 @@ def net_wrap(inner, secpath=None):
 def work_dir():
     return f"{runtime_dir()}/ajail/{os.getpid()}.d"
 
-def make_files(cfg, d):
+def machine_id(name):
+    """Stable random machine-id per app (D-Bus and SDL want one; the real one would let apps fingerprint you)."""
+    p = f"{CONF}/apps/{name}.machine-id"
+    try:
+        v = open(p).read().strip()
+        if len(v) == 32: return v + "\n"
+    except OSError: pass
+    import uuid
+    v = uuid.uuid4().hex
+    try:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, "w").write(v + "\n")
+    except OSError: pass
+    return v + "\n"
+
+def make_files(cfg, d, name="app"):
     """Files bound over /etc for this run: minimal passwd/group/hosts (privacy) and a resolv.conf for private net."""
     out = {}
     os.makedirs(d, mode=0o700, exist_ok=True)
@@ -383,11 +398,12 @@ def make_files(cfg, d):
         put("hosts", "127.0.0.1 localhost\n::1 localhost\n")
     if private_net(cfg):
         put("resolv.conf", f"nameserver {DNS_FWD}\n")
+    put("machine-id", machine_id(name))
     return out
 
 def preview_files(cfg):
     d = f"{runtime_dir()}/ajail/PID.d"
-    n = (["passwd", "group", "hosts"] if cfg["privacy"] else []) + (["resolv.conf"] if private_net(cfg) else [])
+    n = (["passwd", "group", "hosts"] if cfg["privacy"] else []) + (["resolv.conf"] if private_net(cfg) else []) + ["machine-id"]
     return {x: f"{d}/{x}" for x in n}
 
 # Desktop settings the sandbox can't read: the title-bar button layout (minimize, maximize, close) and the cursor theme
@@ -553,7 +569,8 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
     if cfg["net"]: a.append("--share-net")
     if sec is not None: a += ["--seccomp", str(sec)]
     a += BASE + ["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/run",
-                 "--dir", "/var", "--symlink", "../tmp", "/var/tmp", "--perms", "0700", "--dir", rt]
+                 "--dir", "/var", "--symlink", "../tmp", "/var/tmp", "--dir", "/var/lib/dbus",
+                 "--symlink", "/etc/machine-id", "/var/lib/dbus/machine-id", "--perms", "0700", "--dir", rt]
     gen = gen or {}
     for p in ETC:
         if p not in gen: a += ["--ro-bind-try", f"/etc/{p}", f"/etc/{p}"]
@@ -772,8 +789,8 @@ def launch(name, root, cfg, extra, source=None, once=False):
     if sec is None and platform.machine() not in ("x86_64", "aarch64"):
         warn(f"no system-call filter for the {platform.machine()} architecture; running without it", name)
     wd, gen, secpath, gset = None, {}, None, None
-    if cfg["privacy"] or priv or cfg["x11"] or cfg["theme"]:
-        wd = work_dir(); gen = make_files(cfg, wd)
+    if True:
+        wd = work_dir(); gen = make_files(cfg, wd, name)
     if cfg["theme"]: gset = make_gsettings_keyfile(wd)
     if priv and sec:
         secpath = f"{wd}/seccomp.bpf"
