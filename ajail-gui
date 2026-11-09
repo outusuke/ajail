@@ -259,6 +259,26 @@ def ui_drop(keys):
         f.write("".join(f"{k}={v}\n" for k, v in d.items()))
     os.replace(tmp, UICONF)
 
+def trash_layer(layer):
+    """Trash an app's writable layer. Its overlayfs 'work' dir is scratch (mode 000 inside, recreated at launch) and
+    breaks gio's copy fallback, so remove it and trash only the saved data. Returns True on success."""
+    wk = f"{layer}/work"
+    for r, ds, fs in os.walk(wk):
+        for x in ds + [""]:
+            try:
+                os.chmod(os.path.join(r, x) if x else r, 0o700)
+            except OSError:
+                pass
+    shutil.rmtree(wk, ignore_errors=True)
+    for r, ds, fs in os.walk(layer):
+        for x in ds:
+            try:
+                p = os.path.join(r, x)
+                os.chmod(p, os.stat(p).st_mode | 0o700)
+            except OSError:
+                pass
+    return run(["gio", "trash", layer], timeout=120).returncode == 0
+
 def forget_app(name):
     """Remove everything AppImage Jail keeps for an app that is not installed: its saved data (moved to the Trash, so a
     failure stops before anything else is touched), settings, machine-id, remembered identity and source, unpacked copy and
@@ -280,7 +300,7 @@ def forget_app(name):
     if os.path.islink(layer):
         os.unlink(layer)
     elif os.path.isdir(layer):
-        if run(["gio", "trash", layer], timeout=120).returncode:
+        if not trash_layer(layer):
             return "Could not move the saved layer to the Trash"
     for p in (f"{APPS}/{name}.conf", f"{APPS}/{name}.machine-id", f"{CONF}/ids/{name}", f"{SOURCES}/{name}"):
         try:
@@ -1237,7 +1257,9 @@ class Win(Adw.ApplicationWindow):
                         self.toast("Could not move the data to the Trash")
                         return
                 if os.path.isdir(f"{LAYERS}/{scope}") and not os.path.islink(f"{LAYERS}/{scope}"):
-                    run(["gio", "trash", f"{LAYERS}/{scope}"], timeout=120)
+                    if not trash_layer(f"{LAYERS}/{scope}"):
+                        self.toast("Could not move the writable layer to the Trash")
+                        return
                     if layer_row[0]: layer_row[0].set_subtitle(dir_size(layer_dir))
                 data_row.set_subtitle(dir_size(home_dir))
                 self.toast("App data moved to the Trash")

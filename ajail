@@ -883,6 +883,22 @@ def trash_path(p):
     """Move a file or folder to the Trash (needs gio). Returns False if that did not work."""
     return bool(shutil.which("gio")) and subprocess.run(["gio", "trash", p], capture_output=True).returncode == 0
 
+def trash_layer(layer):
+    """Move an app's writable /app layer to the Trash. The kernel's overlayfs 'work' dir is scratch space (mode 000
+    inside, recreated at the next launch), which gio cannot copy when the Trash is on another mount, so it is removed
+    first and only the saved data ('upper') goes to the Trash. Returns False if that did not work."""
+    wk = f"{layer}/work"
+    for r, ds, fs in os.walk(wk):
+        for x in ds + [""]:
+            try: os.chmod(os.path.join(r, x) if x else r, 0o700)
+            except OSError: pass
+    rm_tree(wk)
+    for r, ds, fs in os.walk(layer):                 # saved files may be read-only too: make them movable
+        for x in ds:
+            try: os.chmod(os.path.join(r, x), os.stat(os.path.join(r, x)).st_mode | 0o700)
+            except OSError: pass
+    return trash_path(layer)
+
 def rm_tree(p):
     if os.path.isdir(p) and not os.path.islink(p): shutil.rmtree(p, ignore_errors=True)
 
@@ -1153,7 +1169,7 @@ def cmd_uninstall(args):
     try: os.unlink(f"{APPLICATIONS}/ajail-{name}.desktop")
     except OSError: pass
     remove_icons(name)
-    moved = False
+    moved = layer_failed = False
     if purge:
         home = f"{HOMES}/{name}"
         if not os.path.lexists(home): moved = True
@@ -1168,11 +1184,13 @@ def cmd_uninstall(args):
     if purge:      # the writable layer (e.g. game saves) goes to the Trash too, like the private home
         layer = f"{LAYERS}/{name}"
         if os.path.islink(layer): os.unlink(layer)
-        elif os.path.isdir(layer) and not trash_path(layer):
+        elif os.path.isdir(layer) and not trash_layer(layer):
+            layer_failed = True
             print(f"ajail: could not move {layer} to the Trash, so it was kept", file=sys.stderr)
     refresh_desktop_db()
     log("uninstalled" + (" and purged" if moved else ""), name)
     print(f"Uninstalled {name}" + (" and moved its data to the Trash" if moved else ", its data was kept"))
+    if layer_failed: sys.exit(1)       # the app is uninstalled, but say so loudly: its writable layer is still on disk
 
 def cmd_restore(args):
     """Undo a compressed install that moved the AppImage: put the file back where it came from and uninstall the app
