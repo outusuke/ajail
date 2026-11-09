@@ -276,6 +276,12 @@ def forget_app(name):
     elif os.path.isdir(home):
         if run(["gio", "trash", home], timeout=120).returncode:
             return "Could not move the saved data to the Trash"
+    layer = f"{LAYERS}/{name}"
+    if os.path.islink(layer):
+        os.unlink(layer)
+    elif os.path.isdir(layer):
+        if run(["gio", "trash", layer], timeout=120).returncode:
+            return "Could not move the saved layer to the Trash"
     for p in (f"{APPS}/{name}.conf", f"{APPS}/{name}.machine-id", f"{CONF}/ids/{name}", f"{SOURCES}/{name}"):
         try:
             os.unlink(p)
@@ -1185,6 +1191,7 @@ class Win(Adw.ApplicationWindow):
         if scope:
             dg = Adw.PreferencesGroup(title="Storage")
             home_dir, ext_dir = f"{HOMES}/{scope}", f"{EXTRACT}/{scope}"
+            layer_dir, layer_row = f"{LAYERS}/{scope}", [None]      # row shown only once the app has saved into /app
             data_row = Adw.ActionRow(title="App data", subtitle=dir_size(home_dir))
             openb = Gtk.Button(label="Open", valign=Gtk.Align.CENTER)
             openb.connect("clicked", lambda *_: (os.makedirs(home_dir, exist_ok=True),
@@ -1200,16 +1207,26 @@ class Win(Adw.ApplicationWindow):
                         return
                 if os.path.isdir(f"{LAYERS}/{scope}") and not os.path.islink(f"{LAYERS}/{scope}"):
                     run(["gio", "trash", f"{LAYERS}/{scope}"], timeout=120)
+                    if layer_row[0]: layer_row[0].set_subtitle(dir_size(layer_dir))
                 data_row.set_subtitle(dir_size(home_dir))
                 self.toast("App data moved to the Trash")
 
             resetb.connect("clicked", lambda *_: self.confirm(
                 f"Move all data of {scope} to the Trash?",
-                "Settings, logins and files the app saved are moved to the Trash. You can restore them from there.",
+                "Settings, logins and files the app saved, including anything in its writable layer (such as game saves), are moved to the Trash. You can restore them from there.",
                 "Move to Trash", do_reset_data))
             data_row.add_suffix(openb)
             data_row.add_suffix(resetb)
             dg.add(data_row)
+
+            if os.path.isdir(layer_dir):
+                layer_row[0] = Adw.ActionRow(title="Writable layer", subtitle=dir_size(layer_dir),
+                                          tooltip_text="Files the app saved into its own folder (/app), e.g. game saves. "
+                                                       "They are under upper/. Removed by Reset… above.")
+                openl = Gtk.Button(label="Open", valign=Gtk.Align.CENTER)
+                openl.connect("clicked", lambda *_: subprocess.Popen(["xdg-open", layer_dir]))
+                layer_row[0].add_suffix(openl)
+                dg.add(layer_row[0])
 
             if inst:
                 dg.add(Adw.ActionRow(title="Installed copy", subtitle=dir_size(f"{INSTALLED}/{scope}")
