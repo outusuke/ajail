@@ -13,6 +13,7 @@ USER    = pwd.getpwuid(os.getuid()).pw_name      # from the account, not from th
 CONF    = HOME + "/.config/ajail"
 APPS    = CONF + "/apps"
 HOMES   = HOME + "/.appimage-homes"
+LAYERS  = HOME + "/.local/share/ajail/app-layers"
 EXTRACT = HOME + "/.local/share/ajail/extracted"
 INSTALLED = HOME + "/.local/share/ajail/apps"
 UICONF = CONF + "/ui.conf"
@@ -29,7 +30,7 @@ os.makedirs(APPS, exist_ok=True)
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
-            "portal_screenshot": 1, "portal_screencast": 1}
+            "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0}
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}      # 0 = no limit
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
 # Opt-in desktop portals. Keep in sync with EXTRA_PORTALS in ajail.
@@ -80,6 +81,9 @@ SECTIONS = [
          "Hides your real name and the computer name from the app (minimal user list, hosts file and hostname)."),
         ("harden", "Block extra system calls",
          "Also blocks io_uring and a few other rarely needed calls. Can slow down or break some apps."),
+        ("app_writable", "Let the app save into its own folder",
+         "For apps that fail with 'Read-only file system' under /app. What it writes is kept in a separate layer; "
+         "the app's own files are not changed. Needs bubblewrap 0.11+."),
         ("userns","Allow the app's own sandbox",
          "Electron and Chromium apps need this. Turn off for stricter isolation (needs bubblewrap 0.8+).")]),
 ]
@@ -1194,6 +1198,8 @@ class Win(Adw.ApplicationWindow):
                     if r.returncode:
                         self.toast("Could not move the data to the Trash")
                         return
+                if os.path.isdir(f"{LAYERS}/{scope}") and not os.path.islink(f"{LAYERS}/{scope}"):
+                    run(["gio", "trash", f"{LAYERS}/{scope}"], timeout=120)
                 data_row.set_subtitle(dir_size(home_dir))
                 self.toast("App data moved to the Trash")
 

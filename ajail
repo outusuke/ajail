@@ -13,6 +13,7 @@ RUNNING = f"{STATE}/running"
 SOURCES = f"{STATE}/sources"
 LOG     = f"{STATE}/ajail.log"
 HOMES   = f"{HOME}/.appimage-homes"
+LAYERS  = f"{HOME}/.local/share/ajail/app-layers"     # writable layer over /app for apps with app_writable
 EXTRACT = f"{HOME}/.local/share/ajail/extracted"
 SELF    = "/usr/local/bin/ajail"
 BM      = "/proc/sys/fs/binfmt_misc"
@@ -30,7 +31,7 @@ ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
-            "portal_screenshot": 1, "portal_screencast": 1}
+            "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0}
 # Numeric limits (0 = no limit): memory in MB, CPU in % of one core, number of processes.
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
@@ -645,7 +646,14 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={rt}/bus"
         if cfg["portals"]: env["AJAIL_PORTALS"] = ",".join(extra_portals(cfg))     # read by the self-test
         if cfg["tray"]: env["AJAIL_TRAY"] = f"{TRAY_PIDS[0]}-{TRAY_PIDS[-1]}"      # read by the self-test
-    a += ["--ro-bind", root, "/app"]
+    if cfg["app_writable"]:
+        # /app stays the app's own read-only files; what the app writes goes to a private layer that survives restarts
+        up, wk = f"{LAYERS}/{name}/upper", f"{LAYERS}/{name}/work"
+        if not NO_LOG[0]:
+            for d in (up, wk): os.makedirs(d, mode=0o700, exist_ok=True)
+        a += ["--overlay-src", root, "--overlay", up, wk, "/app"]
+    else:
+        a += ["--ro-bind", root, "/app"]
     if cfg["tmp_home"]: a += ["--perms", "0700", "--tmpfs", HOME]      # erased when the app closes
     else: a += ["--bind", f"{HOMES}/{name}", HOME]
     if cfg["theme"]:
@@ -955,11 +963,15 @@ def mount_squashfs(image, off, name):
     os.makedirs(MOUNTS, mode=0o700, exist_ok=True)
     mp = f"{MOUNTS}/{name}-{os.getpid()}"
     os.makedirs(mp, mode=0o700, exist_ok=True)
-    try:
-        r = subprocess.run(["squashfuse", "-o", f"offset={off}", image, mp],
-                           capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
-    except subprocess.TimeoutExpired:
-        r = subprocess.CompletedProcess([], 1, "", "timed out")
+    # Show the files as yours (the image's own owner, often root, is not mapped in the sandbox, so the overlay of
+    # app_writable would get "Permission denied"). Some squashfuse builds reject uid/gid: then mount as before.
+    for opts in (f"offset={off},uid={os.getuid()},gid={os.getgid()}", f"offset={off}"):
+        try:
+            r = subprocess.run(["squashfuse", "-o", opts, image, mp],
+                               capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
+        except subprocess.TimeoutExpired:
+            r = subprocess.CompletedProcess([], 1, "", "timed out")
+        if not r.returncode: break
     if r.returncode:
         os.rmdir(mp)
         die(f"could not mount the image: {r.stderr.strip() or r.returncode}")
@@ -1148,7 +1160,7 @@ def cmd_uninstall(args):
             moved = trash_path(home)      # the data goes to the Trash, never deleted outright
             if not moved: print(f"ajail: could not move {home} to the Trash, so its data was kept", file=sys.stderr)
         if moved:                          # settings go with the data; if the data stayed, so do they
-            rm_tree(f"{EXTRACT}/{name}"); forget_app_ui(name)
+            rm_tree(f"{EXTRACT}/{name}"); rm_tree(f"{LAYERS}/{name}"); forget_app_ui(name)
             for p in (f"{CONF}/apps/{name}.conf", f"{CONF}/ids/{name}", f"{SOURCES}/{name}"):
                 try: os.unlink(p)
                 except OSError: pass
