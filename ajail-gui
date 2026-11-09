@@ -758,9 +758,40 @@ class Win(Adw.ApplicationWindow):
             res = run([SELF, "restore", scope])      # puts the file back and uninstalls (data is kept)
             if res.returncode:
                 # Never leave the person stuck: say why, and let them choose to uninstall and delete the stored file.
-                self.confirm("Couldn't put the AppImage back",
-                             last_line(res, "Unknown error") + "\n\nUninstall anyway? The AppImage stored in "
-                             "AppImage Jail is deleted.", "Uninstall anyway", lambda: plain(purge, True))
+                fb = Adw.AlertDialog(heading="Couldn't put the AppImage back",
+                                     body=last_line(res, "Unknown error") + "\n\nYou can put it in another folder, or "
+                                     "uninstall anyway (the AppImage stored in AppImage Jail is deleted).")
+                fb.add_response("cancel", "Cancel")
+                fb.add_response("folder", "Choose another folder…")
+                fb.add_response("discard", "Uninstall anyway")
+                fb.set_response_appearance("folder", Adw.ResponseAppearance.SUGGESTED)
+                fb.set_response_appearance("discard", Adw.ResponseAppearance.DESTRUCTIVE)
+                fb.set_default_response("folder")
+                fb.set_close_response("cancel")
+
+                def fb_done(_d, r2):
+                    if r2 == "discard":
+                        plain(purge, True)
+                    elif r2 == "folder":
+                        fd = Gtk.FileDialog(title="Choose where to put the AppImage")
+
+                        def picked(d2, res2):
+                            try:
+                                folder = d2.select_folder_finish(res2).get_path()
+                            except GLib.Error:
+                                return
+                            r3 = run([SELF, "restore", scope, "--to", folder])      # puts the file back and uninstalls
+                            if r3.returncode:
+                                self.toast(last_line(r3, "Could not put the AppImage back"))
+                                return
+                            if purge:
+                                r3 = run([SELF, "uninstall", scope, "--purge"])
+                            finish(r3, f"Uninstalled. The AppImage was put in {folder}")
+
+                        fd.select_folder(self, None, picked)
+
+                fb.connect("response", fb_done)
+                fb.present(self)
                 return
             if purge:
                 res = run([SELF, "uninstall", scope, "--purge"])

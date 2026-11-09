@@ -1147,7 +1147,8 @@ def cmd_uninstall(args):
     d = f"{INSTALLED}/{name}"
     if os.path.exists(f"{d}/origin") and os.path.isfile(f"{d}/image") and not discard:
         die(f"{name}'s AppImage was moved into ajail and uninstalling would delete it. Run 'ajail restore {name}' to put "
-            f"it back (this also uninstalls), or add --discard-image to delete it")
+            f"it back (this also uninstalls), 'ajail restore {name} --to FOLDER' to put it in another folder, or add "
+            f"--discard-image to delete it")
     rm_tree(f"{INSTALLED}/{name}")
     try: os.unlink(f"{APPLICATIONS}/ajail-{name}.desktop")
     except OSError: pass
@@ -1160,10 +1161,15 @@ def cmd_uninstall(args):
             moved = trash_path(home)      # the data goes to the Trash, never deleted outright
             if not moved: print(f"ajail: could not move {home} to the Trash, so its data was kept", file=sys.stderr)
         if moved:                          # settings go with the data; if the data stayed, so do they
-            rm_tree(f"{EXTRACT}/{name}"); rm_tree(f"{LAYERS}/{name}"); forget_app_ui(name)
+            rm_tree(f"{EXTRACT}/{name}"); forget_app_ui(name)
             for p in (f"{CONF}/apps/{name}.conf", f"{CONF}/ids/{name}", f"{SOURCES}/{name}"):
                 try: os.unlink(p)
                 except OSError: pass
+    if purge:      # the writable layer (e.g. game saves) goes to the Trash too, like the private home
+        layer = f"{LAYERS}/{name}"
+        if os.path.islink(layer): os.unlink(layer)
+        elif os.path.isdir(layer) and not trash_path(layer):
+            print(f"ajail: could not move {layer} to the Trash, so it was kept", file=sys.stderr)
     refresh_desktop_db()
     log("uninstalled" + (" and purged" if moved else ""), name)
     print(f"Uninstalled {name}" + (" and moved its data to the Trash" if moved else ", its data was kept"))
@@ -1187,7 +1193,8 @@ def cmd_restore(args):
     if not os.path.isfile(img): die(f"{name} has no stored AppImage")
     target = os.path.join(os.path.realpath(dest), os.path.basename(origin)) if dest else origin     # --to: another folder
     if not os.path.isabs(target) or not os.path.isdir(os.path.dirname(target)):
-        die("the folder " + ("does not exist" if dest else "it came from no longer exists") + f": {os.path.dirname(target)}")
+        die("the folder " + ("does not exist" if dest else "it came from no longer exists") + f": {os.path.dirname(target)}"
+            + ("" if dest else f". Use 'ajail restore {name} --to FOLDER' to pick another one"))
     if os.path.lexists(target): die(f"{target} already exists, so the AppImage was not put back")
     if keep:
         # Put a copy back and leave the app installed (it still needs its stored image). Nothing is left to protect, so
