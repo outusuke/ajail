@@ -98,11 +98,15 @@ def launch(name, root, cfg, extra, source=None, once=False):
                         lf.flush()
         except Exception:
             pass
-    def pump():
+    def pump():                                   # chunks, not lines, so a prompt without a newline shows at once
         try:
-            for line in p.stdout:
-                try: sys.stdout.write(CTRL.sub("", line)); sys.stdout.flush()
+            dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
+            while True:
+                data = os.read(p.stdout.fileno(), 4096)
+                text = dec.decode(data, final=not data)
+                try: sys.stdout.write(CTRL.sub("", text)); sys.stdout.flush()
                 except Exception: pass
+                if not data: break
         except Exception:
             pass
     t = threading.Thread(target=tee, daemon=True); t.start()

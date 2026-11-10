@@ -3,7 +3,7 @@
 # ajail - run AppImages in a bubblewrap sandbox with a persistent private home
 # ======== 00_config: Configuration: paths, permission defaults, syscall tables.
 
-import errno, fcntl, glob, grp, json, os, platform, pwd, re, select, shlex, shutil, signal, struct, subprocess
+import codecs, errno, fcntl, glob, grp, json, os, platform, pwd, re, select, shlex, shutil, signal, struct, subprocess
 import sys, tempfile, threading, time, urllib.parse
 
 _pw     = pwd.getpwuid(os.getuid())

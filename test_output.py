@@ -97,6 +97,29 @@ class LaunchOutput(unittest.TestCase):
         self.assertIn(EVIL, out)                                  # data going to a pipe or file is not altered
         self.assertNotIn("\x1b", err)
 
+    def test_partial_line_shows_without_waiting_for_newline(self):
+        flag = f"{self.d}/seen"
+        app = ("import sys, os, time\n"
+               "sys.stdout.write('prompt> '); sys.stdout.flush()\n"
+               "for _ in range(30):\n"
+               "    if os.path.exists(%r): break\n"
+               "    time.sleep(0.1)\n"
+               "print('released' if os.path.exists(%r) else 'stuck')\n") % (flag, flag)
+        class P(subprocess.Popen):
+            def __init__(s, cmd, **k): super().__init__([sys.executable, "-c", app], **k)
+        class FakeSub:
+            def __getattr__(s, n): return getattr(subprocess, n)
+            Popen = P
+        A["subprocess"] = FakeSub()
+        class Watch(Tty):
+            def write(s, t):
+                if "prompt>" in t: open(flag, "w").close()      # the 'terminal' saw the prompt while the app is still waiting
+                return super().write(t)
+        out, cfg = Watch(), dict(A["DEFAULTS"], **A["NUM"], theme=0)
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            A["launch"]("Foo", f"{self.d}/root", cfg, [])
+        self.assertIn("released", out.getvalue())
+
 class XauthFailsClosed(unittest.TestCase):
     """If the X cookie file can't be parsed down to one display's cookie, it must not be shared whole."""
     def setUp(self):
