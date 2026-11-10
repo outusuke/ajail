@@ -60,6 +60,9 @@ def launch(name, root, cfg, extra, source=None, once=False):
     sec = seccomp_file(cfg["harden"])
     if sec is None and platform.machine() not in ("x86_64", "aarch64"):
         warn(f"no system-call filter for the {platform.machine()} architecture; running without it", name)
+    elif sec is None:                             # a filter exists for this CPU but could not be made: never run without it silently
+        stop_bus(bus)
+        die("could not create the system-call filter (see the log); not starting the app without it")
     wd, gen, secpath, gset = None, {}, None, None
     if True:
         wd = work_dir(); gen = make_files(cfg, wd, name)

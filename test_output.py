@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Text that comes from an AppImage must not reach your terminal with control characters (OSC 52 clipboard writes,
 # title reports and similar). These tests feed hostile text through the paths that print it.
-import contextlib, io, os, subprocess, sys, tempfile, unittest
+import contextlib, io, os, subprocess, sys, tempfile, types, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -56,10 +56,10 @@ class LaunchOutput(unittest.TestCase):
         self.d = tempfile.mkdtemp()
         names = ("check_identity", "private_net", "sweep_runtime", "start_bus", "seccomp_file", "work_dir", "make_files",
                  "bwrap_args", "limit_prefix", "forward_files", "stop_bus", "running", "notify_failure", "log",
-                 "HOMES", "RUNNING", "SOURCES", "LOG")
+                 "HOMES", "RUNNING", "SOURCES", "LOG", "platform")
         self.keep = {k: A[k] for k in names}
         A.update(check_identity=lambda *a: None, private_net=lambda c: False, sweep_runtime=lambda: None,
-                 start_bus=lambda *a: None, seccomp_file=lambda h: None, work_dir=lambda: None, make_files=lambda *a: {},
+                 start_bus=lambda *a: None, seccomp_file=lambda h: tempfile.TemporaryFile(), work_dir=lambda: None, make_files=lambda *a: {},
                  bwrap_args=lambda *a: [], limit_prefix=lambda *a: [], forward_files=lambda e: [], stop_bus=lambda b: None,
                  running=lambda n: False, notify_failure=lambda n: None, log=lambda *a, **k: None,
                  HOMES=f"{self.d}/h", RUNNING=f"{self.d}/r", SOURCES=f"{self.d}/s", LOG=f"{self.d}/log")
@@ -119,6 +119,18 @@ class LaunchOutput(unittest.TestCase):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             A["launch"]("Foo", f"{self.d}/root", cfg, [])
         self.assertIn("released", out.getvalue())
+
+    def test_no_filter_on_a_supported_cpu_refuses_to_run(self):
+        """If the system-call filter could not be created, the app must not run unfiltered."""
+        A["seccomp_file"] = lambda h: None
+        A["platform"] = types.SimpleNamespace(machine=lambda: "x86_64")
+        err = io.StringIO()
+        cfg = dict(A["DEFAULTS"], **A["NUM"], theme=0)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
+            A["launch"]("Foo", f"{self.d}/root", cfg, [])
+        self.assertNotEqual(cm.exception.code, 0)
+        self.assertIn("system-call filter", err.getvalue())
+        self.assertFalse(os.path.exists(self.term), "the app was started")
 
 class XauthFailsClosed(unittest.TestCase):
     """If the X cookie file can't be parsed down to one display's cookie, it must not be shared whole."""
