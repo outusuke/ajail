@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Build the single-file `ajail` from src/*.py.
+"""Build the single-file `ajail` from src/*.py and the single-file `ajail-gui` from src/gui/*.py.
 
-    ./build.py            build ./ajail (and check layering)
+    ./build.py            build ./ajail and ./ajail-gui (and check layering)
     ./build.py --check    check layering only
 
 Why fragments, not packages: ajail is installed as one root-owned file (/usr/local/bin/ajail, named in the binfmt_misc
@@ -18,6 +18,10 @@ import ast, builtins, glob, os, stat, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 FRAGS = sorted(glob.glob(os.path.join(HERE, "src", "[0-9][0-9]_*.py")))
 OUT = os.path.join(HERE, "ajail")
+GUI_FRAGS = sorted(glob.glob(os.path.join(HERE, "src", "gui", "[0-9][0-9]_*.py")))
+GUI_OUT = os.path.join(HERE, "ajail-gui")
+GI_NAMES = {"gi", "Adw", "Gio", "GLib", "Gtk"}      # GTK stays in the window layers of ajail-gui; the layers below stay GTK-free
+GUI_FIRST = "40_window.py"                         # first fragment of ajail-gui that may use them
 
 def top_names(tree):
     names = set()
@@ -58,8 +62,9 @@ def loads(node, bound=frozenset()):
     visit(node, set(bound))
     return out
 
-def check_layers():
-    trees = [(os.path.basename(f), ast.parse(open(f).read(), f)) for f in FRAGS]
+def check_layers(frags=None, gtk_from=None):
+    frags = FRAGS if frags is None else frags
+    trees = [(os.path.basename(f), ast.parse(open(f).read(), f)) for f in frags]
     defined = [top_names(t) for _, t in trees]
     bad = []
     for i, (name, tree) in enumerate(trees):
@@ -70,22 +75,31 @@ def check_layers():
         for n in tree.body:
             for nm in sorted(loads(n)):
                 if nm not in ok and nm in later: bad.append(f"{name}: uses '{nm}' which is defined in higher layer {later[nm]}")
+                if gtk_from and name > "00_config.py" and name < gtk_from and nm in GI_NAMES: bad.append(f"{name}: uses GTK name '{nm}' below layer {gtk_from}")
     return sorted(set(bad))
 
-def render():
-    """The text of the single-file ajail, built from the fragments."""
-    text = "".join(open(f).read().rstrip("\n") + "\n\n\n" for f in FRAGS).rstrip("\n") + "\n"
+def check_layers_gui():
+    return check_layers(GUI_FRAGS, GUI_FIRST)
+
+def render(frags=None):
+    """The text of a single-file program (ajail by default), built from its fragments."""
+    text = "".join(open(f).read().rstrip("\n") + "\n\n\n" for f in (FRAGS if frags is None else frags)).rstrip("\n") + "\n"
     ast.parse(text)
     return text
 
+def render_gui():
+    return render(GUI_FRAGS)
+
 def build():
-    open(OUT, "w").write(render())
-    os.chmod(OUT, os.stat(OUT).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    for out, text in ((OUT, render()), (GUI_OUT, render_gui())):
+        open(out, "w").write(text)
+        os.chmod(out, os.stat(out).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 if __name__ == "__main__":
-    bad = check_layers()
+    bad = check_layers() + check_layers_gui()
     if bad:
         print("LAYER VIOLATIONS:\n  " + "\n  ".join(bad), file=sys.stderr); sys.exit(1)
-    print(f"layers ok ({len(FRAGS)} fragments)")
+    print(f"layers ok ({len(FRAGS)} + {len(GUI_FRAGS)} fragments)")
     if "--check" not in sys.argv:
-        build(); print(f"built {OUT} ({sum(1 for _ in open(OUT))} lines)")
+        build()
+        for out in (OUT, GUI_OUT): print(f"built {out} ({sum(1 for _ in open(out))} lines)")

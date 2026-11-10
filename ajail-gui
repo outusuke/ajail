@@ -1,6 +1,8 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # ajail-gui - GTK4 + libadwaita front-end for ajail (a Flatseal-style permission editor)
+# ======== 00_config: Configuration: paths, permission defaults and labels, UI text tables. Data only.
+
 import json, os, pwd, re, signal, shutil, subprocess, sys, threading
 import gi
 gi.require_version("Gtk", "4.0")
@@ -89,8 +91,7 @@ SECTIONS = [
 ]
 
 
-def esc(s):
-    return GLib.markup_escape_text(s)
+# ======== 10_settings: Settings and state: config files, ui.conf, path checks, app list, running processes.
 
 def empty():
     return {"s": {}, **{k: [] for k in LISTS}}
@@ -259,6 +260,9 @@ def ui_drop(keys):
         f.write("".join(f"{k}={v}\n" for k, v in d.items()))
     os.replace(tmp, UICONF)
 
+
+# ======== 20_files: Destructive file operations: trash an app's data, forget an app.
+
 def trash_layer(layer):
     """Trash an app's writable layer. Its overlayfs 'work' dir is scratch (mode 000 inside, recreated at launch) and
     breaks gio's copy fallback, so remove it and trash only the saved data. Returns True on success."""
@@ -316,6 +320,9 @@ def forget_app(name):
         shutil.rmtree(ext, ignore_errors=True)
     ui_drop([f"open_mode.{name}", f"mount.{name}"])
     return None
+
+
+# ======== 30_system: System helpers: distro install hint, app-menu entry, sizes.
 
 def mount_install_cmd():
     """Command that installs squashfuse and fuse3 on this distro, or None if the distro isn't recognised."""
@@ -385,6 +392,11 @@ def dir_size(path):
     r = run(["du", "-sh", path], timeout=5)
     return r.stdout.split()[0] if r.stdout else "unknown"
 
+
+# ======== 40_window: The GTK window (Win): every screen of the app.
+
+def esc(s):
+    return GLib.markup_escape_text(s)
 
 class Win(Adw.ApplicationWindow):
     def __init__(self, app):
@@ -1395,6 +1407,8 @@ class Win(Adw.ApplicationWindow):
         refresh()
         self.nav.push(Adw.NavigationPage(title="Troubleshooting", child=view))
 
+
+# ======== 50_app: Application object and startup arguments.
 
 class App(Adw.Application):
     def __init__(self, log=None, install=None):

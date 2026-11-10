@@ -23,3 +23,18 @@ core, that is a design question, not a quick import.
 
 Edit `src/*.py`, then run `./build.py`, and install the generated `ajail`. Do not edit the generated file.
 Section headers (`# ======== NN_name`) in the built file show where each fragment starts.
+
+## ajail-gui
+
+`ajail-gui` is built the same way, from `src/gui/*.py`, and is also installed as ONE file. Same rule, same `./build.py`.
+
+| Fragment | What |
+|---|---|
+| `src/gui/00_config.py` | Imports, paths, the permission tables (must match `ajail`; `test_sync.py` checks), UI text tables |
+| `src/gui/10_settings.py` | Reading and writing `*.conf` and `ui.conf`, path checks, app list, running-process checks |
+| `src/gui/20_files.py` | **Destructive operations**: trash an app's data, forget an app. Read these line by line. |
+| `src/gui/30_system.py` | Distro install hint, app-menu entry, folder sizes |
+| `src/gui/40_window.py`, `50_app.py` | The GTK window and the application object. Everything that touches GTK is here. |
+
+On top of the layer rule, `build.py` rejects any use of GTK names (`gi`, `Adw`, `Gio`, `GLib`, `Gtk`) below `40_window.py`, so
+layers 10 to 30 can be read, and tested, without any UI in mind.
