@@ -32,7 +32,7 @@ def parse_cfg(path):
     'net = 0  # no network' works). A line that can't be used is skipped with a warning (terminal and log),
     never silently, so a typo can't leave an app with more access than you meant."""
     try:
-        lines = open(path).read().splitlines()
+        with open(path) as f: lines = f.read().splitlines()
     except OSError:
         return None
     d = empty_cfg()
