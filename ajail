@@ -33,7 +33,7 @@ ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
-            "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0}
+            "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0}
 # Numeric limits (0 = no limit): memory in MB, CPU in % of one core, number of processes.
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
@@ -51,6 +51,14 @@ SYSCALLS_AARCH64 = [104, 294, 241, 280, 116, 89, 60, 217, 219, 218, 239, 235, 23
 # Extra blocked syscalls with "Block extra system calls" (harden): io_uring_setup io_uring_enter io_uring_register
 # userfaultfd process_vm_readv process_vm_writev kcmp
 SYSCALLS_EXTRA = {"x86_64": [425, 426, 427, 323, 310, 311, 312], "aarch64": [425, 426, 427, 282, 270, 271, 272]}
+# Variables that "compat_env" copies from your session into the sandbox, only when they are set. Graphics, toolkit and
+# audio/video back-end switches, nothing else: no PATH, no tokens or keys, no SSH_AUTH_SOCK, no DBUS_*. Exact names
+# plus the prefixes below. Keep this list short; every entry is something the app can read.
+COMPAT_ENV = ("WGPU_BACKEND", "WGPU_ADAPTER_NAME", "WGPU_POWER_PREF", "ICED_BACKEND", "LIBGL_ALWAYS_SOFTWARE",
+              "LIBGL_DRI3_DISABLE", "VK_ICD_FILENAMES", "VK_DRIVER_FILES", "__GLX_VENDOR_LIBRARY_NAME",
+              "__NV_PRIME_RENDER_OFFLOAD", "DRI_PRIME", "SDL_VIDEODRIVER", "SDL_AUDIODRIVER", "QT_QPA_PLATFORM",
+              "QT_QPA_PLATFORMTHEME", "QT_SCALE_FACTOR", "GDK_BACKEND", "GDK_SCALE", "MOZ_ENABLE_WAYLAND")
+COMPAT_ENV_PREFIXES = ("MESA_", "RADV_")
 LEGACY_FLAGS ={"--net=none": ("net", 0), "--nosound": ("sound", 0), "--no3d": ("gpu", 0), "--x11": ("x11", 1)}
 
 # Install hints in error messages. Only families where the packages ajail asks for (bubblewrap, squashfs-tools,
@@ -253,6 +261,12 @@ def share_list(cfg):
         if kind in XDG_DEFAULT and mode != "none":
             out.append(("--ro-bind" if mode == "ro" else "--bind", xdg_dir(kind)))
     return out
+
+def compat_env(environ):
+    """The variables 'compat_env' lets through: those of COMPAT_ENV and anything starting with a COMPAT_ENV_PREFIXES
+    entry, but only if set. Names are matched exactly (case-sensitive), so 'mesa_x' or 'XMESA_X' do not qualify.
+    Never anything else, whatever the value looks like."""
+    return {k: v for k, v in environ.items() if k in COMPAT_ENV or k.startswith(COMPAT_ENV_PREFIXES)}
 
 def runtime_dir():
     return os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
@@ -571,6 +585,8 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         else: warn(f"skipping unsafe or missing path '{p}'", name)
     for f in files:
         a += ["--bind", f, f]
+    if cfg["compat_env"]:     # before env= below, so an explicit env= line still wins; never replaces a variable ajail set itself
+        for k, v in compat_env(os.environ).items(): env.setdefault(k, v)
     for item in cfg["env"]:
         k, _, v = item.partition("=")
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k): env[k] = v
@@ -945,13 +961,14 @@ def check_display(cfg):
     if not cfg["x11"] and not wayland_path():
         die("no Wayland session found. Enable 'X11 compatibility' for this app in ajail-gui.")
 
-def run_app(arg, extra, once=False, mount=False):
+def run_app(arg, extra, once=False, mount=False, compat=False):
     guard()
     app = os.path.realpath(arg)
     if not os.path.isfile(app): die(f"not a file: {arg}")
     off = appimage_offset(app)
     name = sanitize(app)
     cfg = load_cfg(name)
+    if compat: cfg["compat_env"] = 1
     check_display(cfg)
     if mount:
         # Nothing is unpacked: the AppImage itself is mounted for this run (squashfuse, outside the sandbox).
@@ -963,12 +980,13 @@ def run_app(arg, extra, once=False, mount=False):
         return
     launch(name, ensure_extracted(app, name, off), cfg, extra, source=app, once=once)
 
-def run_installed(name, extra):
+def run_installed(name, extra, compat=False):
     guard()
     name = clean(name)
     kind = installed_kind(name)
     if not kind: die(f"'{name}' is not installed")
     cfg = load_cfg(name)
+    if compat: cfg["compat_env"] = 1
     check_display(cfg)
     if kind == "root":
         launch(name, f"{INSTALLED}/{name}/root", cfg, extra)
@@ -1462,13 +1480,16 @@ ajail install FILE.AppImage      unpack it and add it to the app menu; the file 
                                  the Trash; --mount keeps it compressed and mounts it at launch, experimental; with
                                  --mount, --move moves the file into ajail's folder instead of copying it, and falls
                                  back to a copy on a removable or network drive)
-ajail run NAME [args]            run an installed app
+ajail run [--compat-env] NAME [args]
+                                 run an installed app (--compat-env passes a short list of graphics and toolkit
+                                 variables from your session into the sandbox for this run; the permission
+                                 compat_env=1 does it every time)
 ajail uninstall NAME [--purge]   remove it from the app menu (--purge also moves its data to the Trash); refuses to
                                  delete an AppImage that was moved into ajail (use restore, or --discard-image)
 ajail restore NAME [--keep] [--to FOLDER]
                                  undo a compressed install that moved the file: put it back and uninstall
                                  (--keep puts a copy back and leaves the app installed; --to picks the folder)
-ajail run-file [--once] [--mount] FILE
+ajail run-file [--once] [--mount] [--compat-env] FILE
                                  run an AppImage without offering to install it (--once deletes its unpacked copy on exit;
                                  --mount mounts the file instead of unpacking it, experimental; ignored with --once)
 ajail FILE.AppImage [args]       open an AppImage: offers Install or Run once when double-clicked,
@@ -1491,13 +1512,14 @@ def main():
     elif c == "install": cmd_install(a[1:])
     elif c == "uninstall": cmd_uninstall(a[1:])
     elif c == "restore": cmd_restore(a[1:])
+    elif c == "run" and len(a) > 1 and a[1] == "--compat-env" and len(a) > 2: run_installed(a[2], a[3:], True)
     elif c == "run" and len(a) > 1: run_installed(a[1], a[2:])
     elif c == "run-file":
         rest, flags = a[1:], set()
-        while rest and rest[0] in ("--once", "--mount"):
+        while rest and rest[0] in ("--once", "--mount", "--compat-env"):
             flags.add(rest.pop(0))
-        if not rest: die("usage: ajail run-file [--once] [--mount] FILE [args]")
-        run_app(rest[0], rest[1:], "--once" in flags, "--mount" in flags and "--once" not in flags)   # once never mounts
+        if not rest: die("usage: ajail run-file [--once] [--mount] [--compat-env] FILE [args]")
+        run_app(rest[0], rest[1:], "--once" in flags, "--mount" in flags and "--once" not in flags, "--compat-env" in flags)   # once never mounts
     else: open_file(c, a[1:])
 
 main()

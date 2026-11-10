@@ -9,13 +9,14 @@ def check_display(cfg):
     if not cfg["x11"] and not wayland_path():
         die("no Wayland session found. Enable 'X11 compatibility' for this app in ajail-gui.")
 
-def run_app(arg, extra, once=False, mount=False):
+def run_app(arg, extra, once=False, mount=False, compat=False):
     guard()
     app = os.path.realpath(arg)
     if not os.path.isfile(app): die(f"not a file: {arg}")
     off = appimage_offset(app)
     name = sanitize(app)
     cfg = load_cfg(name)
+    if compat: cfg["compat_env"] = 1
     check_display(cfg)
     if mount:
         # Nothing is unpacked: the AppImage itself is mounted for this run (squashfuse, outside the sandbox).
@@ -27,12 +28,13 @@ def run_app(arg, extra, once=False, mount=False):
         return
     launch(name, ensure_extracted(app, name, off), cfg, extra, source=app, once=once)
 
-def run_installed(name, extra):
+def run_installed(name, extra, compat=False):
     guard()
     name = clean(name)
     kind = installed_kind(name)
     if not kind: die(f"'{name}' is not installed")
     cfg = load_cfg(name)
+    if compat: cfg["compat_env"] = 1
     check_display(cfg)
     if kind == "root":
         launch(name, f"{INSTALLED}/{name}/root", cfg, extra)

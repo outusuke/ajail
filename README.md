@@ -15,6 +15,8 @@ ajail check      # lists what is missing, with the install command for your dist
 ajail on         # optional: send every AppImage through ajail (asks for your password)
 ```
 
+Optional shell completion (bash, zsh, fish) is in `completions/`; see the comments at the top of each file for where to put it.
+
 `ajail` must be at `/usr/local/bin/ajail`, owned by root. Debian/Ubuntu and Arch use the same package names for the core tools.
 
 **Required:** Linux, Wayland (X11 is a per-app option), Python 3, `bubblewrap`, `squashfs-tools`.
@@ -50,9 +52,9 @@ Off by default. Needs `squashfuse`, `fuse3` and access to `/dev/fuse`.
 
 ```bash
 ajail FILE.AppImage [args]       # open; prompts when double-clicked
-ajail run-file [--once] [--mount] FILE
+ajail run-file [--once] [--mount] [--compat-env] FILE
 ajail install FILE [--trash] [--mount [--move]]
-ajail run NAME [args]            # run an installed app
+ajail run [--compat-env] NAME [args]   # run an installed app
 ajail list | stop NAME | name FILE
 ajail uninstall NAME [--purge] [--discard-image]
 ajail restore NAME [--keep] [--to FOLDER]
@@ -62,6 +64,7 @@ ajail preview [NAME]             # print the bwrap command
 
 - `install --trash` moves the AppImage to the Trash; `--mount` makes it a compressed install; `--move` (with `--mount`) moves the file into ajail's folder.
 - `run-file --once` never mounts, even with `--mount`.
+- `--compat-env` (on `run` it goes before NAME) turns on the [compatibility environment](#compatibility-environment) for this run only. To make it permanent, set `compat_env=1`, or use the **Pass graphics and toolkit settings** switch in `ajail-gui`.
 - `uninstall --purge` moves the app's data to the Trash. It refuses to delete an AppImage that was moved into ajail unless you pass `--discard-image`.
 - `restore` puts a moved AppImage back and uninstalls the app. `--keep` copies it back and leaves the app installed. `--to` picks the folder.
 
@@ -90,6 +93,7 @@ Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.confi
 | `tray` | 0 | Tray icon, media keys |
 | `camera` | 0 | `/dev/video*` and the Camera portal |
 | `input` | 0 | `/dev/input` |
+| `compat_env` | 0 | A short list of graphics and toolkit variables from your session, see [Compatibility environment](#compatibility-environment) |
 | `ssh_agent` | 0 | Your SSH agent; the app can sign as you |
 | `printing` | 0 | CUPS socket |
 | `theme` | 1 | Read-only fonts, icons, themes |
@@ -135,6 +139,17 @@ portal=-Location                 # in an app file: turn off a portal enabled in 
 ```
 
 Shared paths must be non-hidden items in your home or under `/mnt/`, `/media/`, `/run/media/$USER/`. Others are skipped with a warning.
+
+### Compatibility environment
+
+The sandbox starts with an empty environment. Some apps pick the wrong graphics or toolkit back-end that way (a blank window, software rendering, the wrong GPU) because a variable you set in your session never reaches them. With `compat_env=1`, ajail copies the variables below from the session that starts the app, only the ones that are set. It is off by default.
+
+- Exact names: `WGPU_BACKEND`, `WGPU_ADAPTER_NAME`, `WGPU_POWER_PREF`, `ICED_BACKEND`, `LIBGL_ALWAYS_SOFTWARE`, `LIBGL_DRI3_DISABLE`, `VK_ICD_FILENAMES`, `VK_DRIVER_FILES`, `__GLX_VENDOR_LIBRARY_NAME`, `__NV_PRIME_RENDER_OFFLOAD`, `DRI_PRIME`, `SDL_VIDEODRIVER`, `SDL_AUDIODRIVER`, `QT_QPA_PLATFORM`, `QT_QPA_PLATFORMTHEME`, `QT_SCALE_FACTOR`, `GDK_BACKEND`, `GDK_SCALE`, `MOZ_ENABLE_WAYLAND`.
+- Any variable whose name starts with `MESA_` or `RADV_`.
+
+Nothing else is passed: not `PATH`, tokens or keys, `SSH_AUTH_SOCK` (use `ssh_agent`), `DBUS_*`, or anything not listed. A variable ajail sets itself is never replaced, and an `env=` line still wins over a copied value. The list is fixed in ajail; `ajail preview` shows what would be passed.
+
+Paths in `VK_ICD_FILENAMES` and `VK_DRIVER_FILES` are not shared: they only work if the files are inside the sandbox (for example under `/usr` or `/etc/vulkan`).
 
 ### Opt-in portals
 

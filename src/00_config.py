@@ -33,7 +33,7 @@ ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
-            "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0}
+            "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0}
 # Numeric limits (0 = no limit): memory in MB, CPU in % of one core, number of processes.
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
@@ -51,6 +51,14 @@ SYSCALLS_AARCH64 = [104, 294, 241, 280, 116, 89, 60, 217, 219, 218, 239, 235, 23
 # Extra blocked syscalls with "Block extra system calls" (harden): io_uring_setup io_uring_enter io_uring_register
 # userfaultfd process_vm_readv process_vm_writev kcmp
 SYSCALLS_EXTRA = {"x86_64": [425, 426, 427, 323, 310, 311, 312], "aarch64": [425, 426, 427, 282, 270, 271, 272]}
+# Variables that "compat_env" copies from your session into the sandbox, only when they are set. Graphics, toolkit and
+# audio/video back-end switches, nothing else: no PATH, no tokens or keys, no SSH_AUTH_SOCK, no DBUS_*. Exact names
+# plus the prefixes below. Keep this list short; every entry is something the app can read.
+COMPAT_ENV = ("WGPU_BACKEND", "WGPU_ADAPTER_NAME", "WGPU_POWER_PREF", "ICED_BACKEND", "LIBGL_ALWAYS_SOFTWARE",
+              "LIBGL_DRI3_DISABLE", "VK_ICD_FILENAMES", "VK_DRIVER_FILES", "__GLX_VENDOR_LIBRARY_NAME",
+              "__NV_PRIME_RENDER_OFFLOAD", "DRI_PRIME", "SDL_VIDEODRIVER", "SDL_AUDIODRIVER", "QT_QPA_PLATFORM",
+              "QT_QPA_PLATFORMTHEME", "QT_SCALE_FACTOR", "GDK_BACKEND", "GDK_SCALE", "MOZ_ENABLE_WAYLAND")
+COMPAT_ENV_PREFIXES = ("MESA_", "RADV_")
 LEGACY_FLAGS ={"--net=none": ("net", 0), "--nosound": ("sound", 0), "--no3d": ("gpu", 0), "--x11": ("x11", 1)}
 
 # Install hints in error messages. Only families where the packages ajail asks for (bubblewrap, squashfs-tools,

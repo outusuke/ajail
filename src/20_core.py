@@ -101,6 +101,12 @@ def share_list(cfg):
             out.append(("--ro-bind" if mode == "ro" else "--bind", xdg_dir(kind)))
     return out
 
+def compat_env(environ):
+    """The variables 'compat_env' lets through: those of COMPAT_ENV and anything starting with a COMPAT_ENV_PREFIXES
+    entry, but only if set. Names are matched exactly (case-sensitive), so 'mesa_x' or 'XMESA_X' do not qualify.
+    Never anything else, whatever the value looks like."""
+    return {k: v for k, v in environ.items() if k in COMPAT_ENV or k.startswith(COMPAT_ENV_PREFIXES)}
+
 def runtime_dir():
     return os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
 
@@ -418,6 +424,8 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         else: warn(f"skipping unsafe or missing path '{p}'", name)
     for f in files:
         a += ["--bind", f, f]
+    if cfg["compat_env"]:     # before env= below, so an explicit env= line still wins; never replaces a variable ajail set itself
+        for k, v in compat_env(os.environ).items(): env.setdefault(k, v)
     for item in cfg["env"]:
         k, _, v = item.partition("=")
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k): env[k] = v

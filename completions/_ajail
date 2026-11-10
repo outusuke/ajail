@@ -1,0 +1,31 @@
+#compdef ajail
+# zsh completion for ajail. SPDX-License-Identifier: GPL-3.0-or-later
+# Install: put this file as _ajail in a folder on your $fpath, for example ~/.zfunc, then run: compinit
+_ajail_apps() { local -a a; a=(${(f)"$(ajail list 2>/dev/null | awk '{print $1}')"}); compadd -a a }
+
+_ajail() {
+    local -a cmds
+    cmds=(on off status check preview list stop name install uninstall restore run run-file help)
+    if (( CURRENT == 2 )); then
+        _alternative 'commands:command:compadd -a cmds' 'files:AppImage:_files -g "*.(#i)appimage"'
+        return
+    fi
+    case $words[2] in
+        run)
+            if (( CURRENT == 3 )); then _alternative 'flags:flag:(--compat-env)' 'apps:installed app:_ajail_apps'
+            elif (( CURRENT == 4 )) && [[ $words[3] == --compat-env ]]; then _ajail_apps; fi ;;
+        run-file)
+            _arguments '--once[delete the unpacked copy on exit]' '--mount[mount the file instead of unpacking it]' \
+                       '--compat-env[pass graphics and toolkit variables from this session]' '*:file:_files' ;;
+        install)
+            _arguments '--trash[move the AppImage to the Trash]' '--mount[keep it compressed, mount at launch]' \
+                       '--move[with --mount: move the file into ajail]' '*:file:_files' ;;
+        uninstall)
+            _arguments '--purge[also move the data to the Trash]' '--discard-image[delete a moved AppImage]' '*:app:_ajail_apps' ;;
+        restore)
+            _arguments '--keep[leave the app installed]' '--to[folder for the AppImage]:folder:_files -/' '*:app:_ajail_apps' ;;
+        preview|stop) (( CURRENT == 3 )) && _ajail_apps ;;
+        name) _files ;;
+    esac
+}
+_ajail "$@"

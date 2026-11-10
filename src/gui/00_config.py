@@ -32,7 +32,7 @@ os.makedirs(APPS, exist_ok=True)
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
-            "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0}
+            "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0}
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}      # 0 = no limit
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
 # Opt-in desktop portals. Keep in sync with EXTRA_PORTALS in ajail.
@@ -51,7 +51,8 @@ XDG =[("download", "Downloads"), ("documents", "Documents"), ("pictures", "Pictu
        ("music", "Music"), ("videos", "Videos"), ("desktop", "Desktop")]
 MODES = ["No access", "Read-only", "Read & write"]
 LABEL = {"net": "Internet", "sound": "Audio", "gpu": "Graphics", "camera": "Camera",
-         "input": "Input devices", "x11": "X11", "ssh_agent": "SSH agent", "printing": "Printing"}
+         "input": "Input devices", "x11": "X11", "ssh_agent": "SSH agent", "printing": "Printing",
+         "compat_env": "Graphics variables"}
 SECTIONS = [
     ("What can this app use?",
      "Changes apply the next time the app starts. Everything else on your computer stays hidden from it.", [
@@ -66,7 +67,11 @@ SECTIONS = [
     ("Devices", None, [
         ("gpu", "Graphics acceleration", "Needed by most apps; turn off only if the app crashes"),
         ("camera", "Camera", "Webcams (/dev/video*)"),
-        ("input", "Game controllers and input devices", "Raw access to /dev/input")]),
+        ("input", "Game controllers and input devices", "Raw access to /dev/input"),
+        ("compat_env", "Pass graphics and toolkit settings",
+         "For apps that draw wrongly or won't start. Copies a short list of your session's graphics, toolkit and "
+         "audio back-end variables (WGPU_*, MESA_*, SDL_VIDEODRIVER, QT_QPA_PLATFORM, GDK_BACKEND and similar) into the "
+         "sandbox, only those that are set. Never your PATH, tokens or keys, SSH agent or D-Bus.")]),
     ("Desktop integration", None, [
         ("portals", "Notifications and portals", "Notifications, opening links, dark mode (needs xdg-dbus-proxy)"),
         ("portal_screenshot", "Screenshots",
