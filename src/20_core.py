@@ -466,7 +466,7 @@ def ensure_extracted(app, name, off):
         r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
         if r.returncode != 0:
             shutil.rmtree(tmp, ignore_errors=True)
-            die("extraction failed:\n" + r.stderr[-800:])
+            die("extraction failed:\n" + CTRL.sub("", r.stderr[-800:]))     # file names in it come from the AppImage
         subprocess.run(["chmod", "-R", "u+rwX", f"{tmp}/root"], check=False)
         open(f"{tmp}/stamp", "w").write(stamp)
         os.replace(tmp, d)

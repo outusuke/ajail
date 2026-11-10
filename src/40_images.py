@@ -111,7 +111,7 @@ def mount_squashfs(image, off, name):
         if not r.returncode: break
     if r.returncode:
         os.rmdir(mp)
-        die(f"could not mount the image: {r.stderr.strip() or r.returncode}")
+        die(f"could not mount the image: {CTRL.sub('', r.stderr).strip() or r.returncode}")
     return mp
 
 def unmount_image(mp):
