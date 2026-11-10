@@ -37,6 +37,7 @@ def log(msg, name=None):
         pass
 
 LOG_RUN_MAX = 2_000_000    # bytes of one app run's output kept in the log
+LOG_LINE_MAX = 65_536     # longest log line: longer output is split, so one unbroken stream can't pile up in memory
 NO_LOG = [False]      # set by 'preview' so that showing a command never writes to the log
 
 def warn(msg, name=None):

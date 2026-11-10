@@ -132,6 +132,21 @@ class LaunchOutput(unittest.TestCase):
         self.assertIn("system-call filter", err.getvalue())
         self.assertFalse(os.path.exists(self.term), "the app was started")
 
+    def test_endless_stderr_without_newline_is_bounded(self):
+        """A flood with no newline must not become one giant line (memory) or get past the log cap."""
+        app = "import sys; sys.stderr.write('A' * 3000000 + '\\nend\\n')"
+        class P(subprocess.Popen):
+            def __init__(s, cmd, **k): super().__init__([sys.executable, "-c", app], **k)
+        class FakeSub:
+            def __getattr__(s, n): return getattr(subprocess, n)
+            Popen = P
+        A["subprocess"] = FakeSub()
+        out, err = self.run_launch(False)
+        self.assertIn("A" * 3000000 + "\nend\n", err)         # the terminal still gets everything
+        lines = open(f"{self.d}/log").read().splitlines()
+        self.assertLess(max(len(l) for l in lines), 70000)          # no single giant log line
+        self.assertLess(sum(len(l) + 1 for l in lines), A["LOG_RUN_MAX"] + 70000 + 200)     # the per-run log cap holds
+
 class XauthFailsClosed(unittest.TestCase):
     """If the X cookie file can't be parsed down to one display's cookie, it must not be shared whole."""
     def setUp(self):
