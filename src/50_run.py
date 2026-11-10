@@ -76,7 +76,8 @@ def launch(name, root, cfg, extra, source=None, once=False):
     lim = ",".join(f"{k}={cfg[k]}" for k in NUM if cfg[k])
     log(f"START allow=[{on}] limits=[{lim}] seccomp={'on' if sec else 'off'} dbus={'on' if bus else 'off'}", name)
     start = time.time()
-    p = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True, errors="replace",
+    tty = sys.stdout.isatty()                     # to a terminal, stdout is filtered too; to a pipe or file it stays untouched
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE if tty else None, stderr=subprocess.PIPE, text=True, errors="replace",
                          pass_fds=[sec.fileno()] if sec and not priv else ())
     pidfile = f"{RUNNING}/{os.getpid()}"
     open(pidfile, "w").write(name)
@@ -97,8 +98,18 @@ def launch(name, root, cfg, extra, source=None, once=False):
                         lf.flush()
         except Exception:
             pass
+    def pump():
+        try:
+            for line in p.stdout:
+                try: sys.stdout.write(CTRL.sub("", line)); sys.stdout.flush()
+                except Exception: pass
+        except Exception:
+            pass
     t = threading.Thread(target=tee, daemon=True); t.start()
+    t2 = threading.Thread(target=pump, daemon=True) if tty else None
+    if t2: t2.start()
     rc = p.wait(); t.join(2)
+    if t2: t2.join(2)
     stop_bus(bus)
     if wd: shutil.rmtree(wd, ignore_errors=True)
     try: os.unlink(pidfile)
