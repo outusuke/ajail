@@ -8,7 +8,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk
 
 SELF    = "/usr/local/bin/ajail"
-HOME    = os.path.realpath(os.path.expanduser("~"))
+HOME    = os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir)      # from the account like ajail, not from $HOME
 USER    = pwd.getpwuid(os.getuid()).pw_name      # from the account, not from the environment
 CONF    = HOME + "/.config/ajail"
 APPS    = CONF + "/apps"
