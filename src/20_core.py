@@ -294,7 +294,7 @@ def preview_files(cfg):
     return {x: f"{d}/{x}" for x in n}
 
 def scoped_xauth(src, disp):
-    """A copy of the XAUTHORITY file holding only the cookie for DISPLAY, or None (then the full file is used)."""
+    """A copy of the XAUTHORITY file holding only the cookie for DISPLAY, or None (then it is not shared at all)."""
     # Done in Python (no xauth needed, and many Wayland desktops don't install it). Entries are kept when they are
     # for this display number or have no display number (wildcard entries, as Xwayland's own auth file uses).
     d = work_dir()
@@ -311,7 +311,7 @@ def scoped_xauth(src, disp):
         i += 2                                    # family
         fields = []
         for _ in range(4):                        # address, display number, auth name, auth data
-            if i + 2 > len(data): return None     # truncated or not an Xauthority file: use it unchanged
+            if i + 2 > len(data): return None     # truncated or not an Xauthority file: not shared
             n = int.from_bytes(data[i:i+2], "big"); i += 2
             fields.append(data[i:i+n]); i += n
         if i > len(data): return None
@@ -365,7 +365,9 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         xa = os.environ.get("XAUTHORITY")
         if xa and os.path.isfile(xa):
             # Only this display's cookie is shared, not every cookie in the file (those can include remote displays).
-            a += ["--ro-bind", scoped_xauth(xa, disp) or xa, xa]; env["XAUTHORITY"] = xa
+            scoped = scoped_xauth(xa, disp)
+            if scoped: a += ["--ro-bind", scoped, xa]; env["XAUTHORITY"] = xa
+            else: warn("could not read just this display's X cookie from XAUTHORITY; not sharing it (X11 apps may fail to connect)", name)
     if cfg["sound"]:
         for s in ("pipewire-0", "pulse/native"):
             a += ["--ro-bind-try", f"{rt}/{s}", f"{rt}/{s}"]

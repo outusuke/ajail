@@ -97,5 +97,30 @@ class LaunchOutput(unittest.TestCase):
         self.assertIn(EVIL, out)                                  # data going to a pipe or file is not altered
         self.assertNotIn("\x1b", err)
 
+class XauthFailsClosed(unittest.TestCase):
+    """If the X cookie file can't be parsed down to one display's cookie, it must not be shared whole."""
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.xa = f"{self.d}/Xauthority"
+        open(self.xa, "wb").write(b"\x00\x01garbage-not-an-xauthority-file")
+        self.keep = {k: A[k] for k in ("work_dir", "warn")}
+        self.warned = []
+        A.update(work_dir=lambda: self.d, warn=lambda m, n=None: self.warned.append(m))
+        self.env = {k: os.environ.get(k) for k in ("DISPLAY", "XAUTHORITY")}
+        os.environ.update(DISPLAY=":0", XAUTHORITY=self.xa)
+    def tearDown(self):
+        A.update(self.keep)
+        for k, v in self.env.items():
+            if v is None: os.environ.pop(k, None)
+            else: os.environ[k] = v
+
+    def test_unparsable_cookie_file_is_not_bound(self):
+        cfg = dict(A["DEFAULTS"]); cfg.update(A["NUM"]); cfg["x11"] = 1
+        cfg.update({k: [] for k in A["LISTS"]})
+        argv = A["bwrap_args"]("Foo", f"{self.d}/root", cfg, ["/app/AppRun"])
+        self.assertNotIn(self.xa, argv)
+        self.assertNotIn("XAUTHORITY", argv)
+        self.assertTrue(any("X cookie" in m for m in self.warned))
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
