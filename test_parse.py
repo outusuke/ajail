@@ -62,6 +62,17 @@ class Parse(unittest.TestCase):
         d, err = self.parse("net=0\nprofile=strict\nflag=--x11\nxdg=download:ro\nportal=Secret\nportal=-Secret\ntalk=org.x.Y\n")
         self.assertEqual(err, ""); self.assertEqual(d["s"]["x11"], 1)
 
+class Talk(unittest.TestCase):
+    setUp = Parse.setUp
+    parse = Parse.parse
+    def test_talk_names(self):
+        good = ["org.gnome.SessionManager", "org.example.App.*", "com.a.b.c.*"]
+        bad = ["org.*", "org.freedesktop.*", "*", "org..x", "a b", "-x.y"]
+        for n in good + bad: self.assertEqual(A["talk_ok"](n), n in good, n)
+        d, err = self.parse("".join(f"talk={n}\n" for n in good + bad))
+        self.assertEqual(d["talk"], good)
+        for no in range(len(good) + 1, len(good) + len(bad) + 1): self.assertIn(f"x.conf:{no}", err)
+
 class Gui(unittest.TestCase):
     def tree(self):
         return ast.parse(open(f"{HERE}/ajail-gui").read())

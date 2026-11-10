@@ -129,7 +129,7 @@ xdg=download                     # download, documents, pictures, music, videos,
 xdg=pictures:ro                  # read-only
 xdg=documents:none               # cancel a folder granted in default.conf
 env=MY_VAR=value
-talk=org.gnome.SessionManager    # extra D-Bus name
+talk=org.gnome.SessionManager    # extra D-Bus name (a wildcard needs three parts first: org.example.App.*)
 portal=Location                  # opt-in portal, one line each
 portal=-Location                 # in an app file: turn off a portal enabled in default.conf
 ```
