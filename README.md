@@ -163,9 +163,17 @@ Prints what the sandbox exposes and saves it to `selftest-report.txt` in the app
 python3 test_portals.py     # unit tests, no sandbox needed
 python3 test_parse.py       # settings parser: spaces, comments, warnings
 python3 test_hostile.py     # hostile AppImages (needs bubblewrap and squashfs-tools; run as a normal user)
+python3 test_build.py       # ajail is up to date with src/, and the layer rule holds
 ```
 
 `test_hostile.py` builds AppImages with links pointing outside the app, link loops, huge icons and `.desktop` files, injected `Exec=` lines, odd file names and impostors of an installed app. It runs a copy of `ajail` in a temporary home and checks that nothing outside the AppImage was copied, shown or run, and that the canary files it planted stayed untouched.
+
+## Development
+
+`ajail` is generated from `src/*.py` so the security-critical part can be read on its own (`src/20_core.py`). Edit the
+files in `src/`, then run `./build.py` and commit the regenerated `ajail`. Do not edit `ajail` directly.
+`./build.py --check` verifies that the core only depends on lower layers. See [src/README.md](src/README.md) for the
+review order.
 
 ## Files
 
