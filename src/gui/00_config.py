@@ -32,7 +32,7 @@ os.makedirs(APPS, exist_ok=True)
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
-            "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0}
+            "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}      # 0 = no limit
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
 # Opt-in desktop portals. Keep in sync with EXTRA_PORTALS in ajail.
@@ -66,6 +66,9 @@ SECTIONS = [
         ("ssh_agent", "SSH agent", "Use your SSH keys without seeing them. The app can sign as you.")]),
     ("Devices", None, [
         ("gpu", "Graphics acceleration", "Needed by most apps; turn off only if the app crashes"),
+        ("gpu_render_only", "Graphics: render only",
+         "Give the app only the GPU's render devices, not the ones that can also drive the display. Works for most apps; "
+         "turn it off if graphics break. Needs Graphics acceleration."),
         ("camera", "Camera", "Webcams (/dev/video*)"),
         ("input", "Game controllers and input devices", "Raw access to /dev/input"),
         ("compat_env", "Pass graphics and toolkit settings",

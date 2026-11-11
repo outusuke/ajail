@@ -379,7 +379,12 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
             a += ["--ro-bind-try", f"{rt}/{s}", f"{rt}/{s}"]
         env["PULSE_SERVER"] = f"unix:{rt}/pulse/native"
     if cfg["gpu"]:
-        a += ["--dev-bind-try", "/dev/dri", "/dev/dri"]
+        if cfg["gpu_render_only"]:     # render nodes are enough to draw; the card* nodes can also drive the display
+            nodes = sorted(glob.glob("/dev/dri/renderD*"))
+            if not nodes: warn("no GPU render node found, so the app gets no graphics device", name)
+            for p in nodes: a += ["--dev-bind", p, p]
+        else:
+            a += ["--dev-bind-try", "/dev/dri", "/dev/dri"]
         for p in glob.glob("/dev/nvidia*"):
             a += ["--dev-bind", p, p]
     if cfg["camera"]:

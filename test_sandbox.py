@@ -93,6 +93,18 @@ class EveryConfig(unittest.TestCase):
                 self.assertEqual("/dev/nvidia0" in dsts, bool(c["gpu"]))
                 self.assertEqual("/dev/input" in dsts, bool(c["input"]))
 
+    def test_render_only_gpu_binds_no_card_nodes(self):
+        nodes = ["/dev/dri/card0", "/dev/dri/renderD128", "/dev/dri/renderD129"]
+        fake = lambda p: [n for n in nodes if __import__("fnmatch").fnmatch(n, p)] if p.startswith("/dev/dri/") else []
+        with unittest.mock.patch.object(A["glob"], "glob", fake):
+            full = [d for _, _, d in binds(build(cfg(gpu=1, gpu_render_only=0)))]
+            only = [d for _, _, d in binds(build(cfg(gpu=1, gpu_render_only=1)))]
+            off = [d for _, _, d in binds(build(cfg(gpu=0, gpu_render_only=1)))]
+        self.assertIn("/dev/dri", full)
+        self.assertNotIn("/dev/dri", only)
+        self.assertEqual([d for d in only if d.startswith("/dev/dri")], ["/dev/dri/renderD128", "/dev/dri/renderD129"])
+        self.assertFalse([d for d in off if d.startswith("/dev/dri")])     # gpu=0 wins over render-only
+
     def test_x11_socket_only_when_enabled(self):
         for c in self.configs():
             dsts = [d for _, _, d in binds(build(c))]

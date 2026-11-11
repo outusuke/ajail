@@ -86,6 +86,7 @@ Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.confi
 | `net_private` | 0 | With `net`: internet but not services on this computer, via `pasta`. Your LAN stays reachable. The app won't start if `pasta` is missing |
 | `sound` | 1 | PipeWire/PulseAudio (includes the microphone) |
 | `gpu` | 1 | `/dev/dri`, NVIDIA devices |
+| `gpu_render_only` | 0 | With `gpu`: only `/dev/dri/renderD*`, not the `card*` devices that can also drive the display |
 | `x11` | 0 | X11 socket (weaker isolation) |
 | `portals` | 1 | Notifications and a fixed set of portals: settings, open links, file chooser, print, background and a few more |
 | `portal_screenshot` | 1 | With `portals`: Screenshot portal |
