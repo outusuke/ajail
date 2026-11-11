@@ -508,7 +508,9 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
     rt = runtime_dir()
     a = ["bwrap", "--unshare-all", "--die-with-parent", "--new-session", "--clearenv"]
     if not cfg["userns"]:
-        if bwrap_has("--disable-userns"): a.append("--disable-userns")
+        # --disable-userns needs an explicit --unshare-user ("--unshare-all" only tries one). If a user namespace can't be
+        # made, the app does not start: asked for stricter isolation, it never silently gets less.
+        if bwrap_has("--disable-userns"): a += ["--unshare-user", "--disable-userns"]
         else: warn("this bubblewrap is too old for --disable-userns; ignoring", name)
     if cfg["privacy"]:
         if bwrap_has("--hostname"): a += ["--hostname", "ajail"]

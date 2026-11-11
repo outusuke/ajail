@@ -120,7 +120,9 @@ class EveryConfig(unittest.TestCase):
 
     def test_userns_off_disables_nested_sandboxes(self):
         for c in self.configs():
-            self.assertEqual("--disable-userns" in build(c), not c["userns"])
+            a = build(c)
+            self.assertEqual("--disable-userns" in a, not c["userns"])
+            if "--disable-userns" in a: self.assertIn("--unshare-user", a)     # bwrap refuses --disable-userns without it
 
 class Shares(unittest.TestCase):
     def test_hidden_and_outside_paths_are_skipped(self):
