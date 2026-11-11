@@ -980,6 +980,40 @@ class Win(Adw.ApplicationWindow):
         hg.add(hl)
         page.add(hg)
 
+        sg = Adw.PreferencesGroup(title="Suggestions", description="Based on this app's last run, which ended with an error. "
+                                  "Nothing changes until you press the button; it applies the next time the app starts.")
+        sg.set_visible(False)
+        sug_rows = []
+        page.add(sg)
+
+        def show_hints(lines):
+            for r in sug_rows:
+                sg.remove(r)
+            sug_rows.clear()
+            hints = []
+            if scope:
+                d = dump(scope)
+                hints = log_hints(lines, effective_switches(d["global"], d.get("app")))
+            for key, want, title, why in hints:
+                row = Adw.ActionRow(title=esc(title), subtitle=esc(why))
+                btn = Gtk.Button(label="Turn on" if want else "Turn off", valign=Gtk.Align.CENTER)
+
+                def apply(_b, key=key, want=want):
+                    R = dump(scope).get("app") or empty()
+                    R["s"][key] = want
+                    try:
+                        write_cfg(scope, R)
+                        self.toast("Saved. It applies the next time the app starts.")
+                    except OSError as e:
+                        self.toast(f"Could not save: {e.strerror or e}")
+                    refresh()
+
+                btn.connect("clicked", apply)
+                row.add_suffix(btn)
+                sg.add(row)
+                sug_rows.append(row)
+            sg.set_visible(bool(hints))
+
         lg = Adw.PreferencesGroup(title="Recent activity" + (f" · {scope}" if scope else ""),
                                   description="Errors from apps appear here. Paste them when asking for help.")
         tv = Gtk.TextView(editable=False, cursor_visible=False, monospace=True,
@@ -999,8 +1033,9 @@ class Win(Adw.ApplicationWindow):
                     lines = [l for l in lines if f"[{scope}]" in l]
                 txt = "".join(lines[-200:]) or "Nothing logged yet."
             except OSError:
-                txt = "No launches logged yet."
+                lines, txt = [], "No launches logged yet."
             tv.get_buffer().set_text(txt)
+            show_hints(lines)
 
         header = Adw.HeaderBar()
         rb = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh")

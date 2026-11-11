@@ -166,3 +166,64 @@ def ui_drop(keys):
     with open(tmp, "w") as f:
         f.write("".join(f"{k}={v}\n" for k, v in d.items()))
     os.replace(tmp, UICONF)
+
+# Hints for the Troubleshooting page: when an app's last run ended with an error and its log matches a known failure, suggest
+# the one setting that usually fixes it. Each entry is (pattern, setting, wanted value, title, why, only while these hold).
+# A hint is shown only if the setting is not already as wanted. Nothing is ever changed without a click.
+LOG_HINTS = [
+    (r"no usable sandbox|suid sandbox|setuid sandbox|failed to move to a new (user )?namespace|clone.{0,40}operation not permitted",
+     "userns", 1, "Allow the app's own sandbox",
+     "The app tried to create its own sandbox and could not. Electron and Chromium apps need this.", {}),
+    (r"read-only file system",
+     "app_writable", 1, "Let the app save into its own folder",
+     "The app tried to write inside its own files, which are read-only. Needs bubblewrap 0.11 or newer.", {}),
+    (r"libegl warning|mesa: error|/dev/dri|failed to create (an )?(egl|gl)|no (suitable|available|compatible) (gpu|vulkan|adapter)",
+     "gpu", 1, "Turn on graphics acceleration", "The app could not find a graphics device.", {}),
+    (r"libegl warning|mesa: error|/dev/dri|failed to create (an )?(egl|gl)|no (suitable|available|compatible) (gpu|vulkan|adapter)",
+     "gpu_render_only", 0, "Turn off \"Graphics: render only\"",
+     "The app may need a graphics device that this mode hides.", {"gpu": 1}),
+    (r"cannot open display|could not connect to display|unable to open display|platform plugin .?xcb|failed to connect to (the )?wayland",
+     "x11", 1, "Turn on X11 compatibility", "The app looks for X11. This weakens isolation, so use it only for this app.", {}),
+    (r"temporary failure in name resolution|name or service not known|network is unreachable",
+     "net", 1, "Allow internet", "The app tried to use the network.", {}),
+    (r"/dev/video\d|no (such )?(video )?(capture )?device.{0,30}camera|camera.{0,30}(not found|no device)",
+     "camera", 1, "Allow the camera", "The app tried to open a camera.", {}),
+]
+
+def effective_switches(G, A):
+    """The switch values an app runs with: built-in defaults, then default.conf, then the app's own file."""
+    return {**DEFAULTS, **G["s"], **(A["s"] if A else {})}
+
+def last_run(lines):
+    """(lines of the most recent run, its exit code or None). A run starts at a START line and ends at an EXIT line."""
+    start = 0
+    for i in range(len(lines) - 1, -1, -1):
+        if "] START allow=[" in lines[i]:
+            start = i + 1
+            break
+    run_lines = lines[start:]
+    code = None
+    for ln in reversed(run_lines):
+        m = re.search(r"\] EXIT code=(-?\d+)", ln)
+        if m:
+            code = int(m.group(1))
+            break
+    return run_lines, code
+
+def log_hints(lines, current):
+    """Suggestions for an app, as [(setting, wanted value, title, why)]. Only for a last run that ended with an error;
+    LINES are that app's log lines, CURRENT its effective switches (see effective_switches)."""
+    run_lines, code = last_run(lines)
+    if code in (None, 0):
+        return []
+    text = "".join(run_lines[-300:])[-200_000:]
+    out, seen = [], set()
+    for pat, key, want, title, why, needs in LOG_HINTS:
+        if key in seen or current.get(key) == want:
+            continue
+        if any(current.get(k) != v for k, v in needs.items()):
+            continue
+        if re.search(pat, text, re.I):
+            out.append((key, want, title, why))
+            seen.add(key)
+    return out

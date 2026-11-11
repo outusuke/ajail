@@ -18,6 +18,7 @@ jobs:
           python3 test_output.py
           python3 test_cli.py
           python3 test_sandbox.py
+          python3 test_hints.py
       - name: Hostile AppImages
         # Needs unprivileged user namespaces; GitHub's Ubuntu images restrict them, so allow them for this job.
         run: |

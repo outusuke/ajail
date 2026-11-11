@@ -202,7 +202,7 @@ review order.
 | `~/.local/share/applications/ajail-NAME.desktop` | Generated launcher (name, categories, file types, icon; never the app's `Exec`) |
 | `~/.local/state/ajail/ajail.log` | Launch log and app stderr |
 
-If an app exits with an error within 10 seconds, ajail sends a notification that opens its log in `ajail-gui`.
+If an app exits with an error within 10 seconds, ajail sends a notification that opens its log in `ajail-gui`. When the last run of an app ended with an error and its log matches a known failure (its own sandbox, a missing graphics device, a read-only `/app`, X11, network, camera), the Log page suggests the setting that usually fixes it. Nothing changes until you press the button.
 
 ## Limitations
 
