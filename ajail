@@ -1455,7 +1455,8 @@ def app_list():
         try: entries = os.listdir(d)
         except OSError: continue
         for f in entries:
-            n = f[:-len(ext)] if ext and f.endswith(ext) else f
+            if ext and not f.endswith(ext): continue      # e.g. NAME.machine-id belongs to an app but is not an app
+            n = f[:-len(ext)] if ext else f
             if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", n): names.add(n)
     return sorted(names)
 

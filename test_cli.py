@@ -39,5 +39,18 @@ class StillAccepted(unittest.TestCase):
     def test_missing_file_gives_usage(self):
         self.assertIn("usage: ajail install", run("install", "--trash").stderr)
 
+class AppList(unittest.TestCase):
+    def test_per_app_helper_files_are_not_apps(self):
+        import tempfile, unittest.mock
+        src = open(AJAIL).read().rstrip()
+        ns = {"__name__": "under_test"}
+        exec(compile(src[:-len("main()")], "ajail", "exec"), ns)
+        with tempfile.TemporaryDirectory() as t:
+            os.makedirs(f"{t}/conf/apps"); os.makedirs(f"{t}/homes"); os.makedirs(f"{t}/installed")
+            for f in ("Foo.conf", "Foo.machine-id", "Bar.machine-id", "notes.txt"): open(f"{t}/conf/apps/{f}", "w").close()
+            os.makedirs(f"{t}/homes/Baz")
+            with unittest.mock.patch.dict(ns, {"CONF": f"{t}/conf", "HOMES": f"{t}/homes", "INSTALLED": f"{t}/installed"}):
+                self.assertEqual(ns["app_list"](), ["Baz", "Foo"])
+
 if __name__ == "__main__":
     unittest.main()
