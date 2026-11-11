@@ -54,6 +54,8 @@ def launch(name, root, cfg, extra, source=None, once=False):
     if source:
         try: open(f"{SOURCES}/{name}", "w").write(source)
         except OSError: pass
+    if cfg["net_private"] and not cfg["net"]:
+        warn("'Keep localhost private' does nothing while the network is off; the app has no network at all", name)
     priv = private_net(cfg)
     if priv and not shutil.which("pasta"):
         die("'Keep localhost private' needs pasta: " + install_hint("passt") + ". Or turn that option off for this app.")
@@ -65,9 +67,8 @@ def launch(name, root, cfg, extra, source=None, once=False):
     elif sec is None:                             # a filter exists for this CPU but could not be made: never run without it silently
         stop_bus(bus)
         die("could not create the system-call filter (see the log); not starting the app without it")
-    wd, gen, secpath, gset = None, {}, None, None
-    if True:
-        wd = work_dir(); gen = make_files(cfg, wd, name)
+    secpath, gset = None, None
+    wd = work_dir(); gen = make_files(cfg, wd, name)
     if cfg["theme"]: gset = make_gsettings_keyfile(wd)
     if priv and sec:
         secpath = f"{wd}/seccomp.bpf"

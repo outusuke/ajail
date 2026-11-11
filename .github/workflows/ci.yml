@@ -1,0 +1,25 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap squashfs-tools xdg-dbus-proxy
+      - name: ajail is up to date with src/ and the layer rule holds
+        run: python3 test_build.py
+      - name: Unit tests (no sandbox needed)
+        run: |
+          python3 test_parse.py
+          python3 test_sync.py
+          python3 test_portals.py
+          python3 test_compat.py
+          python3 test_output.py
+          python3 test_cli.py
+          python3 test_sandbox.py
+      - name: Hostile AppImages
+        # Needs unprivileged user namespaces; GitHub's Ubuntu images restrict them, so allow them for this job.
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          python3 test_hostile.py

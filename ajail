@@ -95,6 +95,17 @@ CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 def die(msg, code=1):
     print(f"ajail: {msg}", file=sys.stderr); sys.exit(code)
 
+def split_opts(args, allowed, usage):
+    """Split a command's arguments into (set of options, other arguments). An option (anything starting with '--') that
+    is not in ALLOWED is an error, so a typo like --trsh or --purg is never silently ignored."""
+    opts, rest = set(), []
+    for x in args:
+        if x.startswith("--"):
+            if x not in allowed: die(f"unknown option '{x[:40]}'\n{usage}")
+            opts.add(x)
+        else: rest.append(x)
+    return opts, rest
+
 def log(msg, name=None):
     try:
         os.makedirs(STATE, exist_ok=True)
@@ -1006,6 +1017,8 @@ def launch(name, root, cfg, extra, source=None, once=False):
     if source:
         try: open(f"{SOURCES}/{name}", "w").write(source)
         except OSError: pass
+    if cfg["net_private"] and not cfg["net"]:
+        warn("'Keep localhost private' does nothing while the network is off; the app has no network at all", name)
     priv = private_net(cfg)
     if priv and not shutil.which("pasta"):
         die("'Keep localhost private' needs pasta: " + install_hint("passt") + ". Or turn that option off for this app.")
@@ -1017,9 +1030,8 @@ def launch(name, root, cfg, extra, source=None, once=False):
     elif sec is None:                             # a filter exists for this CPU but could not be made: never run without it silently
         stop_bus(bus)
         die("could not create the system-call filter (see the log); not starting the app without it")
-    wd, gen, secpath, gset = None, {}, None, None
-    if True:
-        wd = work_dir(); gen = make_files(cfg, wd, name)
+    secpath, gset = None, None
+    wd = work_dir(); gen = make_files(cfg, wd, name)
     if cfg["theme"]: gset = make_gsettings_keyfile(wd)
     if priv and sec:
         secpath = f"{wd}/seccomp.bpf"
@@ -1170,9 +1182,10 @@ def install_launcher(name, root):
 # ======== 70_commands: Command-line commands and entry point.
 
 def cmd_install(args):
-    trash, mount, move = "--trash" in args, "--mount" in args, "--move" in args
-    files = [x for x in args if not x.startswith("--")]
-    if len(files) != 1: die("usage: ajail install FILE.AppImage [--mount [--move]] [--trash]")
+    usage = "usage: ajail install FILE.AppImage [--mount [--move]] [--trash]"
+    opts, files = split_opts(args, ("--trash", "--mount", "--move"), usage)
+    trash, mount, move = "--trash" in opts, "--mount" in opts, "--move" in opts
+    if len(files) != 1: die(usage)
     if move and not mount: die("--move only works together with --mount")
     if move and trash: die("use either --move or --trash, not both")
     guard()
@@ -1233,9 +1246,10 @@ def cmd_install(args):
             print("ajail: could not move the AppImage to the Trash", file=sys.stderr)
 
 def cmd_uninstall(args):
-    purge, discard = "--purge" in args, "--discard-image" in args
-    names = [x for x in args if not x.startswith("--")]
-    if len(names) != 1: die("usage: ajail uninstall NAME [--purge] [--discard-image]")
+    usage = "usage: ajail uninstall NAME [--purge] [--discard-image]"
+    opts, names = split_opts(args, ("--purge", "--discard-image"), usage)
+    purge, discard = "--purge" in opts, "--discard-image" in opts
+    if len(names) != 1: die(usage)
     name = clean(names[0])
     if running(name): die(f"{name} is running. Close it first")
     d = f"{INSTALLED}/{name}"

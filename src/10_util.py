@@ -25,6 +25,17 @@ CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 def die(msg, code=1):
     print(f"ajail: {msg}", file=sys.stderr); sys.exit(code)
 
+def split_opts(args, allowed, usage):
+    """Split a command's arguments into (set of options, other arguments). An option (anything starting with '--') that
+    is not in ALLOWED is an error, so a typo like --trsh or --purg is never silently ignored."""
+    opts, rest = set(), []
+    for x in args:
+        if x.startswith("--"):
+            if x not in allowed: die(f"unknown option '{x[:40]}'\n{usage}")
+            opts.add(x)
+        else: rest.append(x)
+    return opts, rest
+
 def log(msg, name=None):
     try:
         os.makedirs(STATE, exist_ok=True)

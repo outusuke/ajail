@@ -1,9 +1,10 @@
 # ======== 70_commands: Command-line commands and entry point.
 
 def cmd_install(args):
-    trash, mount, move = "--trash" in args, "--mount" in args, "--move" in args
-    files = [x for x in args if not x.startswith("--")]
-    if len(files) != 1: die("usage: ajail install FILE.AppImage [--mount [--move]] [--trash]")
+    usage = "usage: ajail install FILE.AppImage [--mount [--move]] [--trash]"
+    opts, files = split_opts(args, ("--trash", "--mount", "--move"), usage)
+    trash, mount, move = "--trash" in opts, "--mount" in opts, "--move" in opts
+    if len(files) != 1: die(usage)
     if move and not mount: die("--move only works together with --mount")
     if move and trash: die("use either --move or --trash, not both")
     guard()
@@ -64,9 +65,10 @@ def cmd_install(args):
             print("ajail: could not move the AppImage to the Trash", file=sys.stderr)
 
 def cmd_uninstall(args):
-    purge, discard = "--purge" in args, "--discard-image" in args
-    names = [x for x in args if not x.startswith("--")]
-    if len(names) != 1: die("usage: ajail uninstall NAME [--purge] [--discard-image]")
+    usage = "usage: ajail uninstall NAME [--purge] [--discard-image]"
+    opts, names = split_opts(args, ("--purge", "--discard-image"), usage)
+    purge, discard = "--purge" in opts, "--discard-image" in opts
+    if len(names) != 1: die(usage)
     name = clean(names[0])
     if running(name): die(f"{name} is running. Close it first")
     d = f"{INSTALLED}/{name}"
