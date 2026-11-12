@@ -36,7 +36,9 @@ def find_icon(root, icon):
     cands = [f"{root}/.DirIcon"]
     if icon and re.fullmatch(r"[A-Za-z0-9._+-]+", icon):
         for ext in ("svg", "png"):
-            cands += glob.glob(f"{r}/usr/share/icons/hicolor/*/apps/{icon}.{ext}") + [f"{root}/{icon}.{ext}"]
+            cands += (glob.glob(f"{r}/usr/share/icons/hicolor/*/apps/{icon}.{ext}") + [f"{root}/{icon}.{ext}"]
+                      + glob.glob(f"{r}/usr/share/icons/*/*/apps/{icon}.{ext}") + glob.glob(f"{r}/usr/share/icons/{icon}.{ext}")
+                      + glob.glob(f"{r}/usr/share/pixmaps/{icon}.{ext}"))     # fixed depths, so no link loop can run away
     best = None
     for p in cands:
         try:
@@ -58,6 +60,15 @@ def remove_icons(name):
         try: os.unlink(p)
         except OSError: pass
 
+def refresh_icon_cache():
+    """Make the menu notice a new icon. The icon theme trusts an old icon-theme.cache unless the theme's top folder is newer, and adding
+    a file inside an existing size folder does not change that folder's time, so the new icon stays unseen until it is touched."""
+    try: os.utime(ICONS)
+    except OSError: return
+    tool = shutil.which("gtk-update-icon-cache") or shutil.which("gtk4-update-icon-cache")
+    if tool and os.path.exists(f"{ICONS}/icon-theme.cache"):
+        subprocess.run([tool, "-f", "-t", ICONS], capture_output=True, check=False)
+
 def refresh_desktop_db():
     if shutil.which("update-desktop-database"):
         subprocess.run(["update-desktop-database", APPLICATIONS], capture_output=True, check=False)
@@ -71,6 +82,9 @@ def install_launcher(name, root):
         os.makedirs(f"{ICONS}/{size}/apps", exist_ok=True)
         shutil.copyfile(src, f"{ICONS}/{size}/apps/ajail-{name}.{ext}")
         iname = f"ajail-{name}"
+        refresh_icon_cache()
+        print(f"icon: {src.replace(root + '/', '', 1)} -> {ICONS}/{size}/apps/{iname}.{ext}")
+    else: print("icon: none found in this app, so the menu shows a generic one")
     lines = ["[Desktop Entry]", "Type=Application", f"Exec={SELF} run {name} %U", "Terminal=false", f"X-AJAIL-App={name}"]
     if not any(k.startswith("Name=") for k in keep): lines.append(f"Name={name}")
     lines += keep
