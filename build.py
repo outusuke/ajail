@@ -20,7 +20,7 @@ FRAGS = sorted(glob.glob(os.path.join(HERE, "src", "[0-9][0-9]_*.py")))
 OUT = os.path.join(HERE, "ajail")
 GUI_FRAGS = sorted(glob.glob(os.path.join(HERE, "src", "gui", "[0-9][0-9]_*.py")))
 GUI_OUT = os.path.join(HERE, "ajail-gui")
-GI_NAMES = {"gi", "Adw", "Gio", "GLib", "Gtk"}      # GTK stays in the window layers of ajail-gui; the layers below stay GTK-free
+GI_NAMES = {"gi", "Adw", "Gdk", "Gio", "GLib", "Gtk"}      # GTK stays in the window layers of ajail-gui; the layers below stay GTK-free
 GUI_FIRST = "40_window.py"                         # first fragment of ajail-gui that may use them
 
 def top_names(tree):

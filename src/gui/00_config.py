@@ -7,7 +7,7 @@ import json, os, pwd, re, signal, shutil, subprocess, sys, threading
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 SELF    = "/usr/local/bin/ajail"
 HOME    = os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir)      # from the account like ajail, not from $HOME

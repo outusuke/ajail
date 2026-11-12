@@ -1024,6 +1024,37 @@ class Win(Adw.ApplicationWindow):
         lg.add(sw)
         page.add(lg)
 
+        buf = tv.get_buffer()
+        PALETTE = {      # kind -> (light theme color, dark theme color); readable on both
+            "ts": ("#77767b", "#9a9996"), "name": ("#613583", "#dc8add"), "dim": ("#77767b", "#9a9996"),
+            "info": ("#1c71d8", "#99c1f1"), "ok": ("#1a7f4b", "#8ff0a4"), "warn": ("#9c5a00", "#f8e45c"),
+            "err": ("#c01c28", "#ff7b63"), "exit_ok": ("#1a7f4b", "#8ff0a4"), "exit_err": ("#c01c28", "#ff7b63"),
+        }
+        tags = {k: buf.create_tag(k) for k in PALETTE}
+        for k in ("exit_ok", "exit_err", "info"):
+            tags[k].set_property("weight", 700)
+
+        def paint(*_):
+            i = 1 if Adw.StyleManager.get_default().get_dark() else 0
+            for k, t in tags.items():
+                rgba = Gdk.RGBA()
+                rgba.parse(PALETTE[k][i])
+                t.set_property("foreground-rgba", rgba)
+
+        def fill_log(lines):
+            buf.set_text("")
+            for line in lines:
+                ts, name, body, kind, nl = log_line_parts(line)
+                for text, tag in ((ts, "ts"), (name, "name"), (body + nl, kind)):
+                    if text:
+                        if tag:
+                            buf.insert_with_tags(buf.get_end_iter(), text, tags[tag])
+                        else:
+                            buf.insert(buf.get_end_iter(), text)
+
+        paint()
+        Adw.StyleManager.get_default().connect("notify::dark", paint)
+
         def refresh(*_):
             r = run([SELF, "check"])
             hl.set_text((r.stdout + r.stderr).strip() or "No output. Is ajail installed?")
@@ -1031,10 +1062,13 @@ class Win(Adw.ApplicationWindow):
                 lines = open(LOG, errors="replace").readlines()
                 if scope:
                     lines = [l for l in lines if f"[{scope}]" in l]
-                txt = "".join(lines[-200:]) or "Nothing logged yet."
+                shown = lines[-200:]
             except OSError:
-                lines, txt = [], "No launches logged yet."
-            tv.get_buffer().set_text(txt)
+                lines, shown = [], []
+            if shown:
+                fill_log(shown)
+            else:
+                buf.set_text("Nothing logged yet." if os.path.exists(LOG) else "No launches logged yet.")
             show_hints(lines)
 
         header = Adw.HeaderBar()

@@ -227,3 +227,26 @@ def log_hints(lines, current):
             out.append((key, want, title, why))
             seen.add(key)
     return out
+
+# Colors for the Log page. Pure parsing here; the window layer maps each kind to a text color.
+LOG_LINE_RE = re.compile(r"^(\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\] )?(\[[^\]]+\] )?(.*?)(\n?)$", re.S)
+LOG_KINDS = [      # first match wins: (pattern, kind)
+    (r"^EXIT code=0\b", "exit_ok"),
+    (r"^EXIT code=", "exit_err"),
+    (r"^START\b", "info"),
+    (r"^(first run|installed|uninstalled)\b", "ok"),
+    (r"^WARNING\b|\bwarning\b", "warn"),
+    (r"^ALSA lib\b", "dim"),
+    (r"\bpanicked\b|\bfatal\b|\berror\b|\bfailed\b|\bcannot\b|\bdenied\b|not permitted|^Caused by|^note: ", "err"),
+]
+
+def log_line_parts(line):
+    """Split one log line into (timestamp, [name] tag, body, kind, newline); kind is one of exit_ok, exit_err, info, ok, warn, dim,
+    err or '' (plain). Timestamp and tag may be empty: an app's own output has no timestamp."""
+    ts, name, body, nl = LOG_LINE_RE.match(line).groups()
+    kind = ""
+    for pat, k in LOG_KINDS:
+        if re.search(pat, body, re.I):
+            kind = k
+            break
+    return ts or "", name or "", body, kind, nl
