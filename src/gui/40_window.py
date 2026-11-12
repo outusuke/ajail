@@ -287,7 +287,7 @@ class Win(Adw.ApplicationWindow):
                 if remember is not None and remember.get_active():
                     ui_set(f"open_mode.{name}", "run")
                 # Run once always unpacks inside the sandbox: it never mounts the image.
-                subprocess.Popen([SELF, "run-file", "--once", path], start_new_session=True)
+                spawn([SELF, "run-file", "--once", path], "ajail")
             if quit_on_close:
                 self.get_application().quit()
 
@@ -490,12 +490,12 @@ class Win(Adw.ApplicationWindow):
                                      if kind == "root" else
                                      "In your app menu. Kept compressed (experimental) and mounted when the app starts.")
                 launch = Gtk.Button(label="Launch", valign=Gtk.Align.CENTER)
-                launch.connect("clicked", lambda *_: subprocess.Popen([SELF, "run", scope], start_new_session=True))
+                launch.connect("clicked", lambda *_: spawn([SELF, "run", scope], scope))
             else:
                 arow = Adw.ActionRow(title="AppImage file", subtitle=esc(src or "Unknown until the first launch"))
                 launch = Gtk.Button(label="Launch", valign=Gtk.Align.CENTER, sensitive=bool(src and os.path.isfile(src)))
-                launch.connect("clicked", lambda *_: subprocess.Popen(      # run once never mounts
-                    [SELF, "run-file", "--once", src], start_new_session=True))
+                launch.connect("clicked", lambda *_: spawn(      # run once never mounts
+                    [SELF, "run-file", "--once", src], scope))
             stop = Gtk.Button(label="Stop", valign=Gtk.Align.CENTER)
 
             def do_stop(*_):

@@ -1,5 +1,10 @@
 # ======== 30_system: System helpers: distro install hint, app-menu entry, sizes.
 
+def spawn(args, tag):
+    """Start a detached command. Its output goes to the journal under TAG, not under this window's name (org.ajail.Gui)."""
+    cat = shutil.which("systemd-cat")
+    subprocess.Popen(([cat, "-t", tag] if cat else []) + args, start_new_session=True)
+
 def mount_install_cmd():
     """Command that installs squashfuse and fuse3 on this distro, or None if the distro isn't recognised."""
     ids = []
