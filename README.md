@@ -6,6 +6,8 @@ Run AppImages in a [bubblewrap](https://github.com/containers/bubblewrap) sandbo
 - `ajail-gui`: GTK4 + libadwaita permission editor and installer
 - `make-selftest`: builds a test AppImage that reports what the sandbox exposes
 
+![ajail window](docs/screenshot.png)
+
 ## Install
 
 ```bash
