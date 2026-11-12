@@ -1134,6 +1134,14 @@ def read_desktop(root):
             elif DESKTOP_KEEP.match(ln): keep.append(ln)
     return keep, icon
 
+ICON_SIZES = (16, 22, 24, 32, 36, 48, 64, 72, 96, 128, 192, 256, 512)      # the size folders the hicolor theme lists
+SVG_HEAD = 16384        # an SVG may start with a long XML prolog, comments or a doctype before <svg
+
+def icon_size_dir(w):
+    """The hicolor folder for a PNG w pixels wide. The theme only looks in the sizes it lists, so a 100, 300 or 1024 pixel icon put
+    in a folder of its own size is never found and the menu shows a generic icon. It goes in the nearest listed size instead."""
+    return "%dx%d" % ((s := min(ICON_SIZES, key=lambda x: (abs(x - w), -x))), s)
+
 def find_icon(root, icon):
     """Best icon inside the extracted app as (path, extension, size dir), or None."""
     r = glob.escape(root)
@@ -1145,14 +1153,14 @@ def find_icon(root, icon):
     for p in cands:
         try:
             if not os.path.isfile(p) or not inside(root, p) or os.path.getsize(p) > 5_000_000: continue
-            head = open(p, "rb").read(1024)
+            with open(p, "rb") as fh: head = fh.read(SVG_HEAD)
         except OSError:
             continue
-        if b"<svg" in head: cand = ((1, 0), p, "svg", "scalable")
+        if b"<svg" in head.lower(): cand = ((1, 0), p, "svg", "scalable")
         elif head[:8] == b"\x89PNG\r\n\x1a\n" and len(head) >= 24:
-            w = struct.unpack(">I", head[16:20])[0]
-            if not 16 <= w <= 1024: continue
-            cand = ((0, w), p, "png", f"{w}x{w}")
+            w, h = struct.unpack(">II", head[16:24])
+            if not 16 <= max(w, h) <= 8192: continue
+            cand = ((0, max(w, h)), p, "png", icon_size_dir(max(w, h)))
         else: continue
         if best is None or cand[0] > best[0]: best = cand
     return best[1:] if best else None
