@@ -137,5 +137,24 @@ class Completions(unittest.TestCase):
         self.assertEqual(set(re.findall(r"--[a-z][a-z-]*", self.read("_ajail"))), want, "_ajail")
         self.assertEqual({"--" + o for o in re.findall(r"^complete .* -l ([a-z-]+)", self.read("ajail.fish"), re.M)}, want, "ajail.fish")
 
+class ManPage(unittest.TestCase):
+    """ajail.1 documents every command and option ajail really has."""
+    real_commands, real_options = Completions.real_commands, Completions.real_options
+
+    def setUp(self):
+        Completions.setUp(self)
+        self.text = open(os.path.join(os.path.dirname(AJAIL), "ajail.1")).read().replace("\\-", "-")
+
+    def test_every_command_has_an_entry(self):
+        lines = [l for l in self.text.splitlines() if l.startswith(".B ajail")]
+        want = self.real_commands()
+        self.assertIn("install", want); self.assertIn("desktop", want)
+        for c in want:
+            self.assertTrue(any(re.search(rf"(?<![\w-]){re.escape(c)}(?![\w-])", l) for l in lines), f"ajail.1 has no entry for: {c}")
+
+    def test_every_option_is_mentioned(self):
+        for o in self.real_options():
+            self.assertIn(o, self.text, f"ajail.1 does not mention {o}")
+
 if __name__ == "__main__":
     unittest.main()

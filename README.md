@@ -17,9 +17,10 @@ ajail check      # lists what is missing, with the install command for your dist
 ajail on         # optional: send every AppImage through ajail (asks for your password)
 ```
 
-Optional extras, each one line (there is no man page; `ajail help` lists the commands):
+Optional extras, each one line:
 
 ```bash
+sudo install -Dm644 ajail.1 /usr/local/share/man/man1/ajail.1                                       # man ajail
 ajail desktop --install-menu     # ajail-gui in your app menu; --remove-menu undoes it
 sudo install -Dm644 completions/ajail.bash /usr/local/share/bash-completion/completions/ajail       # bash completion
 sudo install -Dm644 completions/_ajail /usr/local/share/zsh/site-functions/_ajail                   # zsh completion

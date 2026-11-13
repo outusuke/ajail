@@ -1,0 +1,255 @@
+.\" SPDX-License-Identifier: GPL-3.0-or-later
+.TH AJAIL 1 "" "ajail" "User Commands"
+.SH NAME
+ajail \- run AppImages in a bubblewrap sandbox
+.SH SYNOPSIS
+.B ajail
+\fIFILE.AppImage\fR [\fIargs\fR]
+.br
+.B ajail run
+[\fB\-\-compat\-env\fR] \fINAME\fR [\fIargs\fR]
+.br
+.B ajail run\-file
+[\fB\-\-once\fR] [\fB\-\-mount\fR] [\fB\-\-compat\-env\fR] \fIFILE\fR [\fIargs\fR]
+.br
+.B ajail install
+\fIFILE.AppImage\fR [\fB\-\-trash\fR] [\fB\-\-mount\fR [\fB\-\-move\fR]]
+.br
+.B ajail uninstall
+\fINAME\fR [\fB\-\-purge\fR] [\fB\-\-discard\-image\fR]
+.br
+.B ajail restore
+\fINAME\fR [\fB\-\-keep\fR] [\fB\-\-to\fR \fIFOLDER\fR]
+.br
+.B ajail list
+.br
+.B ajail stop
+\fINAME\fR
+.br
+.B ajail name
+\fIFILE.AppImage\fR
+.br
+.B ajail preview
+[\fINAME\fR]
+.br
+.B ajail on
+|
+.B off
+|
+.B status
+|
+.B check
+.br
+.B ajail desktop
+\fB\-\-install\-menu\fR | \fB\-\-remove\-menu\fR
+.br
+.B ajail help
+.SH DESCRIPTION
+Run an AppImage with its own private home and its own permissions. Only
+.I /usr
+and a few files in
+.I /etc
+are visible, the environment is rebuilt, and your real home is hidden except for the folders you share.
+Unpacking happens in a separate sandbox with no network and no home. A seccomp filter blocks
+.BR bpf ,
+.BR perf_event_open ,
+.B kexec_load
+and similar calls. Notifications and portals go through
+.BR xdg\-dbus\-proxy (1),
+which allows only the calls the permissions name.
+.PP
+After
+.BR "ajail on" ,
+double\-clicking an AppImage offers Install or Run once. Terminal launches never prompt. Only type 2 AppImages
+work, and ajail refuses to run as root. Files passed as arguments, or through Open With, are shared for that run
+only. The app name is the file name without version and architecture:
+.I Foo\-1.2.3\-x86_64.AppImage
+becomes
+.IR Foo .
+.PP
+Settings are edited with
+.BR ajail\-gui ;
+the files are described under
+.BR PERMISSIONS .
+.SH COMMANDS
+.TP
+.B ajail FILE.AppImage [args]
+Open an AppImage. When started from the file manager it offers Install or Run once; otherwise it runs sandboxed.
+Files in
+.I args
+are shared for that run.
+.TP
+.B ajail run [\-\-compat\-env] NAME [args]
+Run an installed app.
+.B \-\-compat\-env
+passes a short list of graphics and toolkit variables from your session into the sandbox for this run (the
+permission
+.B compat_env=1
+does it every time). It goes before NAME.
+.TP
+.B ajail run\-file [\-\-once] [\-\-mount] [\-\-compat\-env] FILE
+Run an AppImage without offering to install it.
+.B \-\-once
+deletes its unpacked copy on exit and never mounts.
+.B \-\-mount
+mounts the file instead of unpacking it (experimental).
+.TP
+.B ajail install FILE.AppImage [\-\-trash] [\-\-mount [\-\-move]]
+Unpack it and add it to the app menu (name, icon, file types). The file is left where it is.
+.B \-\-trash
+moves it to the Trash.
+.B \-\-mount
+keeps it compressed and mounts it at launch (experimental; needs squashfuse, fuse3 and /dev/fuse); the image is
+read by squashfuse outside the sandbox, so use it only for apps you trust.
+.B \-\-move
+(only with
+.BR \-\-mount )
+moves the file into ajail's folder instead of copying it, and falls back to a copy on a removable or network drive.
+.TP
+.B ajail uninstall NAME [\-\-purge] [\-\-discard\-image]
+Remove the app from the app menu.
+.B \-\-purge
+also moves its data to the Trash. An AppImage that was moved into ajail is not deleted unless you pass
+.BR \-\-discard\-image ;
+use
+.B restore
+to get it back.
+.TP
+.B ajail restore NAME [\-\-keep] [\-\-to FOLDER]
+Undo a compressed install that moved the file: put it back and uninstall.
+.B \-\-keep
+puts a copy back and leaves the app installed.
+.B \-\-to
+picks the folder.
+.TP
+.B ajail list
+Show your apps and which are running.
+.TP
+.B ajail stop NAME
+Stop a running app.
+.TP
+.B ajail name FILE.AppImage
+Show the name ajail uses for this file.
+.TP
+.B ajail preview [NAME]
+Print the bwrap command that would run.
+.TP
+.B ajail on | off | status | check
+.B on
+sends every AppImage through ajail (it registers a binfmt_misc rule and asks for your password);
+.B off
+removes the rule;
+.B status
+shows which it is;
+.B check
+lists what is missing on this machine, with the install command for your distribution.
+.TP
+.B ajail help
+Print the list of commands.
+.TP
+.B ajail desktop \-\-install\-menu
+Add ajail\-gui to your app menu.
+.B \-\-remove\-menu
+takes it out again. It needs ajail\-gui installed as a root\-owned file in
+.IR /usr/local/bin :
+only such a copy is ever started from the menu, so a program running as you cannot replace it.
+.SH PERMISSIONS
+Plain
+.I key=value
+files: the defaults for every app, and one file per app that overrides them. List entries add up, except
+.BR xdg .
+Spaces around
+.B =
+are fine and
+.B #
+starts a comment. A line ajail cannot use (unknown key, a value other than 0 or 1, no
+.BR = )
+is skipped with a warning in the terminal and in the log, never silently.
+.PP
+Switches (0 or 1, default in brackets):
+.BR net " (1),"
+.BR net_private " (0, needs pasta),"
+.BR sound " (1, includes the microphone),"
+.BR gpu " (1),"
+.BR gpu_render_only " (0),"
+.BR x11 " (0, weaker isolation),"
+.BR portals " (1),"
+.BR portal_screenshot " (1),"
+.BR portal_screencast " (1),"
+.BR tray " (0),"
+.BR camera " (0),"
+.BR input " (0),"
+.BR compat_env " (0),"
+.BR ssh_agent " (0),"
+.BR printing " (0),"
+.BR theme " (1),"
+.BR userns " (1; 0 needs bubblewrap 0.8+),"
+.BR tmp_home " (0, private home erased on exit),"
+.BR privacy " (0, minimal /etc/passwd, /etc/group and /etc/hosts and the hostname ajail)"
+and
+.BR harden " (0, also blocks io_uring_*, userfaultfd, process_vm_* and kcmp; may break apps)."
+.PP
+Limits (0 means none; need
+.BR "systemd\-run \-\-user" ):
+.B mem_max
+(MB),
+.B cpu_max
+(percent of one core) and
+.BR tasks_max .
+.PP
+List keys:
+.B allow=PATH
+(read and write),
+.B allow_ro=PATH
+(read only),
+.B xdg=NAME[:ro|:none]
+(download, documents, pictures, music, videos or desktop),
+.B env=VAR=value,
+.B talk=NAME
+(an extra D\-Bus name) and
+.B portal=NAME
+(opt in to Location, GlobalShortcuts, RemoteDesktop, InputCapture, Wallpaper, DynamicLauncher or Secret; needs
+.BR portals=1 ;
+.B portal=\-NAME
+in an app file turns one off again). Shared paths must be non\-hidden items in your home or under
+.IR /mnt ,
+.I /media
+or
+.IR /run/media/$USER .
+.SH FILES
+.TP
+.I ~/.config/ajail/default.conf
+Settings for every app.
+.TP
+.I ~/.config/ajail/apps/NAME.conf
+Settings for one app; they override the default.
+.TP
+.I ~/.config/ajail/ui.conf
+Choices made in ajail\-gui (open mode, install and disk\-space options).
+.TP
+.I ~/.appimage\-homes/NAME
+The private home of NAME.
+.TP
+.I ~/.local/share/ajail/apps/NAME
+An installed app.
+.TP
+.I ~/.local/state/ajail/ajail.log
+The log of every run.
+.TP
+.I ~/.local/share/applications/org.ajail.Gui.desktop
+The app menu entry for ajail\-gui, made by
+.BR "ajail desktop \-\-install\-menu" .
+.SH EXIT STATUS
+The app's own status, or 128 plus the signal number if a signal ended it. ajail itself exits with 1 when it cannot
+start the app (bad option, missing bubblewrap, no Wayland session, running as root).
+.SH LIMITS
+Only type 2 AppImages work. The private home is tied to the app's Name=, so a different app with the same file name
+is refused instead of inheriting the first one's data. Several defaults (net, sound, gpu, userns) favour apps that
+work out of the box; for an app you do not trust set
+.BR "userns=0 harden=1 net=0 sound=0" .
+.SH SEE ALSO
+.BR bwrap (1),
+.BR xdg\-dbus\-proxy (1),
+.BR systemd\-run (1)
+.SH LICENSE
+GPL\-3.0\-or\-later.
