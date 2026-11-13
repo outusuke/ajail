@@ -26,12 +26,12 @@ def mount_install_cmd():
 
 MENU_DESKTOP = HOME + "/.local/share/applications/org.ajail.Gui.desktop"
 MENU_ICON = HOME + "/.local/share/icons/hicolor/scalable/apps/org.ajail.Gui.svg"
-MENU_ENTRY = f"""[Desktop Entry]
+MENU_ENTRY = """[Desktop Entry]
 Type=Application
 Name=AppImage Jail
 GenericName=AppImage Sandbox Manager
 Comment=Install sandboxed AppImages and edit their permissions
-Exec={os.path.realpath(sys.argv[0]) if os.path.basename(sys.argv[0]) == "ajail-gui" else "/usr/local/bin/ajail-gui"}
+Exec=@EXEC@
 Icon=org.ajail.Gui
 Terminal=false
 StartupNotify=true
@@ -49,12 +49,27 @@ MENU_SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" v
 def menu_entry_exists():
     return os.path.isfile(MENU_DESKTOP)
 
+def menu_exec():
+    """The installed ajail-gui the launcher should start. Only a root-owned copy that nobody else can write to counts, so a
+    program running as you can't swap the launcher's target for its own code; a copy in your home or the download folder
+    never does."""
+    for d in ("/usr/local/bin", "/usr/bin"):
+        path = d + "/ajail-gui"
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        if st.st_uid == 0 and not st.st_mode & 0o022:
+            return path
+    raise OSError(errno.ENOENT, "Install ajail-gui first: sudo install -m 755 -o root -g root ajail-gui /usr/local/bin/")
+
 def set_menu_entry(on):
-    """Add or remove AppImage Jail's own launcher in the user's app menu (no root needed)."""
+    """Add or remove AppImage Jail's own launcher in the user's app menu (the launcher file needs no root)."""
     if on:
+        entry = MENU_ENTRY.replace("@EXEC@", menu_exec())
         os.makedirs(os.path.dirname(MENU_DESKTOP), exist_ok=True)
         os.makedirs(os.path.dirname(MENU_ICON), exist_ok=True)
-        for path, text in ((MENU_ICON, MENU_SVG), (MENU_DESKTOP, MENU_ENTRY)):
+        for path, text in ((MENU_ICON, MENU_SVG), (MENU_DESKTOP, entry)):
             with open(path + ".tmp", "w") as f:
                 f.write(text)
             os.replace(path + ".tmp", path)

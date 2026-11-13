@@ -3,7 +3,7 @@
 # ajail-gui - GTK4 + libadwaita front-end for ajail (a Flatseal-style permission editor)
 # ======== 00_config: Configuration: paths, permission defaults and labels, UI text tables. Data only.
 
-import json, os, pwd, re, signal, shutil, subprocess, sys, threading
+import errno, json, os, pwd, re, signal, shutil, subprocess, sys, threading
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")

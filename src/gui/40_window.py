@@ -92,6 +92,9 @@ class Win(Adw.ApplicationWindow):
                 self.toast("Added to the app menu" if r.get_active() else "Removed from the app menu")
             except OSError as e:
                 self.toast(f"Could not change it: {e.strerror or e}")
+                self.menu.handler_block_by_func(on_menu)
+                self.menu.set_active(menu_entry_exists())
+                self.menu.handler_unblock_by_func(on_menu)
 
         self.menu.connect("notify::active", on_menu)
         g.add(self.menu)
