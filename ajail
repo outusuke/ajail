@@ -106,13 +106,26 @@ def split_opts(args, allowed, usage):
         else: rest.append(x)
     return opts, rest
 
-def log(msg, name=None):
+def log_write(f, text):
+    """Append TEXT to the open log file F while holding the lock, so another ajail trimming the log can't cut in half a line."""
+    fcntl.flock(f, fcntl.LOCK_EX)
     try:
-        os.makedirs(STATE, exist_ok=True)
-        if os.path.exists(LOG) and os.path.getsize(LOG) > 1_000_000:
-            tail = open(LOG, errors="replace").readlines()[-500:]
-            open(LOG, "w").writelines(tail)
-        with open(LOG, "a") as f:
+        f.write(text); f.flush()
+    finally:
+        fcntl.flock(f, fcntl.LOCK_UN)
+
+def log(msg, name=None):
+    """Add a line to the log. Only you can read it (it holds what apps print); several ajails share it, so trimming and
+    appending happen under the lock and in place (a replaced file would leave the others writing to the old one)."""
+    try:
+        os.makedirs(STATE, mode=0o700, exist_ok=True)
+        fd = os.open(LOG, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "a+", errors="replace") as f:
+            os.fchmod(fd, 0o600)
+            fcntl.flock(f, fcntl.LOCK_EX)
+            if os.fstat(fd).st_size > 1_000_000:
+                f.seek(0); tail = f.readlines()[-500:]
+                f.truncate(0); f.writelines(tail)
             f.write(f"[{time.strftime('%F %T')}] " + (f"[{name}] " if name else "") + f"{msg}\n")
     except OSError:
         pass
@@ -512,12 +525,15 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
     a = ["bwrap", "--unshare-all", "--die-with-parent", "--new-session", "--clearenv"]
     if not cfg["userns"]:
         # --disable-userns needs an explicit --unshare-user ("--unshare-all" only tries one). If a user namespace can't be
-        # made, the app does not start: asked for stricter isolation, it never silently gets less.
+        # made, the app does not start: asked for stricter isolation, it never silently gets less. The same goes for an
+        # old bubblewrap that can't do it: the app is not started with less than was asked for.
         if bwrap_has("--disable-userns"): a += ["--unshare-user", "--disable-userns"]
-        else: warn("this bubblewrap is too old for --disable-userns; ignoring", name)
+        else: die("this bubblewrap is too old for --disable-userns (needs 0.8+), so 'Allow the app's own sandbox = off' can't "
+                  "be honored. Update bubblewrap, or turn that option back on for this app (userns=1).")
     if cfg["privacy"]:
         if bwrap_has("--hostname"): a += ["--hostname", "ajail"]
-        else: warn("this bubblewrap is too old for --hostname; the computer name stays visible", name)
+        else: die("this bubblewrap is too old for --hostname, so 'Hide personal details' can't hide the computer name. "
+                  "Update bubblewrap, or turn that option off for this app (privacy=0).")
     if private_net(cfg):
         a += ["--uid", str(os.getuid()), "--gid", str(os.getgid())]     # keep your own ids inside pasta's namespace
     if cfg["net"]: a.append("--share-net")
@@ -1097,9 +1113,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
                     for line in lines:
                         if n < LOG_RUN_MAX:
                             n += len(line)
-                            lf.write(f"[{name}] {line}")
-                            if n >= LOG_RUN_MAX: lf.write(f"[{name}] (more output not logged)\n")
-                            lf.flush()
+                            log_write(lf, f"[{name}] {line}" + (f"[{name}] (more output not logged)\n" if n >= LOG_RUN_MAX else ""))
                     if not data: break
         except Exception:
             pass

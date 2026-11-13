@@ -340,12 +340,15 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
     a = ["bwrap", "--unshare-all", "--die-with-parent", "--new-session", "--clearenv"]
     if not cfg["userns"]:
         # --disable-userns needs an explicit --unshare-user ("--unshare-all" only tries one). If a user namespace can't be
-        # made, the app does not start: asked for stricter isolation, it never silently gets less.
+        # made, the app does not start: asked for stricter isolation, it never silently gets less. The same goes for an
+        # old bubblewrap that can't do it: the app is not started with less than was asked for.
         if bwrap_has("--disable-userns"): a += ["--unshare-user", "--disable-userns"]
-        else: warn("this bubblewrap is too old for --disable-userns; ignoring", name)
+        else: die("this bubblewrap is too old for --disable-userns (needs 0.8+), so 'Allow the app's own sandbox = off' can't "
+                  "be honored. Update bubblewrap, or turn that option back on for this app (userns=1).")
     if cfg["privacy"]:
         if bwrap_has("--hostname"): a += ["--hostname", "ajail"]
-        else: warn("this bubblewrap is too old for --hostname; the computer name stays visible", name)
+        else: die("this bubblewrap is too old for --hostname, so 'Hide personal details' can't hide the computer name. "
+                  "Update bubblewrap, or turn that option off for this app (privacy=0).")
     if private_net(cfg):
         a += ["--uid", str(os.getuid()), "--gid", str(os.getgid())]     # keep your own ids inside pasta's namespace
     if cfg["net"]: a.append("--share-net")

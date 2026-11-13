@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Tests for ajail's settings parser: whitespace, comments and warnings about lines it can't use.
-import ast, contextlib, io, os, re, tempfile, unittest
+import ast, contextlib, io, os, re, stat, tempfile, threading, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -121,6 +121,52 @@ class Docs(unittest.TestCase):
         self.assertIn("Defaults that favor compatibility", r)
         self.assertIn("`userns`", r); self.assertIn("`harden`", r)
         self.assertEqual(A["DEFAULTS"]["userns"], 1); self.assertEqual(A["DEFAULTS"]["harden"], 0)   # the README says so
+
+class LogFile(unittest.TestCase):
+    """The log holds what apps print: private to you, trimmed in place, and never left with half a line."""
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.keep = {k: A[k] for k in ("LOG", "STATE")}
+        A["STATE"] = f"{self.d}/state"; A["LOG"] = f"{self.d}/state/ajail.log"
+    def tearDown(self): A.update(self.keep)
+
+    def test_log_and_its_folder_are_private(self):
+        A["log"]("hello", "app")
+        self.assertEqual(stat.S_IMODE(os.stat(A["LOG"]).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(A["STATE"]).st_mode), 0o700)
+        self.assertIn("[app] hello\n", open(A["LOG"]).read())
+
+    def test_an_old_world_readable_log_is_made_private(self):
+        os.makedirs(A["STATE"]); open(A["LOG"], "w").write("old\n"); os.chmod(A["LOG"], 0o644)
+        A["log"]("x")
+        self.assertEqual(stat.S_IMODE(os.stat(A["LOG"]).st_mode), 0o600)
+        self.assertTrue(open(A["LOG"]).read().startswith("old\n"))
+
+    def test_big_log_is_trimmed_in_place(self):
+        os.makedirs(A["STATE"])
+        open(A["LOG"], "w").write("".join(f"[old] line {i} " + "x" * 90 + "\n" for i in range(12000)))
+        ino = os.stat(A["LOG"]).st_ino
+        A["log"]("fresh")
+        lines = open(A["LOG"]).read().splitlines()
+        self.assertEqual(len(lines), 501); self.assertTrue(lines[-1].endswith("fresh"))
+        self.assertIn("line 11999 ", lines[-2]); self.assertEqual(os.stat(A["LOG"]).st_ino, ino)    # same file, so other writers keep going
+
+    def test_concurrent_writers_never_leave_a_broken_line(self):
+        os.makedirs(A["STATE"])
+        open(A["LOG"], "w").write("".join(f"[pre] {i} " + "y" * 90 + "\n" for i in range(11000)))    # over the trim limit
+        def writer(k):
+            for i in range(60):
+                A["log"](f"w{k} {i} " + "z" * 200, f"app{k}")
+        def streamer():                                       # like the app output that launch() copies into the log
+            with open(A["LOG"], "a") as lf:
+                for i in range(60): A["log_write"](lf, f"[tee] {i} " + "t" * 300 + "\n")
+        ts = [threading.Thread(target=writer, args=(k,)) for k in range(6)] + [threading.Thread(target=streamer)]
+        for t in ts: t.start()
+        for t in ts: t.join()
+        text = open(A["LOG"]).read()
+        self.assertTrue(text.endswith("\n"))
+        for l in text.splitlines():
+            self.assertRegex(l, r"^(\[pre\] \d+ y{90}|\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\] \[app\d\] w\d \d+ z{200}|\[tee\] \d+ t{300})$")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

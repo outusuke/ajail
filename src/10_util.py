@@ -36,13 +36,26 @@ def split_opts(args, allowed, usage):
         else: rest.append(x)
     return opts, rest
 
-def log(msg, name=None):
+def log_write(f, text):
+    """Append TEXT to the open log file F while holding the lock, so another ajail trimming the log can't cut in half a line."""
+    fcntl.flock(f, fcntl.LOCK_EX)
     try:
-        os.makedirs(STATE, exist_ok=True)
-        if os.path.exists(LOG) and os.path.getsize(LOG) > 1_000_000:
-            tail = open(LOG, errors="replace").readlines()[-500:]
-            open(LOG, "w").writelines(tail)
-        with open(LOG, "a") as f:
+        f.write(text); f.flush()
+    finally:
+        fcntl.flock(f, fcntl.LOCK_UN)
+
+def log(msg, name=None):
+    """Add a line to the log. Only you can read it (it holds what apps print); several ajails share it, so trimming and
+    appending happen under the lock and in place (a replaced file would leave the others writing to the old one)."""
+    try:
+        os.makedirs(STATE, mode=0o700, exist_ok=True)
+        fd = os.open(LOG, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "a+", errors="replace") as f:
+            os.fchmod(fd, 0o600)
+            fcntl.flock(f, fcntl.LOCK_EX)
+            if os.fstat(fd).st_size > 1_000_000:
+                f.seek(0); tail = f.readlines()[-500:]
+                f.truncate(0); f.writelines(tail)
             f.write(f"[{time.strftime('%F %T')}] " + (f"[{name}] " if name else "") + f"{msg}\n")
     except OSError:
         pass

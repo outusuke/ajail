@@ -100,9 +100,9 @@ Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.confi
 | `ssh_agent` | 0 | Your SSH agent; the app can sign as you |
 | `printing` | 0 | CUPS socket |
 | `theme` | 1 | Read-only fonts, icons, themes |
-| `userns` | 1 | App may create its own sandbox (Electron/Chromium need it); `0` needs bubblewrap 0.8+ |
+| `userns` | 1 | App may create its own sandbox (Electron/Chromium need it); `0` needs bubblewrap 0.8+ (with an older one the app is refused, not run without it) |
 | `tmp_home` | 0 | Private home is erased on exit |
-| `privacy` | 0 | Minimal `/etc/passwd`, `/etc/group`, `/etc/hosts`; hostname `ajail` |
+| `privacy` | 0 | Minimal `/etc/passwd`, `/etc/group`, `/etc/hosts`; hostname `ajail` (needs a bubblewrap with `--hostname`, else the app is refused) |
 | `harden` | 0 | Also blocks `io_uring_*`, `userfaultfd`, `process_vm_*`, `kcmp`. May break apps |
 
 ### Defaults that favor compatibility

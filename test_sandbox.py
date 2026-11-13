@@ -3,7 +3,7 @@
 """Properties of the bwrap command and of the settings parser that must hold for every configuration.
 They check what the sandbox does NOT get, so a change in src/20_core.py that opens something up fails here.
 No sandbox or desktop needed."""
-import itertools, os, random, string, tempfile, unittest, unittest.mock
+import contextlib, io, itertools, os, random, string, tempfile, unittest, unittest.mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -170,6 +170,37 @@ class ParserFuzz(unittest.TestCase):
     def test_wide_dbus_wildcards_are_refused_narrow_ones_kept(self):
         d = self.parse("talk=org.example.App.*\ntalk=org.example.App\ntalk=*\ntalk=org..x\n")
         self.assertEqual(d["talk"], ["org.example.App.*", "org.example.App"])
+
+class OldBubblewrapFailsClosed(unittest.TestCase):
+    """Isolation the user asked for is never silently dropped because bubblewrap is too old to do it."""
+    def build_without(self, missing, c):
+        err = io.StringIO()
+        with unittest.mock.patch.dict(os.environ, SESSION, clear=True), \
+             unittest.mock.patch.object(A["os"].path, "exists", lambda p: True), \
+             unittest.mock.patch.dict(A["bwrap_args"].__globals__, {"bwrap_has": lambda o: o != missing,
+                                                                   "wayland_path": lambda: "/run/user/1000/wayland-0"}), \
+             contextlib.redirect_stderr(err):
+            try: return A["bwrap_args"]("t", "/fake-app-root", c, ["/app/AppRun"]), err.getvalue()
+            except SystemExit as e: return e, err.getvalue()
+
+    def test_userns_off_without_disable_userns_refuses(self):
+        r, err = self.build_without("--disable-userns", cfg(userns=0))
+        self.assertIsInstance(r, SystemExit); self.assertNotEqual(r.code, 0)
+        self.assertIn("--disable-userns", err); self.assertIn("userns=1", err)
+
+    def test_privacy_without_hostname_refuses(self):
+        r, err = self.build_without("--hostname", cfg(privacy=1))
+        self.assertIsInstance(r, SystemExit); self.assertNotEqual(r.code, 0)
+        self.assertIn("--hostname", err); self.assertIn("privacy=0", err)
+
+    def test_nothing_is_refused_that_was_not_asked_for(self):     # the defaults still run on an old bubblewrap
+        for missing in ("--disable-userns", "--hostname"):
+            r, err = self.build_without(missing, cfg())
+            self.assertIsInstance(r, list, missing); self.assertEqual(err, "")
+
+    def test_supported_options_are_used(self):
+        a = build(cfg(userns=0, privacy=1))
+        self.assertIn("--disable-userns", a); self.assertIn("--hostname", a)
 
 if __name__ == "__main__":
     unittest.main()
