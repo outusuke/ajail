@@ -284,9 +284,7 @@ def cmd_stop(args):
     name = clean(args[0])
     pids = running(name)
     if not pids: die(f"{name} is not running")
-    for pid in pids:
-        try: os.kill(int(pid), signal.SIGTERM)
-        except OSError: pass
+    stop_app(name)
     print(f"Stopping {name}")
 
 def cmd_dump(arg):

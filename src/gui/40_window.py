@@ -499,11 +499,7 @@ class Win(Adw.ApplicationWindow):
             stop = Gtk.Button(label="Stop", valign=Gtk.Align.CENTER)
 
             def do_stop(*_):
-                for pid in running_pids(scope):
-                    try:
-                        os.kill(pid, signal.SIGTERM)
-                    except OSError:
-                        pass
+                stop_app(scope)
                 self.toast("Stopping…")
 
             stop.connect("clicked", do_stop)

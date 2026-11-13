@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Command-line option checks: an unknown --option must be an error, never silently ignored.
 No sandbox needed; every case fails before anything is read or written."""
-import os, subprocess, sys, unittest
+import ast, os, re, subprocess, sys, unittest
 
 AJAIL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ajail")
 
@@ -51,6 +51,43 @@ class AppList(unittest.TestCase):
             os.makedirs(f"{t}/homes/Baz")
             with unittest.mock.patch.dict(ns, {"CONF": f"{t}/conf", "HOMES": f"{t}/homes", "INSTALLED": f"{t}/installed"}):
                 self.assertEqual(ns["app_list"](), ["Baz", "Foo"])
+
+class Completions(unittest.TestCase):
+    """The shell completions list the commands and options ajail really has, no more and no fewer."""
+    def setUp(self):
+        self.tree = ast.parse(open(AJAIL).read())
+        self.dir = os.path.join(os.path.dirname(AJAIL), "completions")
+
+    def real_commands(self):
+        main = next(n for n in self.tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+        out = set()
+        for c in ast.walk(main):                                    # every  c == "name"  /  c in ("a", "b")  in main()
+            if isinstance(c, ast.Compare) and isinstance(c.left, ast.Name) and c.left.id == "c":
+                out |= {x.value for x in ast.walk(c.comparators[0]) if isinstance(x, ast.Constant) and isinstance(x.value, str)}
+        return out - {"dump", "-h", "--help"}                      # dump is only for ajail-gui
+
+    def real_options(self):
+        help_ = next(ast.literal_eval(n.value) for n in self.tree.body
+                     if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "HELP")
+        return set(re.findall(r"--[a-z][a-z-]*", help_))
+
+    def read(self, name): return open(os.path.join(self.dir, name)).read()
+
+    def test_command_lists(self):
+        want = self.real_commands()
+        self.assertIn("install", want); self.assertIn("run-file", want)      # the scan itself found something
+        for name, rx in (("ajail.bash", r'compgen -W "(on off[^"]*)"'), ("_ajail", r"cmds=\(([^)]*)\)"),
+                         ("ajail.fish", r'-a "(on off[^"]*)"')):
+            m = re.search(rx, self.read(name))
+            self.assertTrue(m, f"{name}: no command list found")
+            self.assertEqual(set(m.group(1).split()), want, name)
+
+    def test_options(self):
+        want = self.real_options()
+        self.assertIn("--compat-env", want); self.assertIn("--discard-image", want)
+        self.assertEqual(set(re.findall(r"--[a-z][a-z-]*", self.read("ajail.bash"))), want, "ajail.bash")
+        self.assertEqual(set(re.findall(r"--[a-z][a-z-]*", self.read("_ajail"))), want, "_ajail")
+        self.assertEqual({"--" + o for o in re.findall(r"^complete .* -l ([a-z-]+)", self.read("ajail.fish"), re.M)}, want, "ajail.fish")
 
 if __name__ == "__main__":
     unittest.main()

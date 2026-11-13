@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Text that comes from an AppImage must not reach your terminal with control characters (OSC 52 clipboard writes,
 # title reports and similar). These tests feed hostile text through the paths that print it.
-import contextlib, io, os, socket, subprocess, sys, tempfile, types, unittest
+import contextlib, io, os, signal, socket, subprocess, sys, tempfile, types, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -158,8 +158,8 @@ class PidFiles(unittest.TestCase):
         self.pid = str(self.p.pid)
         import ast
         tree = ast.parse(open(f"{HERE}/ajail-gui").read())
-        body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("live_ajail", "proc_start", "pid_app", "running_pids")]
-        self.G = {"os": os, "RUNNING": self.d}
+        body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("live_ajail", "proc_start", "pid_app", "running_pids", "stop_app")]
+        self.G = {"os": os, "signal": signal, "RUNNING": self.d}
         exec(compile(ast.Module(body, []), "ajail-gui", "exec"), self.G)
     def tearDown(self):
         A.update(self.keep); self.p.kill(); self.p.wait()
@@ -192,6 +192,40 @@ class PidFiles(unittest.TestCase):
             self.assertEqual(A["running"]("Foo"), [])
         finally:
             p.kill(); p.wait()
+
+    def test_stop_signals_the_process_that_wrote_the_pid_file(self):
+        self.write(f"Foo\n{A['proc_start'](self.pid)}")
+        self.assertEqual(A["stop_app"]("Foo"), 1)
+        self.assertEqual(self.p.wait(5), -signal.SIGTERM)
+
+    def test_stop_leaves_a_reused_pid_alone(self):
+        """The list of PIDs is out of date: the number now belongs to another process (other start time)."""
+        self.write(f"Foo\n{int(A['proc_start'](self.pid)) + 1}")
+        keep = A["running"]; A["running"] = lambda n: [self.pid]
+        self.G["running_pids"] = lambda n: [int(self.pid)]
+        try:
+            self.assertEqual(A["stop_app"]("Foo"), 0)
+            self.G["stop_app"]("Foo")
+        finally:
+            A["running"] = keep
+        self.assertIsNone(self.p.poll())                         # still alive: nobody sent it anything
+
+    def test_gui_stop_signals_the_right_process(self):
+        self.write(f"Foo\n{A['proc_start'](self.pid)}")
+        self.G["stop_app"]("Foo")
+        self.assertEqual(self.p.wait(5), -signal.SIGTERM)
+
+    def test_stop_commands_use_stop_app(self):
+        calls, keep = [], {k: A[k] for k in ("running", "stop_app")}
+        A["running"] = lambda n: ["1"]; A["stop_app"] = lambda n: calls.append(n) or 1
+        try:
+            with contextlib.redirect_stdout(io.StringIO()): A["cmd_stop"](["Foo"])
+        finally:
+            A.update(keep)
+        self.assertEqual(calls, ["Foo"])
+        gui = open(f"{HERE}/ajail-gui").read()
+        self.assertIn("stop_app(scope)", gui)
+        self.assertEqual(gui.count("os.kill("), 1)               # only the fallback inside stop_app itself
 
     def test_launch_writes_name_and_start_time(self):
         d = tempfile.mkdtemp()

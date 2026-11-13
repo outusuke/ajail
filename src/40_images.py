@@ -154,3 +154,26 @@ def running(name):
         return [f for f in os.listdir(RUNNING) if f.isdigit() and pid_app(f) == name]
     except OSError:
         return []
+
+def stop_app(name):
+    """SIGTERM every running process of the app NAME; returns how many were signalled. A PID can be reused between
+    listing the processes and signalling one, so each PID is first pinned with a pidfd and only then checked against
+    its pid file: the signal goes to the process that was checked, never to a newcomer that took the number."""
+    sent = 0
+    use_fd = hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal")
+    for pid in [int(p) for p in running(name)]:
+        fd = None
+        try:
+            if use_fd:
+                try: fd = os.pidfd_open(pid)
+                except ProcessLookupError: continue
+                except OSError: pass                     # no pidfd on this kernel: plain kill below
+            if pid_app(pid) != name: continue
+            if fd is None: os.kill(pid, signal.SIGTERM)
+            else: signal.pidfd_send_signal(fd, signal.SIGTERM)
+            sent += 1
+        except OSError:
+            pass
+        finally:
+            if fd is not None: os.close(fd)
+    return sent
