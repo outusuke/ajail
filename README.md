@@ -17,7 +17,18 @@ ajail check      # lists what is missing, with the install command for your dist
 ajail on         # optional: send every AppImage through ajail (asks for your password)
 ```
 
-Optional shell completion (bash, zsh, fish) is in `completions/`; see the comments at the top of each file for where to put it.
+Optional extras, each one line (there is no man page; `ajail help` lists the commands):
+
+```bash
+ajail desktop --install-menu     # ajail-gui in your app menu; --remove-menu undoes it
+sudo install -Dm644 completions/ajail.bash /usr/local/share/bash-completion/completions/ajail       # bash completion
+sudo install -Dm644 completions/_ajail /usr/local/share/zsh/site-functions/_ajail                   # zsh completion
+sudo install -Dm644 completions/ajail.fish /usr/local/share/fish/vendor_completions.d/ajail.fish    # fish completion
+```
+
+Open a new shell for the completion to load. If your zsh doesn't find `_ajail`, put it in a folder on your `$fpath` and run `compinit`; the comment at the top of each completion file says how, also for a per-user install.
+
+The app menu entry needs `ajail-gui` installed in `/usr/local/bin` as above: only a root-owned copy is used, so a program running as you can't replace what the menu starts. The "Show AppImage Jail in the app menu" switch in the window does the same as the command.
 
 `ajail` must be at `/usr/local/bin/ajail`, owned by root. Debian/Ubuntu and Arch use the same package names for the core tools.
 
