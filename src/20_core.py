@@ -142,6 +142,7 @@ def seccomp_file(harden=False):
            (0x06, 0, 0, deny),                 # other ABI (32-bit/x32): deny
            (0x20, 0, 0, 0)]                    # load syscall number
     n = len(nrs)
+    if n > 250: raise ValueError("too many blocked system calls: a BPF jump offset is 8 bits")
     # x32 calls share the x86_64 audit arch and only differ by bit 30 of the number: deny them all (skips the list + allow)
     ins += [(0x35, n + 1, 0, 0x40000000)]                       # number >= 0x40000000: jump to deny
     ins += [(0x15, n - i, 0, nr) for i, nr in enumerate(nrs)]   # listed syscall: jump to deny
@@ -235,8 +236,11 @@ def stop_bus(b):
     proc, r, sock = b
     try: os.close(r)
     except OSError: pass
-    try: proc.terminate(); proc.wait(2)
-    except Exception: pass
+    try:
+        proc.terminate()
+        try: proc.wait(2)
+        except subprocess.TimeoutExpired: proc.kill(); proc.wait(2)       # a stuck proxy must not outlive us
+    except (OSError, subprocess.SubprocessError): pass
     try: os.unlink(sock)
     except OSError: pass
 

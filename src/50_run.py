@@ -86,16 +86,19 @@ def launch(name, root, cfg, extra, source=None, once=False):
     lim = ",".join(f"{k}={cfg[k]}" for k in NUM if cfg[k])
     log(f"START allow=[{on}] limits=[{lim}] seccomp={'on' if sec else 'off'} dbus={'on' if bus else 'off'}", name)
     start = time.time()
+    stopped, child = [False], [None]              # stopped: ended by a signal (ajail stop, Ctrl-C, logout): not a failed start
+    def stop(*_):
+        stopped[0] = True
+        if child[0]: child[0].terminate()
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):      # before the child exists, so no signal is missed
+        signal.signal(s, stop)
     tty = sys.stdout.isatty()                     # to a terminal, stdout is filtered too; to a pipe or file it stays untouched
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE if tty else None, stderr=subprocess.PIPE, text=True, errors="replace",
                          pass_fds=[sec.fileno()] if sec and not priv else ())
+    child[0] = p
+    if stopped[0]: p.terminate()                  # a signal that came while it was starting
     pidfile = f"{RUNNING}/{os.getpid()}"
     open(pidfile, "w").write(f"{name}\n{proc_start(os.getpid()) or ''}")        # the start time tells this process from a later one with the same PID
-    stopped = [False]                             # ended by a signal (ajail stop, Ctrl-C, logout): not a failed start
-    def stop(*_):
-        stopped[0] = True; p.terminate()
-    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(s, stop)
     def tee():
         lf = open_log()                           # None when the log can't be opened: the app's output still reaches the terminal
         n = 0                                     # a chatty app must not fill the disk: cap what one run adds to the log
@@ -106,7 +109,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
                 data = os.read(p.stderr.fileno(), 4096)
                 text = CTRL.sub("", dec.decode(data, final=not data))     # an app must not inject terminal escape sequences (OSC 52 etc.)
                 try: sys.stderr.write(text); sys.stderr.flush()
-                except Exception: pass
+                except (OSError, ValueError): pass
                 lines = (pend + text).split("\n"); pend = lines.pop()
                 lines = [x + "\n" for x in lines]
                 while len(pend) > LOG_LINE_MAX: lines.append(pend[:LOG_LINE_MAX] + "\n"); pend = pend[LOG_LINE_MAX:]
@@ -127,7 +130,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
                 data = os.read(p.stdout.fileno(), 4096)
                 text = dec.decode(data, final=not data)
                 try: sys.stdout.write(CTRL.sub("", text)); sys.stdout.flush()
-                except Exception: pass
+                except (OSError, ValueError): pass
                 if not data: break
         except Exception:
             pass

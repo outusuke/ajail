@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Tests for the "compat_env" option: which variables reach the sandbox, and that nothing else ever does.
-import os, re, shlex, subprocess, sys, tempfile, unittest, unittest.mock
+import os, shlex, tempfile, unittest, unittest.mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
