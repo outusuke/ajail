@@ -52,6 +52,54 @@ class AppList(unittest.TestCase):
             with unittest.mock.patch.dict(ns, {"CONF": f"{t}/conf", "HOMES": f"{t}/homes", "INSTALLED": f"{t}/installed"}):
                 self.assertEqual(ns["app_list"](), ["Baz", "Foo"])
 
+class DesktopMenu(unittest.TestCase):
+    """ajail desktop --install-menu only ever starts a root-owned ajail-gui; --remove-menu needs no ajail-gui at all."""
+    def setUp(self):
+        import tempfile, unittest.mock
+        self.mock = unittest.mock
+        self.ns = {"__name__": "under_test"}
+        exec(compile(open(AJAIL).read().rstrip()[:-len("main()")], "ajail", "exec"), self.ns)
+        self.t = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, self.t, True)
+        self.ns["HOME"] = self.t
+
+    def call(self, *args):
+        with unittest.mock.patch("sys.stdout", new=__import__("io").StringIO()) as out, \
+             unittest.mock.patch("sys.stderr", new=__import__("io").StringIO()) as err:
+            try: self.ns["cmd_desktop"](list(args)); code = None
+            except SystemExit as e: code = e.code
+        return code, out.getvalue(), err.getvalue()
+
+    def stat_as(self, uid, mode):
+        real = os.stat
+        def stat(p, *a, **k):
+            return os.stat_result((mode, 0, 0, 1, uid, uid, 0, 0, 0, 0)) if str(p).endswith("/ajail-gui") else real(p, *a, **k)
+        return stat
+
+    def test_only_the_two_options_are_accepted(self):
+        for args in ((), ("--install",), ("--install-menu", "x"), ("--install-opener",)):
+            code, _, err = self.call(*args)
+            self.assertNotEqual(code, 0, args); self.assertIn("usage: ajail desktop", err)
+
+    def test_remove_takes_out_the_launcher_and_icon(self):
+        apps = f"{self.t}/.local/share/applications"; icons = f"{self.t}/.local/share/icons/hicolor/scalable/apps"
+        self.assertIn("nothing to remove", self.call("--remove-menu")[1])
+        os.makedirs(apps); os.makedirs(icons)
+        for f in (f"{apps}/org.ajail.Gui.desktop", f"{icons}/org.ajail.Gui.svg", f"{apps}/other.desktop"): open(f, "w").close()
+        with self.mock.patch.dict(os.environ, {"PATH": "/nonexistent"}):
+            self.assertIn("removed", self.call("--remove-menu")[1])
+        self.assertEqual(os.listdir(apps), ["other.desktop"]); self.assertEqual(os.listdir(icons), [])
+
+    def test_install_needs_a_root_owned_copy_nobody_else_can_write(self):
+        for uid, mode in ((1000, 0o100755), (0, 0o100775), (0, 0o100757)):
+            with self.mock.patch("os.stat", self.stat_as(uid, mode)), self.mock.patch.object(self.ns["subprocess"], "run") as run:
+                code, _, err = self.call("--install-menu")
+            self.assertNotEqual(code, 0); self.assertIn("ajail-gui is not installed", err); run.assert_not_called()
+        with self.mock.patch("os.stat", self.stat_as(0, 0o100755)), \
+             self.mock.patch.object(self.ns["subprocess"], "run", return_value=self.mock.Mock(returncode=0)) as run:
+            code, _, _ = self.call("--install-menu")
+        self.assertEqual(code, 0); self.assertEqual(run.call_args[0][0], ["/usr/local/bin/ajail-gui", "--install-menu"])
+
 class Completions(unittest.TestCase):
     """The shell completions list the commands and options ajail really has, no more and no fewer."""
     def setUp(self):

@@ -3,8 +3,8 @@
 function __ajail_apps
     ajail list 2>/dev/null | string replace -r '\s+.*' ''
 end
-set -l c "not __fish_seen_subcommand_from on off status check preview list stop name install uninstall restore run run-file help"
-complete -c ajail -f -n $c -a "on off status check preview list stop name install uninstall restore run run-file help"
+set -l c "not __fish_seen_subcommand_from on off status check preview list stop name install uninstall restore run run-file desktop help"
+complete -c ajail -f -n $c -a "on off status check preview list stop name install uninstall restore run run-file desktop help"
 complete -c ajail -n $c -F
 complete -c ajail -n "__fish_seen_subcommand_from run" -l compat-env -d "Pass graphics and toolkit variables from this session"
 complete -c ajail -f -n "__fish_seen_subcommand_from run" -a "(__ajail_apps)"
@@ -17,5 +17,7 @@ complete -c ajail -n "__fish_seen_subcommand_from install" -l move -d "With --mo
 complete -c ajail -f -n "__fish_seen_subcommand_from uninstall restore preview stop" -a "(__ajail_apps)"
 complete -c ajail -n "__fish_seen_subcommand_from uninstall" -l purge -d "Also move the data to the Trash"
 complete -c ajail -n "__fish_seen_subcommand_from uninstall" -l discard-image -d "Delete a moved AppImage"
+complete -c ajail -f -n "__fish_seen_subcommand_from desktop" -l install-menu -d "Add ajail-gui to the app menu"
+complete -c ajail -f -n "__fish_seen_subcommand_from desktop" -l remove-menu -d "Remove it again"
 complete -c ajail -n "__fish_seen_subcommand_from restore" -l keep -d "Leave the app installed"
 complete -c ajail -n "__fish_seen_subcommand_from restore" -l to -r -F -d "Folder for the AppImage"

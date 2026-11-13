@@ -1630,6 +1630,32 @@ def cmd_dump(arg):
         out = {"global": g, "app": (parse_cfg(f"{CONF}/apps/{clean(arg)}.conf") or empty_cfg()) if arg else None}
     print(json.dumps(out))
 
+def cmd_desktop(args):
+    """ajail desktop --install-menu: put ajail-gui in the app menu. The launcher is written by the installed ajail-gui itself, and
+    only a root-owned copy counts (see menu_exec in ajail-gui), so nothing you can write to is ever started from the menu."""
+    if args not in (["--install-menu"], ["--remove-menu"]): die("usage: ajail desktop --install-menu | --remove-menu")
+    apps = f"{HOME}/.local/share/applications"
+    if args[0] == "--remove-menu":
+        gone = False
+        for p in (f"{apps}/org.ajail.Gui.desktop", f"{HOME}/.local/share/icons/hicolor/scalable/apps/org.ajail.Gui.svg"):
+            try:
+                os.unlink(p)
+                gone = True
+            except OSError:
+                pass
+        if gone and shutil.which("update-desktop-database"):
+            subprocess.run(["update-desktop-database", apps], stderr=subprocess.DEVNULL)
+        print("removed AppImage Jail from the app menu" if gone else "nothing to remove")
+        return
+    for d in ("/usr/local/bin", "/usr/bin"):
+        try:
+            st = os.stat(d + "/ajail-gui")
+        except OSError:
+            continue
+        if st.st_uid == 0 and not st.st_mode & 0o022:
+            sys.exit(subprocess.run([d + "/ajail-gui", "--install-menu"]).returncode)
+    die("ajail-gui is not installed (a root-owned copy is needed). Install it first: sudo install -m 755 -o root -g root ajail-gui /usr/local/bin/")
+
 HELP = """ajail on | off | status | check   force on/off for all AppImages, or check the setup
 ajail preview [NAME]             show the bwrap command that would run
 ajail list                       show your apps and which ones are running
@@ -1651,6 +1677,8 @@ ajail restore NAME [--keep] [--to FOLDER]
 ajail run-file [--once] [--mount] [--compat-env] FILE
                                  run an AppImage without offering to install it (--once deletes its unpacked copy on exit;
                                  --mount mounts the file instead of unpacking it, experimental; ignored with --once)
+ajail desktop --install-menu     add ajail-gui to your app menu (--remove-menu takes it out again); needs ajail-gui
+                                 installed in /usr/local/bin
 ajail FILE.AppImage [args]       open an AppImage: offers Install or Run once when double-clicked,
                                  otherwise runs it sandboxed (files in args are shared for that run)
 Settings and everything else: ajail-gui"""
@@ -1671,6 +1699,7 @@ def main():
     elif c == "install": cmd_install(a[1:])
     elif c == "uninstall": cmd_uninstall(a[1:])
     elif c == "restore": cmd_restore(a[1:])
+    elif c == "desktop": cmd_desktop(a[1:])
     elif c == "run" and len(a) > 1 and a[1] == "--compat-env" and len(a) > 2: run_installed(a[2], a[3:], True)
     elif c == "run" and len(a) > 1: run_installed(a[1], a[2:])
     elif c == "run-file":

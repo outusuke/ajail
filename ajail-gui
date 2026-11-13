@@ -1663,6 +1663,14 @@ class App(Adw.Application):
             win.open_trouble(self.log_scope or None)
 
 
+for flag, on in (("--install-menu", True), ("--remove-menu", False)):
+    if flag in sys.argv[1:]:                 # no window: what `ajail desktop --install-menu` runs
+        try:
+            set_menu_entry(on)
+        except OSError as e:
+            sys.exit(f"ajail-gui: {e.strerror or e}")
+        print(f"wrote {MENU_DESKTOP}" if on else "removed AppImage Jail from the app menu")
+        sys.exit(0)
 argv, log = sys.argv[:], None
 if "--log" in argv:                      # ajail-gui --log [NAME]  opens the log page
     i = argv.index("--log")

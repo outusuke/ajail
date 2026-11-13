@@ -60,6 +60,7 @@ ajail run [--compat-env] NAME [args]   # run an installed app
 ajail list | stop NAME | name FILE
 ajail uninstall NAME [--purge] [--discard-image]
 ajail restore NAME [--keep] [--to FOLDER]
+ajail desktop --install-menu | --remove-menu   # add ajail-gui to the app menu (needs ajail-gui in /usr/local/bin)
 ajail on | off | status | check
 ajail preview [NAME]             # print the bwrap command
 ```

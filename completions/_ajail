@@ -5,7 +5,7 @@ _ajail_apps() { local -a a; a=(${(f)"$(ajail list 2>/dev/null | awk '{print $1}'
 
 _ajail() {
     local -a cmds
-    cmds=(on off status check preview list stop name install uninstall restore run run-file help)
+    cmds=(on off status check preview list stop name install uninstall restore run run-file desktop help)
     if (( CURRENT == 2 )); then
         _alternative 'commands:command:compadd -a cmds' 'files:AppImage:_files -g "*.(#i)appimage"'
         return
@@ -25,6 +25,7 @@ _ajail() {
         restore)
             _arguments '--keep[leave the app installed]' '--to[folder for the AppImage]:folder:_files -/' '*:app:_ajail_apps' ;;
         preview|stop) (( CURRENT == 3 )) && _ajail_apps ;;
+        desktop) _arguments '--install-menu[add ajail-gui to the app menu]' '--remove-menu[remove it again]' ;;
         name) _files ;;
     esac
 }
