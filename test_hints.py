@@ -40,6 +40,16 @@ class Hints(unittest.TestCase):
         self.assertEqual(keys(l, cur(gpu=1, gpu_render_only=0)), [])
         self.assertEqual(keys(l, cur(gpu=0, gpu_render_only=1)), [("gpu", 1)])      # render-only means nothing without gpu
 
+    def test_a_crash_with_no_reason_suggests_x11_as_a_guess_but_a_specific_message_wins(self):
+        for l in (run("Aborted (core dumped)", code=None) + [exit_(134)], run(code=134)):
+            self.assertEqual(keys(l), [("x11", 1)], l)
+        self.assertEqual(keys(run(code=134), cur(x11=1)), [])                          # already on
+        self.assertEqual(keys(run(code=1)), [])                                        # an ordinary failure is no guess
+        l = run("Error: cannot open display: :0", code=134)
+        self.assertEqual(len(G["log_hints"](l, cur())), 1)                             # the specific hint, not both
+        self.assertNotIn("a guess", G["log_hints"](l, cur())[0][2])
+        self.assertEqual(keys(run(code=134), cur()) and G["log_hints"](run(code=134), cur())[0][2][-9:], "(a guess)")
+
     def test_x11_network_camera(self):
         self.assertEqual(keys(run("Error: cannot open display: :0")), [("x11", 1)])
         self.assertEqual(keys(run("curl: (6) Temporary failure in name resolution"), cur(net=0)), [("net", 1)])

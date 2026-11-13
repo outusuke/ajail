@@ -15,6 +15,7 @@ def run_app(arg, extra, once=False, mount=False, compat=False):
     if not os.path.isfile(app): die(f"not a file: {arg}")
     off = appimage_offset(app)
     name = sanitize(app)
+    LOG_NAME[0] = name                            # from here on, errors are logged too
     cfg = load_cfg(name)
     if compat: cfg["compat_env"] = 1
     check_display(cfg)
@@ -31,6 +32,7 @@ def run_app(arg, extra, once=False, mount=False, compat=False):
 def run_installed(name, extra, compat=False):
     guard()
     name = clean(name)
+    LOG_NAME[0] = name
     kind = installed_kind(name)
     if not kind: die(f"'{name}' is not installed")
     cfg = load_cfg(name)
@@ -46,6 +48,8 @@ def run_installed(name, extra, compat=False):
         unmount_image(mp)
 
 def launch(name, root, cfg, extra, source=None, once=False):
+    LOG_NAME[0] = name
+    journal_tag(name)
     if not os.path.lexists(f"{root}/AppRun"): die("no AppRun found inside this AppImage")
     check_identity(name, root)
     os.makedirs(HOMES, mode=0o700, exist_ok=True)
@@ -87,30 +91,35 @@ def launch(name, root, cfg, extra, source=None, once=False):
                          pass_fds=[sec.fileno()] if sec and not priv else ())
     pidfile = f"{RUNNING}/{os.getpid()}"
     open(pidfile, "w").write(f"{name}\n{proc_start(os.getpid()) or ''}")        # the start time tells this process from a later one with the same PID
+    stopped = [False]                             # ended by a signal (ajail stop, Ctrl-C, logout): not a failed start
+    def stop(*_):
+        stopped[0] = True; p.terminate()
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(s, lambda *_: p.terminate())
+        signal.signal(s, stop)
     def tee():
+        lf = open_log()                           # None when the log can't be opened: the app's output still reaches the terminal
+        n = 0                                     # a chatty app must not fill the disk: cap what one run adds to the log
+        dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        pend = ""                                 # the unfinished line, kept short: a flood without newlines must not fill memory
         try:
-            with open(LOG, "a") as lf:
-                n = 0                             # a chatty app must not fill the disk: cap what one run adds to the log
-                dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
-                pend = ""                         # the unfinished line, kept short: a flood without newlines must not fill memory
-                while True:
-                    data = os.read(p.stderr.fileno(), 4096)
-                    text = CTRL.sub("", dec.decode(data, final=not data))     # an app must not inject terminal escape sequences (OSC 52 etc.)
-                    try: sys.stderr.write(text); sys.stderr.flush()
-                    except Exception: pass
-                    lines = (pend + text).split("\n"); pend = lines.pop()
-                    lines = [x + "\n" for x in lines]
-                    while len(pend) > LOG_LINE_MAX: lines.append(pend[:LOG_LINE_MAX] + "\n"); pend = pend[LOG_LINE_MAX:]
-                    if not data and pend: lines.append(pend + "\n"); pend = ""
-                    for line in lines:
-                        if n < LOG_RUN_MAX:
-                            n += len(line)
-                            log_write(lf, f"[{name}] {line}" + (f"[{name}] (more output not logged)\n" if n >= LOG_RUN_MAX else ""))
-                    if not data: break
+            while True:
+                data = os.read(p.stderr.fileno(), 4096)
+                text = CTRL.sub("", dec.decode(data, final=not data))     # an app must not inject terminal escape sequences (OSC 52 etc.)
+                try: sys.stderr.write(text); sys.stderr.flush()
+                except Exception: pass
+                lines = (pend + text).split("\n"); pend = lines.pop()
+                lines = [x + "\n" for x in lines]
+                while len(pend) > LOG_LINE_MAX: lines.append(pend[:LOG_LINE_MAX] + "\n"); pend = pend[LOG_LINE_MAX:]
+                if not data and pend: lines.append(pend + "\n"); pend = ""
+                for line in lines:
+                    if lf and n < LOG_RUN_MAX:
+                        n += len(line)
+                        log_write(lf, f"[{name}] {line}" + (f"[{name}] (more output not logged)\n" if n >= LOG_RUN_MAX else ""))
+                if not data: break
         except Exception:
             pass
+        finally:
+            if lf: lf.close()
     def pump():                                   # chunks, not lines, so a prompt without a newline shows at once
         try:
             dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
@@ -132,7 +141,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
     try: os.unlink(pidfile)
     except OSError: pass
     if once and not running(name): rm_tree(f"{EXTRACT}/{name}")
-    log(f"EXIT code={rc}", name)
-    if rc != 0 and time.time() - start < 10:
+    log(f"EXIT code={exit_code(rc)}", name)
+    if rc != 0 and not stopped[0] and time.time() - start < 10:
         notify_failure(name)
-    sys.exit(rc)
+    sys.exit(exit_code(rc))

@@ -340,6 +340,11 @@ LOG_HINTS = [
      "net", 1, "Allow internet", "The app tried to use the network.", {}),
     (r"/dev/video\d|no (such )?(video )?(capture )?device.{0,30}camera|camera.{0,30}(not found|no device)",
      "camera", 1, "Allow the camera", "The app tried to open a camera.", {}),
+    # A guess, last so any specific X11 message above wins: a crash right after start, with nothing in the log saying why
+    # (installers often send stderr to /dev/null). A GUI that only speaks X11 dies like this.
+    (r"aborted \(core dumped\)|\] EXIT code=134\b",
+     "x11", 1, "Try X11 compatibility (a guess)",
+     "The app crashed right after starting and left no reason in the log. It may be a GUI that needs X11. This weakens isolation, so use it only for this app.", {}),
 ]
 
 def effective_switches(G, A):

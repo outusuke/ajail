@@ -23,7 +23,13 @@ def install_hint(*pkgs):
 CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 def die(msg, code=1):
-    print(f"ajail: {msg}", file=sys.stderr); sys.exit(code)
+    print(f"ajail: {msg}", file=sys.stderr)
+    if LOG_NAME[0] and not NO_LOG[0]: log(f"ERROR {msg}", LOG_NAME[0])     # a start from the app menu has no terminal; the log is where it shows
+    sys.exit(code)
+
+def exit_code(rc):
+    """The shell's way: 128 + the signal number when the process was killed by a signal."""
+    return 128 - rc if rc < 0 else rc
 
 def split_opts(args, allowed, usage):
     """Split a command's arguments into (set of options, other arguments). An option (anything starting with '--') that
@@ -36,33 +42,48 @@ def split_opts(args, allowed, usage):
         else: rest.append(x)
     return opts, rest
 
-def log_write(f, text):
-    """Append TEXT to the open log file F while holding the lock, so another ajail trimming the log can't cut in half a line."""
-    fcntl.flock(f, fcntl.LOCK_EX)
-    try:
-        f.write(text); f.flush()
-    finally:
-        fcntl.flock(f, fcntl.LOCK_UN)
-
-def log(msg, name=None):
-    """Add a line to the log. Only you can read it (it holds what apps print); several ajails share it, so trimming and
-    appending happen under the lock and in place (a replaced file would leave the others writing to the old one)."""
-    try:
-        os.makedirs(STATE, mode=0o700, exist_ok=True)
-        fd = os.open(LOG, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
-        with os.fdopen(fd, "a+", errors="replace") as f:
-            os.fchmod(fd, 0o600)
-            fcntl.flock(f, fcntl.LOCK_EX)
-            if os.fstat(fd).st_size > 1_000_000:
-                f.seek(0); tail = f.readlines()[-500:]
-                f.truncate(0); f.writelines(tail)
-            f.write(f"[{time.strftime('%F %T')}] " + (f"[{name}] " if name else "") + f"{msg}\n")
-    except OSError:
-        pass
-
+LOG_KEEP = 500             # lines kept when the file passes LOG_MAX
+LOG_MAX = 1_000_000        # bytes
 LOG_RUN_MAX = 2_000_000    # bytes of one app run's output kept in the log
 LOG_LINE_MAX = 65_536     # longest log line: longer output is split, so one unbroken stream can't pile up in memory
 NO_LOG = [False]      # set by 'preview' so that showing a command never writes to the log
+LOG_NAME = [None]     # set when a run starts: errors from then on are logged under this name. None: not logging
+
+def open_log():
+    """The log, opened for appending (owner-only, never through a link), or None. Never replaced or renamed: several ajails
+    share it, and a handle that outlives a replaced file would keep writing into a file nobody reads."""
+    try:
+        os.makedirs(STATE, mode=0o700, exist_ok=True)
+        fd = os.open(LOG, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        os.fchmod(fd, 0o600)
+        return os.fdopen(fd, "a+", errors="replace")
+    except OSError:
+        return None
+
+def log_write(f, text):
+    """Append TEXT to the open log F under a lock. When the file is over LOG_MAX it is cut down to its last LOG_KEEP lines
+    first, in place (truncate, not replace), so another ajail cannot cut a line in half and no handle is left on an old
+    file. App output goes through here too, so a chatty app cannot grow the log past the limit."""
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            if os.fstat(f.fileno()).st_size > LOG_MAX:
+                f.seek(0); tail = f.readlines()[-LOG_KEEP:]
+                f.truncate(0); f.writelines(tail)
+            f.write(text); f.flush()
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+    except OSError:
+        pass
+
+def log(msg, name=None):
+    """Add a line to the log. Only you can read it (it holds what apps print). Control characters and line breaks are
+    removed first, so a message that quotes an app's text can't inject escape sequences or fake log lines."""
+    f = open_log()
+    if not f: return
+    with f:
+        msg = CTRL.sub("", msg).replace("\n", " ")
+        log_write(f, f"[{time.strftime('%F %T')}] " + (f"[{name}] " if name else "") + f"{msg}\n")
 
 def warn(msg, name=None):
     """A warning for the terminal and the log, so it also shows up on ajail-gui's Log page (menu launches have no terminal)."""
@@ -77,15 +98,16 @@ def notify(msg, critical=False):
         except Exception:
             pass
 
-_act = []
 def notify_failure(name):
-    """Critical notification; clicking it (or its 'Open log' button) opens ajail-gui on this app's log."""
+    """Critical notification; clicking it (or its 'Open log' button) opens ajail-gui on this app's log. Waiting for the
+    click happens in a detached child, so ajail can exit at once."""
+    ns = shutil.which("notify-send")
+    if not ns: return
     msg = f"{name} failed to start. Click to open the log."
-    if not shutil.which("notify-send"): return
-    if not _act:
-        try: _act.append("--action" in subprocess.run(["notify-send", "--help"], capture_output=True, text=True).stdout)
-        except Exception: _act.append(False)
-    if not _act[0]:
+    gui = shutil.which("ajail-gui") or f"{os.path.dirname(SELF)}/ajail-gui"
+    try: actions = "--action" in subprocess.run([ns, "--help"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError): actions = False
+    if not actions or not os.access(gui, os.X_OK):
         notify(f"{name} failed to start. Open ajail-gui > Log.", critical=True); return
     try:
         if os.fork(): return                      # parent carries on and exits
@@ -95,14 +117,43 @@ def notify_failure(name):
         os.setsid()
         dn = os.open(os.devnull, os.O_RDWR)
         for fd in (0, 1, 2): os.dup2(dn, fd)
-        r = subprocess.run(["notify-send", "-u", "critical", "-A", "default=Open log", "--wait", "ajail", msg],
+        r = subprocess.run([ns, "-u", "critical", "-A", "default=Open log", "--wait", "ajail", msg],
                            capture_output=True, text=True, timeout=900)
-        if r.stdout.strip() == "default":
-            subprocess.Popen([f"{os.path.dirname(SELF)}/ajail-gui", "--log", name], start_new_session=True)
+        if r.stdout.strip() == "default": subprocess.Popen([gui, "--log", name], start_new_session=True)
     except Exception:
         pass
     finally:
         os._exit(0)
+
+JOURNAL_SOCK = "/run/systemd/journal/stdout"
+
+def journal_tag(ident, sock=JOURNAL_SOCK):
+    """Started from a file manager or the app menu, our output goes to the journal under the launcher's name. Reconnect
+    those streams, and only those, so lines carry IDENT (the app's name) instead. Anything else is left alone."""
+    mine = os.environ.get("JOURNAL_STREAM", "")      # not always set (GNOME's launcher doesn't), so the socket's address counts too
+    def is_journal(fd):
+        st = os.fstat(fd)
+        if mine == f"{st.st_dev}:{st.st_ino}": return True
+        if st.st_mode & 0o170000 != 0o140000: return False      # not a socket
+        try:
+            with socket.socket(fileno=os.dup(fd)) as c: return c.getpeername() == sock
+        except OSError: return False
+    try:
+        fds = [fd for fd in (1, 2) if is_journal(fd)]
+        if not fds: return
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        with s:
+            s.connect(sock)
+            s.sendall(f"{ident.replace(chr(10), ' ')}\n\n6\n0\n0\n0\n0\n".encode())      # name, unit, priority, then four flags off
+            s.shutdown(socket.SHUT_RD)
+            for f in (sys.stdout, sys.stderr):
+                try: f.flush()
+                except Exception: pass
+            for fd in fds: os.dup2(s.fileno(), fd)
+        st = os.fstat(fds[0])
+        os.environ["JOURNAL_STREAM"] = f"{st.st_dev}:{st.st_ino}"
+    except OSError:
+        pass
 
 def clean(n):
     return (re.sub(r"[^A-Za-z0-9._-]", "_", n).lstrip("._-")[:64]) or "app"
