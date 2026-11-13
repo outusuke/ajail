@@ -86,7 +86,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE if tty else None, stderr=subprocess.PIPE, text=True, errors="replace",
                          pass_fds=[sec.fileno()] if sec and not priv else ())
     pidfile = f"{RUNNING}/{os.getpid()}"
-    open(pidfile, "w").write(name)
+    open(pidfile, "w").write(f"{name}\n{proc_start(os.getpid()) or ''}")        # the start time tells this process from a later one with the same PID
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(s, lambda *_: p.terminate())
     def tee():

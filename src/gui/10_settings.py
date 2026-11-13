@@ -3,6 +3,13 @@
 def empty():
     return {"s": {}, **{k: [] for k in LISTS}}
 
+TALK_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)*(\.\*)?")     # same as ajail's: no empty parts, so "a..b" is not a name
+
+def talk_ok(n):
+    """Same rule as ajail's talk_ok: a plain name, or NAME.* with at least three parts before the .* (so 'org.*' and
+    'org.freedesktop.*' are refused). Keep the two in step; test_parse.py compares them."""
+    return bool(TALK_RE.fullmatch(n)) and (not n.endswith(".*") or n.count(".") >= 3)
+
 def path_for(scope):
     return CONF + "/default.conf" if scope is None else f"{APPS}/{scope}.conf"
 
@@ -143,16 +150,34 @@ def live_ajail(pid):
     except OSError:
         return False
 
+def proc_start(pid):
+    """When PID started: field 22 of /proc/PID/stat (clock ticks since boot, as text), or None. A reused PID gets another one."""
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as f:
+            rest = f.read().rsplit(b")", 1)[1].split()      # field 2, the name, may hold spaces and ')'
+        return rest[19].decode()                            # rest[0] is field 3
+    except (OSError, IndexError, UnicodeDecodeError):
+        return None
+
+def pid_app(pid):
+    """The app name in RUNNING/PID, if that file was written by the process that is still running under this PID.
+    The file holds "NAME\nSTARTTIME". Old files (the name only) can't be checked, so they count for nothing."""
+    try:
+        with open(f"{RUNNING}/{pid}") as f:
+            name, _, start = f.read().partition("\n")
+    except OSError:
+        return None
+    start = start.strip()
+    return name.strip() if start and start == proc_start(pid) and live_ajail(pid) else None
+
 def running_pids(name=None):
     out = {}
     if os.path.isdir(RUNNING):
         for f in os.listdir(RUNNING):
-            if f.isdigit() and live_ajail(f):
-                try:
-                    n = open(f"{RUNNING}/{f}").read().strip()
-                except OSError:
-                    continue
-                out.setdefault(n, []).append(int(f))
+            if f.isdigit():
+                n = pid_app(f)
+                if n:
+                    out.setdefault(n, []).append(int(f))
     return out if name is None else out.get(name, [])
 
 def ui_drop(keys):

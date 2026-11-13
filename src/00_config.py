@@ -4,7 +4,7 @@
 # ======== 00_config: Configuration: paths, permission defaults, syscall tables.
 
 import codecs, errno, fcntl, glob, grp, json, os, platform, pwd, re, select, shlex, shutil, signal, struct, subprocess
-import sys, tempfile, threading, time, urllib.parse
+import socket, sys, tempfile, threading, time, urllib.parse
 
 _pw     = pwd.getpwuid(os.getuid())
 HOME    = os.path.realpath(_pw.pw_dir)

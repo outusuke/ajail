@@ -854,7 +854,7 @@ class Win(Adw.ApplicationWindow):
         page.add(pg)
         list_group("D-Bus services", "Extra session-bus names the app may talk to (advanced).", "talk",
                    ["Service name, e.g. org.gnome.SessionManager"],
-                   lambda v: v[0] if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]*(\.\*)?", v[0]) else None)
+                   lambda v: v[0] if talk_ok(v[0]) else None)
 
         if scope:
             dg = Adw.PreferencesGroup(title="Storage")

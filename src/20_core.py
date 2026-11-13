@@ -301,12 +301,14 @@ def preview_files(cfg):
 
 def scoped_xauth(src, disp):
     """A copy of the XAUTHORITY file holding only the cookie for DISPLAY, or None (then it is not shared at all)."""
-    # Done in Python (no xauth needed, and many Wayland desktops don't install it). Entries are kept when they are
-    # for this display number or have no display number (wildcard entries, as Xwayland's own auth file uses).
+    # Done in Python (no xauth needed, and many Wayland desktops don't install it). An entry is kept when it is for this
+    # display number AND for this machine (family Local with our host name, or family Wild), so a cookie for display :0
+    # on another host is not shared. Entries with no display number (as Xwayland's own auth file uses) are kept too.
     d = work_dir()
     if not os.path.isdir(d):
         return None
     num = disp[1:].split(".")[0].encode()
+    me = os.fsencode(socket.gethostname())
     try:
         with open(src, "rb") as f: data = f.read(1_000_000)
     except OSError:
@@ -314,14 +316,15 @@ def scoped_xauth(src, disp):
     keep, i = [], 0
     while i + 2 <= len(data):
         start = i
-        i += 2                                    # family
+        fam = int.from_bytes(data[i:i+2], "big"); i += 2      # family: 256 Local, 65535 Wild
         fields = []
         for _ in range(4):                        # address, display number, auth name, auth data
             if i + 2 > len(data): return None     # truncated or not an Xauthority file: not shared
             n = int.from_bytes(data[i:i+2], "big"); i += 2
             fields.append(data[i:i+n]); i += n
         if i > len(data): return None
-        if fields[1] in (num, b""): keep.append(data[start:i])
+        mine = fam == 65535 or (fam == 256 and fields[0] == me)
+        if fields[1] == b"" or (fields[1] == num and mine): keep.append(data[start:i])
     if not keep:
         return None
     dst = f"{d}/Xauthority"

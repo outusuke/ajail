@@ -62,6 +62,20 @@ class Parse(unittest.TestCase):
         d, err = self.parse("net=0\nprofile=strict\nflag=--x11\nxdg=download:ro\nportal=Secret\nportal=-Secret\ntalk=org.x.Y\n")
         self.assertEqual(err, ""); self.assertEqual(d["s"]["x11"], 1)
 
+def load_gui():
+    """TALK_RE, talk_ok and the 'talk' validator that the window passes to list_group, from ajail-gui (no GTK needed)."""
+    tree = ast.parse(open(f"{HERE}/ajail-gui").read())
+    body = [n for n in tree.body
+            if (isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "TALK_RE")
+            or (isinstance(n, ast.FunctionDef) and n.name == "talk_ok")]
+    ns = {"re": re}
+    exec(compile(ast.Module(body, []), "ajail-gui", "exec"), ns)
+    calls = [c for c in ast.walk(tree) if isinstance(c, ast.Call) and getattr(c.func, "id", "") == "list_group"
+             and len(c.args) > 4 and isinstance(c.args[2], ast.Constant) and c.args[2].value == "talk"]
+    assert len(calls) == 1, "the window's talk list_group call was not found"
+    ns["validate"] = eval(compile(ast.Expression(calls[0].args[4]), "ajail-gui", "eval"), ns)
+    return ns
+
 class Talk(unittest.TestCase):
     setUp = Parse.setUp
     parse = Parse.parse
@@ -72,6 +86,14 @@ class Talk(unittest.TestCase):
         d, err = self.parse("".join(f"talk={n}\n" for n in good + bad))
         self.assertEqual(d["talk"], good)
         for no in range(len(good) + 1, len(good) + len(bad) + 1): self.assertIn(f"x.conf:{no}", err)
+
+    def test_gui_accepts_exactly_what_ajail_accepts(self):
+        G = load_gui()
+        names = ["org.gnome.SessionManager", "org.example.App.*", "com.a.b.c.*", "org.*", "org.freedesktop.*", "a..b",
+                 "org..x", "*", "a b", "-x.y", "a.b.", ".a.b", "org.example.*.x", "x", ""]
+        for n in names:
+            self.assertEqual(G["talk_ok"](n), A["talk_ok"](n), n)
+            self.assertEqual(G["validate"]([n]), n if A["talk_ok"](n) else None, n)    # what the window really uses
 
 class Gui(unittest.TestCase):
     def tree(self):

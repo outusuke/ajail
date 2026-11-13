@@ -178,10 +178,18 @@ Prints what the sandbox exposes and saves it to `selftest-report.txt` in the app
 ## Tests
 
 ```bash
-python3 test_portals.py     # unit tests, no sandbox needed
+python3 test_build.py       # ajail and ajail-gui are up to date with src/, and the layer rule holds
 python3 test_parse.py       # settings parser: spaces, comments, warnings
+python3 test_sync.py        # the permission tables in ajail and ajail-gui match
+python3 test_portals.py     # extra portals (unit tests, no sandbox needed)
+python3 test_compat.py      # compat_env: which variables reach the sandbox
+python3 test_output.py      # control characters from an AppImage never reach the terminal
+python3 test_cli.py         # unknown --options are errors
+python3 test_sandbox.py     # properties of the bwrap command that hold for every configuration
+python3 test_hints.py       # troubleshooting hints for log lines (ajail-gui logic)
+python3 test_icons.py       # icon lookup for installed apps
+python3 test_logcolor.py    # Log page colors (ajail-gui logic)
 python3 test_hostile.py     # hostile AppImages (needs bubblewrap and squashfs-tools; run as a normal user)
-python3 test_build.py       # ajail is up to date with src/, and the layer rule holds
 ```
 
 `test_hostile.py` builds AppImages with links pointing outside the app, link loops, huge icons and `.desktop` files, injected `Exec=` lines, odd file names and impostors of an installed app. It runs a copy of `ajail` in a temporary home and checks that nothing outside the AppImage was copied, shown or run, and that the canary files it planted stayed untouched.
