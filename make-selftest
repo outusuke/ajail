@@ -363,9 +363,34 @@ text = "ajail self-test\n" + "=" * 15 + "\n" + "\n".join(out) + "\n"
 print(text)
 try: open(f"{H}/selftest-report.txt", "w").write(text)
 except OSError: pass
+def gv(s):
+    """A string as GVariant text for gdbus: single quotes, backslash escapes."""
+    return "'" + s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") + "'"
+
+def summary(rows):
+    """(title, body) for the popup, from the report's rows: how many say EXPOSED and which."""
+    names = [l[9:35].strip() for l in rows if l.startswith("EXPOSED")]
+    n = len(names)
+    shown = ", ".join(names[:6]) + (f" and {n - 6} more" if n > 6 else "")
+    where = "Full report: selftest-report.txt in the app's private home."
+    if not n: return "ajail self-test: nothing exposed", "No row says EXPOSED. " + where
+    return f"ajail self-test: {n} EXPOSED", shown + ". " + where
+
+def popup(title, body):
+    """Show the summary as a desktop notification. Needs the session bus (the portals switch) and gdbus."""
+    if not (os.environ.get("DBUS_SESSION_BUS_ADDRESS") and shutil.which("gdbus")): return False
+    rc, _ = sh(["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications", "--object-path",
+                "/org/freedesktop/Notifications", "--method", "org.freedesktop.Notifications.Notify",
+                "ajail-selftest", "0", "", gv(title), gv(body), "[]", "{}", "20000"])
+    return rc == 0
+
 if sys.stdin.isatty():
     try: input("Press Enter to close...")
     except EOFError: pass
+else:       # started from a file manager or the menu: no terminal to show the report in
+    title, body = summary(out)
+    print(f"{title}. {body}", file=sys.stderr)      # ajail's log keeps stderr, so this line is on the Log page
+    popup(title, body)
 '''
 
 DESKTOP = "[Desktop Entry]\nType=Application\nName=ajail selftest\nExec=AppRun\nIcon=ajail-selftest\nCategories=Utility;\n"

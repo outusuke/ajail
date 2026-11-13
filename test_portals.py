@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Unit tests for the extra-portals feature. Run from the folder holding ajail, ajail-gui and make-selftest.
-import ast, os, re, sys, tempfile, unittest, io, contextlib
+import ast, os, re, sys, tempfile, unittest, unittest.mock, io, contextlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -551,6 +551,61 @@ class IniLayout(unittest.TestCase):
         self.ini("[Settings]\ngtk-decoration-layout=:minimize\n", "gtk-3.0")
         self.ini("[Settings]\ngtk-decoration-layout=:close\n", "gtk-4.0")
         self.assertEqual(A["gtk_ini_layout"](), ":close")
+
+
+class SelftestSummary(unittest.TestCase):
+    """The self-test, started without a terminal, reports a short summary in the log and as a popup."""
+    def setUp(self):
+        s = open(f"{HERE}/make-selftest").read()
+        app = re.search(r"APPRUN = r'''(.*?)'''", s, re.S).group(1)
+        want = {"gv", "summary", "popup"}
+        body = [n for n in ast.parse(app).body if isinstance(n, ast.FunctionDef) and n.name in want]
+        self.calls = []
+        self.ns = {"os": os, "shutil": __import__("shutil"), "sh": lambda cmd, t=4: (self.calls.append(cmd), (self.rc, ""))[1]}
+        self.rc = 0
+        exec(compile(ast.Module(body, []), "AppRun", "exec"), self.ns)
+        self.rows = lambda *states: [f"{st:8} {nm:<26} detail" for st, nm in states]
+
+    def test_summary_counts_and_names_the_exposed_rows(self):
+        title, body = self.ns["summary"](self.rows(("ALLOWED", "Internet"), ("EXPOSED", "Session bus"), ("blocked", "X11"),
+                                                   ("EXPOSED", "  Portal: screenshots")))
+        self.assertEqual(title, "ajail self-test: 2 EXPOSED")
+        self.assertTrue(body.startswith("Session bus, Portal: screenshots. "), body)
+        self.assertIn("selftest-report.txt", body)
+
+    def test_nothing_exposed_and_a_long_list_is_shortened(self):
+        title, body = self.ns["summary"](self.rows(("ALLOWED", "Internet"), ("ACTIVE", "seccomp filter")))
+        self.assertEqual(title, "ajail self-test: nothing exposed"); self.assertTrue(body.startswith("No row says EXPOSED."))
+        title, body = self.ns["summary"](self.rows(*[("EXPOSED", f"row {i}") for i in range(9)]))
+        self.assertEqual(title, "ajail self-test: 9 EXPOSED"); self.assertIn("row 5 and 3 more. ", body); self.assertNotIn("row 6", body)
+
+    def test_gvariant_string_round_trips(self):
+        for s in ("plain", "it's a \\ test", "two\nlines", "ünï 'q' \"d\""):
+            self.assertEqual(ast.literal_eval(self.ns["gv"](s)), s)
+
+    def test_popup_needs_the_session_bus_and_gdbus(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("DBUS_SESSION_BUS_ADDRESS", None)
+            self.assertFalse(self.ns["popup"]("t", "b")); self.assertEqual(self.calls, [])
+        with unittest.mock.patch.dict(os.environ, {"DBUS_SESSION_BUS_ADDRESS": "unix:path=/x"}), \
+             unittest.mock.patch("shutil.which", return_value=None):
+            self.assertFalse(self.ns["popup"]("t", "b")); self.assertEqual(self.calls, [])
+
+    def test_popup_sends_the_title_and_body_as_quoted_strings(self):
+        with unittest.mock.patch.dict(os.environ, {"DBUS_SESSION_BUS_ADDRESS": "unix:path=/x"}), \
+             unittest.mock.patch("shutil.which", return_value="/usr/bin/gdbus"):
+            self.assertTrue(self.ns["popup"]("ajail self-test: 2 EXPOSED", "A, B. It's here."))
+            self.rc = 1
+            self.assertFalse(self.ns["popup"]("t", "b"))
+        cmd = self.calls[0]
+        self.assertEqual(cmd[:3], ["gdbus", "call", "--session"]); self.assertIn("org.freedesktop.Notifications.Notify", cmd)
+        self.assertIn("'ajail self-test: 2 EXPOSED'", cmd); self.assertIn("'A, B. It\\'s here.'", cmd)
+
+    def test_the_summary_is_only_sent_without_a_terminal(self):
+        s = open(f"{HERE}/make-selftest").read()
+        app = re.search(r"APPRUN = r'''(.*?)'''", s, re.S).group(1)
+        tail = app[app.index("if sys.stdin.isatty():\n    try: input"):]
+        self.assertRegex(tail, r"(?s)isatty\(\):\n    try: input.*?\nelse:.*?summary\(out\).*?file=sys\.stderr.*?popup\(")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
