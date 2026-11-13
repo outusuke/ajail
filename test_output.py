@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Text that comes from an AppImage must not reach your terminal with control characters (OSC 52 clipboard writes,
 # title reports and similar). These tests feed hostile text through the paths that print it.
-import contextlib, io, os, signal, socket, subprocess, sys, tempfile, types, unittest
+import contextlib, io, os, shutil, signal, socket, subprocess, sys, tempfile, types, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -293,6 +293,76 @@ class XauthFailsClosed(unittest.TestCase):
         self.assertEqual(open(out, "rb").read(), mine + wild + nodisp)
         open(src, "wb").write(other[0])                             # nothing of ours left: not shared at all
         self.assertIsNone(A["scoped_xauth"](src, ":0"))
+
+class PrivateNetLaunch(unittest.TestCase):
+    """launch() with net_private: the filter is written to a file for pasta to hand on, nothing is inherited, and the file is
+    gone afterwards. Without pasta the app does not start at all (it never falls back to the shared network)."""
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        names = ("check_identity", "sweep_runtime", "start_bus", "work_dir", "limit_prefix", "forward_files", "stop_bus", "running",
+                 "notify_failure", "log", "HOMES", "RUNNING", "SOURCES", "LOG", "shutil", "subprocess")
+        self.keep = {k: A[k] for k in names}
+        self.wd, self.seen, self.pasta = f"{self.d}/wd", [], True
+        test = self
+        class P(subprocess.Popen):
+            def __init__(s, cmd, **k):
+                n = len(A["PASTA"])
+                sec = cmd[n + 4] if cmd[:n] == A["PASTA"] and cmd[n:n + 2] == ["/bin/sh", "-c"] else None
+                test.seen.append({"cmd": cmd, "kw": k, "sec": sec, "sec_bytes": open(sec, "rb").read() if sec else None,
+                                  "resolv": open(f"{test.wd}/resolv.conf").read() if os.path.exists(f"{test.wd}/resolv.conf") else None})
+                super().__init__([sys.executable, "-c", "pass"], **k)
+        class FakeSub:
+            def __getattr__(s, n): return getattr(subprocess, n)
+            Popen = P
+        class FakeShutil:
+            def __getattr__(s, n): return getattr(shutil, n)
+            @staticmethod
+            def which(x): return f"/usr/bin/{x}" if x != "pasta" or test.pasta else None
+        A.update(check_identity=lambda *a: None, sweep_runtime=lambda: None, start_bus=lambda *a: None, work_dir=lambda: self.wd,
+                 limit_prefix=lambda *a: [], forward_files=lambda e: [], stop_bus=lambda b: None, running=lambda n: False,
+                 notify_failure=lambda n: None, log=lambda *a, **k: None, HOMES=f"{self.d}/h", RUNNING=f"{self.d}/r",
+                 SOURCES=f"{self.d}/s", LOG=f"{self.d}/log", shutil=FakeShutil(), subprocess=FakeSub())
+        os.makedirs(f"{self.d}/root"); open(f"{self.d}/root/AppRun", "w").close()
+    def tearDown(self): A.update(self.keep)
+
+    def launch(self, **kw):
+        cfg = dict(A["DEFAULTS"]); cfg.update(A["NUM"]); cfg.update({k: [] for k in A["LISTS"]}); cfg.update(theme=0, **kw)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as r:
+            A["launch"]("Foo", f"{self.d}/root", cfg, [])
+        return r.exception.code, err.getvalue()
+
+    def test_the_filter_goes_through_a_file_and_everything_is_removed_after(self):
+        code, _ = self.launch(net=1, net_private=1)
+        self.assertEqual(code, 0)
+        (s,) = self.seen
+        n = len(A["PASTA"])
+        self.assertEqual(s["cmd"][:n], A["PASTA"])
+        self.assertEqual(s["cmd"][n:n + 5], ["/bin/sh", "-c", 'exec 9<"$1"; shift; exec "$@"', "sh", f"{self.wd}/seccomp.bpf"])
+        self.assertEqual(s["cmd"][n + 5], "bwrap")
+        self.assertEqual(s["cmd"][s["cmd"].index("--seccomp") + 1], "9")
+        self.assertEqual(s["sec_bytes"], A["seccomp_file"](0).read())          # the same filter a plain run would pass
+        self.assertFalse(s["kw"].get("pass_fds"), "pasta would close inherited descriptors")
+        self.assertEqual(s["resolv"], "nameserver 169.254.1.1\n")
+        self.assertFalse(os.path.exists(self.wd), "the filter file is removed when the app ends")
+
+    def test_without_pasta_the_app_does_not_start(self):
+        self.pasta = False
+        code, err = self.launch(net=1, net_private=1)
+        self.assertNotEqual(code, 0); self.assertIn("needs pasta", err); self.assertIn("passt", err)
+        self.assertEqual(self.seen, []); self.assertFalse(os.path.exists(self.wd))
+
+    def test_nothing_changes_without_the_switch_or_with_the_network_off(self):
+        self.pasta = False                                          # not needed, so not missed
+        for kw in ({"net": 1, "net_private": 0}, {"net": 0, "net_private": 1}):
+            self.seen.clear()
+            code, err = self.launch(**kw)
+            self.assertEqual(code, 0, kw)
+            (s,) = self.seen
+            self.assertEqual(s["cmd"][0], "bwrap", kw)                # no pasta in front
+            self.assertNotIn("--uid", s["cmd"]); self.assertIsNone(s["sec"]); self.assertIsNone(s["resolv"])
+            self.assertTrue(s["kw"].get("pass_fds"), "the filter is still passed as a descriptor")
+            self.assertNotEqual(s["cmd"][s["cmd"].index("--seccomp") + 1], "9", kw)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

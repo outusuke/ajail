@@ -124,6 +124,45 @@ class EveryConfig(unittest.TestCase):
             self.assertEqual("--disable-userns" in a, not c["userns"])
             if "--disable-userns" in a: self.assertIn("--unshare-user", a)     # bwrap refuses --disable-userns without it
 
+class PrivateNetwork(unittest.TestCase):
+    """'Keep localhost private' (net_private): the app runs behind pasta in a network of its own, so it reaches the
+    internet but not this computer. pasta closes inherited descriptors, so the seccomp filter goes in through a file."""
+    SECPATH = "/run/user/1000/ajail/1.d/seccomp.bpf"
+
+    def test_the_pasta_command_is_exactly_this(self):
+        self.assertEqual(A["PASTA"], ["pasta", "--quiet", "--config-net", "--no-map-gw", "--dns-forward", "169.254.1.1",
+                                      "-t", "none", "-u", "none", "-T", "none", "-U", "none", "--"])
+        inner = ["bwrap", "--unshare-all", "--seccomp", "9"]
+        self.assertEqual(A["net_wrap"](inner), A["PASTA"] + inner)
+        self.assertEqual(A["net_wrap"](inner, self.SECPATH),
+                         A["PASTA"] + ["/bin/sh", "-c", 'exec 9<"$1"; shift; exec "$@"', "sh", self.SECPATH] + inner)
+        self.assertEqual(A["SEC_FD"], 9)
+
+    def test_it_needs_the_network_to_be_on(self):
+        self.assertTrue(A["private_net"](cfg(net=1, net_private=1)))
+        for c in (cfg(net=1, net_private=0), cfg(net=0, net_private=1), cfg(net=0, net_private=0)):
+            self.assertFalse(A["private_net"](c))
+
+    def test_bwrap_keeps_your_ids_and_reads_the_filter_from_descriptor_9(self):
+        a = build(cfg(net=1, net_private=1), sec=A["SEC_FD"])
+        i = a.index("--uid")
+        self.assertEqual(a[i:i + 4], ["--uid", str(os.getuid()), "--gid", str(os.getgid())])
+        self.assertIn("--share-net", a)                                   # pasta's network, not the host's
+        self.assertEqual(a[a.index("--seccomp") + 1], "9")
+        for c in (cfg(net=1, net_private=0), cfg(net=0, net_private=1)):
+            self.assertNotIn("--uid", build(c)); self.assertNotIn("--gid", build(c))
+        self.assertNotIn("--share-net", build(cfg(net=0, net_private=1)))     # no network means none, with or without the switch
+
+    def test_resolv_conf_points_at_the_forwarder_only_with_private_net(self):
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(A, {"machine_id": lambda n: "0" * 32 + "\n"}):
+            gen = A["make_files"](cfg(net=1, net_private=1), d)
+            with open(gen["resolv.conf"]) as f: self.assertEqual(f.read(), "nameserver 169.254.1.1\n")
+            for c in (cfg(net=1, net_private=0), cfg(net=0, net_private=1)):
+                self.assertNotIn("resolv.conf", A["make_files"](c, d))
+            a = build(cfg(net=1, net_private=1), gen=gen)
+        self.assertIn(("--ro-bind", gen["resolv.conf"], "/etc/resolv.conf"), binds(a))
+        self.assertNotIn("/etc/resolv.conf", [s for _, s, _ in binds(a)])      # not also the host's own file
+
 class Shares(unittest.TestCase):
     def test_hidden_and_outside_paths_are_skipped(self):
         with tempfile.TemporaryDirectory() as t, unittest.mock.patch.dict(A["safe_path"].__globals__, {"HOME": t}):
