@@ -183,6 +183,7 @@ Switches (0 or 1, default in brackets):
 .BR ssh_agent " (0),"
 .BR printing " (0),"
 .BR theme " (1),"
+.BR app_writable " (0, for apps that fail with Read\-only file system under /app: what they write goes to a separate layer and the app's own files stay unchanged; needs bubblewrap 0.11+),"
 .BR userns " (1; 0 needs bubblewrap 0.8+),"
 .BR tmp_home " (0, private home erased on exit),"
 .BR privacy " (0, minimal /etc/passwd, /etc/group and /etc/hosts and the hostname ajail)"
@@ -226,6 +227,9 @@ Settings for one app; they override the default.
 .TP
 .I ~/.config/ajail/ui.conf
 Choices made in ajail\-gui (open mode, install and disk\-space options).
+The line
+.BI mount. NAME =0|1
+sets compressed installs for one app and beats the global choice.
 .TP
 .I ~/.appimage\-homes/NAME
 The private home of NAME.

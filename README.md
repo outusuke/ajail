@@ -1,6 +1,6 @@
 # ajail
 
-Run AppImages in a [bubblewrap](https://github.com/containers/bubblewrap) sandbox. Each app gets a private home and its own permissions, set Flatseal-style.
+Run AppImages in a [bubblewrap](https://github.com/containers/bubblewrap) sandbox. Each app gets a private home and its own permissions.
 
 - `ajail`: launcher and CLI
 - `ajail-gui`: GTK4 + libadwaita permission editor and installer
@@ -11,125 +11,104 @@ Run AppImages in a [bubblewrap](https://github.com/containers/bubblewrap) sandbo
 ## Install
 
 ```bash
-sudo dnf install bubblewrap squashfs-tools xdg-dbus-proxy libnotify python3-gobject gtk4 libadwaita   # Fedora
+sudo dnf install bubblewrap squashfs-tools xdg-dbus-proxy libnotify python3-gobject gtk4 libadwaita   # Fedora; Debian, Ubuntu and Arch use the same names
 sudo install -m 755 -o root -g root ajail ajail-gui /usr/local/bin/
 ajail check      # lists what is missing, with the install command for your distro
 ajail on         # optional: send every AppImage through ajail (asks for your password)
 ```
 
-Optional extras, each one line:
+`ajail` must be a root-owned `/usr/local/bin/ajail`. Optional extras:
 
 ```bash
-sudo install -Dm644 ajail.1 /usr/local/share/man/man1/ajail.1                                       # man ajail
-ajail desktop --install-menu     # ajail-gui in your app menu; --remove-menu undoes it
-sudo install -Dm644 completions/ajail.bash /usr/local/share/bash-completion/completions/ajail       # bash completion
-sudo install -Dm644 completions/_ajail /usr/local/share/zsh/site-functions/_ajail                   # zsh completion
-sudo install -Dm644 completions/ajail.fish /usr/local/share/fish/vendor_completions.d/ajail.fish    # fish completion
+sudo install -Dm644 ajail.1 /usr/local/share/man/man1/ajail.1
+ajail desktop --install-menu     # ajail-gui in the app menu; --remove-menu undoes it
+sudo install -Dm644 completions/ajail.bash /usr/local/share/bash-completion/completions/ajail
+sudo install -Dm644 completions/_ajail /usr/local/share/zsh/site-functions/_ajail
+sudo install -Dm644 completions/ajail.fish /usr/local/share/fish/vendor_completions.d/ajail.fish
 ```
 
-Open a new shell for the completion to load. If your zsh doesn't find `_ajail`, put it in a folder on your `$fpath` and run `compinit`; the comment at the top of each completion file says how, also for a per-user install.
-
-The app menu entry needs `ajail-gui` installed in `/usr/local/bin` as above: only a root-owned copy is used, so a program running as you can't replace what the menu starts. The "Show AppImage Jail in the app menu" switch in the window does the same as the command.
-
-`ajail` must be at `/usr/local/bin/ajail`, owned by root. Debian/Ubuntu and Arch use the same package names for the core tools.
+- Open a new shell to load completions. Each completion file's header says how to install it per user or fix `$fpath`.
+- The app menu only starts a root-owned `ajail-gui` in `/usr/local/bin`, so a program running as you can't replace it.
 
 **Required:** Linux, Wayland (X11 is a per-app option), Python 3, `bubblewrap`, `squashfs-tools`.
 **Optional:** `xdg-dbus-proxy` (notifications, portals, tray), `passt` (`net_private`), `squashfuse` + `fuse3` (compressed installs), `systemd --user` (resource limits), `notify-send` (failure popups).
 
-## Using it
+## Usage
 
-With `ajail on`, double-click an AppImage and choose **Install** or **Run once**. Terminal launches never prompt. Only type 2 AppImages work, and ajail refuses to run as root.
+With `ajail on`, double-click an AppImage and choose:
 
 | Choice | What happens |
 | --- | --- |
-| **Install** | Unpacks the app once and adds it to your app menu (name, icon, file types). Afterwards ajail asks whether to move the AppImage to the Trash; it can be restored from there. Opening a newer file offers **Update**; data and settings are kept. |
-| **Run once** | Unpacks inside the sandbox, runs, and deletes the unpacked copy on exit. Tick **Don't ask again** to skip this window for that app. Never uses compressed mode. |
+| **Install** | Unpacks the app once and adds it to the app menu. Then offers to move the AppImage to the Trash. Opening a newer file offers **Update**; data and settings are kept. |
+| **Run once** | Unpacks inside the sandbox, runs, deletes the copy on exit. |
 
-Settings for installing are under **Installing** on the main page of `ajail-gui`:
+Terminal launches never prompt. Only type 2 AppImages work, and ajail refuses to run as root. Files passed as arguments or through "Open with" are shared for that run only. The app name is the file name minus version and architecture (`Foo-1.2.3-x86_64.AppImage` is `Foo`).
 
-- **After installing, the AppImage file:** `Ask me` (default), `Move to Trash`, `Keep it`, or `Move into app folder` (only with compressed installs).
-- **Use less disk space:** compressed installs, see below.
+```bash
+ajail FILE.AppImage [args]    # open; prompts when double-clicked
+ajail install FILE            # unpack and add to the app menu
+ajail run NAME [args]         # run an installed app
+ajail list | stop NAME
+ajail uninstall NAME [--purge]
+ajail preview [NAME]          # print the bwrap command
+ajail on | off | status | check
+```
 
-Files passed as arguments or through "Open with" are shared for that run only. The app name is the file name minus version and architecture: `Foo-1.2.3-x86_64.AppImage` becomes `Foo`.
+All commands and options (`--once`, `--trash`, `--mount`, `--move`, `--compat-env`, `restore`, `desktop`): `ajail help` or `man ajail`.
 
 ### Compressed installs (experimental)
 
-Off by default. Needs `squashfuse`, `fuse3` and access to `/dev/fuse`.
+Off by default; needs `squashfuse`, `fuse3` and `/dev/fuse`. Set it under **Installing** in `ajail-gui`, or per app with `mount.NAME=0|1` in `ui.conf`.
 
-- Keeps the AppImage as-is in `~/.local/share/ajail/apps/NAME/image` and mounts it at each launch. Smaller on disk, slower to start.
-- **Trust:** the image is read by `squashfuse` outside the sandbox. Use it only for apps you trust. Installing still unpacks the app briefly to read its launcher and icon, then deletes that copy.
-- Set it for all apps under **Installing**. Override per app on the page of an app that is not installed yet, or with `mount.NAME=0|1` in `ui.conf`. A per-app value beats the global one.
-- **Move into app folder** moves the file into ajail's folder, so there is no duplicate. Files on removable or network drives, symlinks and files in folders you can't write to are copied instead.
-- **Get the file back:** press **Restore…** on the app's page and pick a folder. A copy is placed there and the app keeps working. Uninstalling the app also puts the file back at its original path first.
-
-### Command line
-
-```bash
-ajail FILE.AppImage [args]       # open; prompts when double-clicked
-ajail run-file [--once] [--mount] [--compat-env] FILE
-ajail install FILE [--trash] [--mount [--move]]
-ajail run [--compat-env] NAME [args]   # run an installed app
-ajail list | stop NAME | name FILE
-ajail uninstall NAME [--purge] [--discard-image]
-ajail restore NAME [--keep] [--to FOLDER]
-ajail desktop --install-menu | --remove-menu   # add ajail-gui to the app menu (needs ajail-gui in /usr/local/bin)
-ajail on | off | status | check
-ajail preview [NAME]             # print the bwrap command
-```
-
-- `install --trash` moves the AppImage to the Trash; `--mount` makes it a compressed install; `--move` (with `--mount`) moves the file into ajail's folder.
-- `run-file --once` never mounts, even with `--mount`.
-- `--compat-env` (on `run` it goes before NAME) turns on the [compatibility environment](#compatibility-environment) for this run only. To make it permanent, set `compat_env=1`, or use the **Pass graphics and toolkit settings** switch in `ajail-gui`.
-- `uninstall --purge` moves the app's data to the Trash. It refuses to delete an AppImage that was moved into ajail unless you pass `--discard-image`.
-- `restore` puts a moved AppImage back and uninstalls the app. `--keep` copies it back and leaves the app installed. `--to` picks the folder.
+- Keeps the AppImage as-is and mounts it at each launch: smaller on disk, slower to start.
+- **Trust:** `squashfuse` reads the image outside the sandbox. Use it only for apps you trust.
+- `--move` puts the file in ajail's folder; get it back with **Restore…** or `ajail restore NAME`. Uninstalling also restores it.
 
 ## What the sandbox does
 
-- Only `/usr` and a few `/etc` files are visible, and the environment is rebuilt. Your real `$HOME` is hidden except for folders you share. Each app's home is `~/.appimage-homes/NAME`.
-- Unpacking happens in a separate sandbox with no network and no home.
+- Only `/usr` and a few `/etc` files are visible; the environment is rebuilt. Your `$HOME` is hidden except for shared folders. Each app's home is `~/.appimage-homes/NAME`.
+- Unpacking runs in a separate sandbox with no network and no home.
 - A seccomp blocklist denies `bpf`, `perf_event_open`, `kexec_load` and similar calls.
-- Notifications and portals go through `xdg-dbus-proxy`, which allows only the calls listed under Permissions.
-- The private home is tied to the app's `Name=`. A different app with the same file name is refused instead of inheriting the first one's data.
+- Notifications and portals go through `xdg-dbus-proxy`, which allows only the permitted calls.
+- The private home is tied to the app's `Name=`. A different app with the same file name is refused.
 
 ## Permissions
 
-Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.config/ajail/apps/NAME.conf` (one app). The app file overrides the default. List entries add up, except `xdg`. Spaces around `=` are fine and `#` starts a comment (so a path containing ` #` can't be stored). A line ajail can't use (unknown key, a value other than `0`/`1`, no `=`) is skipped with a warning in the terminal and on the Log page, so a typo is never silent.
+Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.config/ajail/apps/NAME.conf` (one app, overrides the default). Edit them in `ajail-gui`. `#` starts a comment, so a path containing ` #` can't be stored. Lines ajail can't use are skipped with a warning in the terminal and on the Log page.
 
-| Key | Default | Grants |
-| --- | --- | --- |
-| `net` | 1 | Network, including localhost and your LAN |
-| `net_private` | 0 | With `net`: internet but not services on this computer, via `pasta`. Your LAN stays reachable. The app won't start if `pasta` is missing |
-| `sound` | 1 | PipeWire/PulseAudio (includes the microphone) |
-| `gpu` | 1 | `/dev/dri`, NVIDIA devices |
-| `gpu_render_only` | 0 | With `gpu`: only `/dev/dri/renderD*`, not the `card*` devices that can also drive the display |
-| `x11` | 0 | X11 socket (weaker isolation) |
-| `portals` | 1 | Notifications and a fixed set of portals: settings, open links, file chooser, print, background and a few more |
-| `portal_screenshot` | 1 | With `portals`: Screenshot portal |
-| `portal_screencast` | 1 | With `portals`: ScreenCast portal (screen sharing) |
-| `tray` | 0 | Tray icon, media keys |
-| `camera` | 0 | `/dev/video*` and the Camera portal |
-| `input` | 0 | `/dev/input` |
-| `compat_env` | 0 | A short list of graphics and toolkit variables from your session, see [Compatibility environment](#compatibility-environment) |
-| `ssh_agent` | 0 | Your SSH agent; the app can sign as you |
-| `printing` | 0 | CUPS socket |
-| `theme` | 1 | Read-only fonts, icons, themes |
-| `userns` | 1 | App may create its own sandbox (Electron/Chromium need it); `0` needs bubblewrap 0.8+ (with an older one the app is refused, not run without it) |
-| `tmp_home` | 0 | Private home is erased on exit |
-| `privacy` | 0 | Minimal `/etc/passwd`, `/etc/group`, `/etc/hosts`; hostname `ajail` (needs a bubblewrap with `--hostname`, else the app is refused) |
-| `harden` | 0 | Also blocks `io_uring_*`, `userfaultfd`, `process_vm_*`, `kcmp`. May break apps |
+Every key, default and list syntax is in `man ajail`. Keys whose effect isn't obvious:
+
+| Key | Note |
+| --- | --- |
+| `net_private` | With `net`: internet but not services on this computer, via `pasta`. Your LAN stays reachable. The app won't start without `pasta`. |
+| `gpu_render_only` | With `gpu`: only `/dev/dri/renderD*`, not the `card*` devices that can also drive the display. |
+| `x11` | X11 socket. Weaker isolation. |
+| `ssh_agent` | Your SSH agent. The app can sign as you. |
+| `privacy` | Minimal `/etc/passwd`, `/etc/group`, `/etc/hosts`; hostname `ajail`. Needs a bubblewrap with `--hostname`, else the app is refused. |
+
+Other keys: `net`, `sound`, `gpu`, `portals`, `portal_screenshot`, `portal_screencast`, `tray`, `camera`, `input`, `printing`, `theme`, `app_writable` (for apps that fail with "Read-only file system" under `/app`; needs bubblewrap 0.11+), `tmp_home`, `compat_env`. Resource limits (`mem_max`, `cpu_max`, `tasks_max`) need `systemd-run --user`.
+
+```ini
+allow=/home/me/Projects          # read & write
+allow_ro=/media/me/usb/photos    # read-only
+xdg=download                     # also documents, pictures, music, videos, desktop; :ro or :none
+env=MY_VAR=value
+talk=org.example.Service         # extra D-Bus name
+portal=Location                  # opt-in portal; portal=-Location turns it off in an app file
+```
 
 ### Defaults that favor compatibility
 
-Two defaults trade isolation for apps that work out of the box. Both are one switch away from stricter.
+Two defaults trade isolation for apps that work out of the box.
 
-| Key | Default | What you give up | Stricter setting |
+| Key | Default | What you give up | Stricter |
 | --- | --- | --- | --- |
-| `userns` | 1 | The app can create its own user namespaces. Electron and Chromium apps (Discord, Slack, VS Code, most browsers) need this for their internal sandbox, and break without it. Nested namespaces also give the app a larger kernel attack surface to try. | `userns=0` (needs bubblewrap 0.8+). Try it per app; if an app won't start or shows a sandbox error, turn it back on. |
-| `harden` | 0 | `io_uring_*`, `userfaultfd`, `process_vm_readv/writev` and `kcmp` stay available. They are rarely needed, but they have been a source of kernel bugs. Blocking them can slow down or break some apps (databases, some game engines and runtimes use `io_uring`). | `harden=1`. Run the app, and check the Log page if it fails. |
+| `userns` | 1 | The app can create user namespaces, a larger kernel attack surface. Electron and Chromium apps need this for their own sandbox. | `userns=0` (bubblewrap 0.8+). If an app won't start, turn it back on. |
+| `harden` | 0 | `io_uring_*`, `userfaultfd`, `process_vm_*` and `kcmp` stay available. Rarely needed, but a source of kernel bugs. | `harden=1`. May break apps that use `io_uring`; check the Log page. |
 
-Other defaults that open things up on purpose: `net=1`, `sound=1` (includes the microphone), `gpu=1`, `portals=1` with `portal_screenshot=1` and `portal_screencast=1` (the desktop still asks you each time), `theme=1`. Run the [self-test](#self-test) after changing any of them.
+Also open on purpose: `net=1`, `sound=1` (includes the microphone), `gpu=1`, `portals=1` with screenshot and screencast (the desktop still asks each time), `theme=1`. Run the [self-test](#self-test) after changing any of them.
 
-For an app you don't fully trust, a stricter starting point is:
+Stricter starting point for an app you don't trust:
 
 ```ini
 userns=0
@@ -138,47 +117,25 @@ net=0
 sound=0
 ```
 
-Resource limits (`0` = none, needs `systemd-run --user`): `mem_max=2048` (MB), `cpu_max=150` (% of one core), `tasks_max=300`.
-
-List keys:
-
-```ini
-allow=/home/me/Projects          # read & write
-allow_ro=/media/me/usb/photos    # read-only
-xdg=download                     # download, documents, pictures, music, videos, desktop
-xdg=pictures:ro                  # read-only
-xdg=documents:none               # cancel a folder granted in default.conf
-env=MY_VAR=value
-talk=org.gnome.SessionManager    # extra D-Bus name (a wildcard needs three parts first: org.example.App.*)
-portal=Location                  # opt-in portal, one line each
-portal=-Location                 # in an app file: turn off a portal enabled in default.conf
-```
-
-Shared paths must be non-hidden items in your home or under `/mnt/`, `/media/`, `/run/media/$USER/`. Others are skipped with a warning.
-
 ### Compatibility environment
 
-The sandbox starts with an empty environment. Some apps pick the wrong graphics or toolkit back-end that way (a blank window, software rendering, the wrong GPU) because a variable you set in your session never reaches them. With `compat_env=1`, ajail copies the variables below from the session that starts the app, only the ones that are set. It is off by default.
+The sandbox starts with an empty environment, so some apps pick the wrong graphics or toolkit back-end. With `compat_env=1` (or **Pass graphics and toolkit settings** in `ajail-gui`, or `--compat-env` for one run) ajail copies these variables from your session, only if set:
 
-- Exact names: `WGPU_BACKEND`, `WGPU_ADAPTER_NAME`, `WGPU_POWER_PREF`, `ICED_BACKEND`, `LIBGL_ALWAYS_SOFTWARE`, `LIBGL_DRI3_DISABLE`, `VK_ICD_FILENAMES`, `VK_DRIVER_FILES`, `__GLX_VENDOR_LIBRARY_NAME`, `__NV_PRIME_RENDER_OFFLOAD`, `DRI_PRIME`, `SDL_VIDEODRIVER`, `SDL_AUDIODRIVER`, `QT_QPA_PLATFORM`, `QT_QPA_PLATFORMTHEME`, `QT_SCALE_FACTOR`, `GDK_BACKEND`, `GDK_SCALE`, `MOZ_ENABLE_WAYLAND`.
-- Any variable whose name starts with `MESA_` or `RADV_`.
+- `WGPU_BACKEND`, `WGPU_ADAPTER_NAME`, `WGPU_POWER_PREF`, `ICED_BACKEND`, `LIBGL_ALWAYS_SOFTWARE`, `LIBGL_DRI3_DISABLE`, `VK_ICD_FILENAMES`, `VK_DRIVER_FILES`, `__GLX_VENDOR_LIBRARY_NAME`, `__NV_PRIME_RENDER_OFFLOAD`, `DRI_PRIME`, `SDL_VIDEODRIVER`, `SDL_AUDIODRIVER`, `QT_QPA_PLATFORM`, `QT_QPA_PLATFORMTHEME`, `QT_SCALE_FACTOR`, `GDK_BACKEND`, `GDK_SCALE`, `MOZ_ENABLE_WAYLAND`
+- Any name starting with `MESA_` or `RADV_`.
 
-Nothing else is passed: not `PATH`, tokens or keys, `SSH_AUTH_SOCK` (use `ssh_agent`), `DBUS_*`, or anything not listed. A variable ajail sets itself is never replaced, and an `env=` line still wins over a copied value. The list is fixed in ajail; `ajail preview` shows what would be passed.
-
-Paths in `VK_ICD_FILENAMES` and `VK_DRIVER_FILES` are not shared: they only work if the files are inside the sandbox (for example under `/usr` or `/etc/vulkan`).
+Nothing else is passed: not `PATH`, tokens, keys, `SSH_AUTH_SOCK` (use `ssh_agent`) or `DBUS_*`. The list is fixed. A variable ajail sets itself is never replaced; an `env=` line wins over a copied value. `ajail preview` shows what is passed. Files named in `VK_ICD_FILENAMES` and `VK_DRIVER_FILES` are not shared; they only work from inside the sandbox (for example under `/usr`).
 
 ### Opt-in portals
 
-`Location`, `GlobalShortcuts`, `RemoteDesktop`, `InputCapture`, `Wallpaper`, `DynamicLauncher` and `Secret` are blocked unless enabled with `portal=NAME`. They need `portals=1`, and unknown names are ignored with a warning. The desktop may still show its own prompt.
+`Location`, `GlobalShortcuts`, `RemoteDesktop`, `InputCapture`, `Wallpaper`, `DynamicLauncher` and `Secret` are blocked unless enabled with `portal=NAME`. They need `portals=1`; unknown names are ignored with a warning. The desktop may still prompt.
 
 - `RemoteDesktop` and `InputCapture` can control or capture your keyboard and mouse.
-- `Secret` can read the desktop's stored secrets. The Secret *service* (`org.freedesktop.secrets`) stays blocked.
-
-In `ajail-gui` each portal is a switch on the app's page. A portal enabled in the default settings shows as on for every app, and turning it off on an app's page writes `portal=-NAME` for that app only.
+- `Secret` can read the desktop's stored secrets. The `org.freedesktop.secrets` service stays blocked.
 
 ### Resetting
 
-**Reset all settings…** on the main page of `ajail-gui` clears `default.conf`, every app's permission file and `ui.conf` (open mode, install and disk-space choices). It does not touch app data or installed apps. Each app's page has its own **Reset** buttons for permissions and data.
+**Reset all settings…** in `ajail-gui` clears `default.conf`, every app's file and `ui.conf`. App data and installed apps are untouched. Each app's page has its own **Reset** buttons.
 
 ## Self-test
 
@@ -186,46 +143,32 @@ In `ajail-gui` each portal is a switch on the app's page. A portal enabled in th
 ./make-selftest && ajail ./ajail-selftest.AppImage
 ```
 
-Prints what the sandbox exposes and saves it to `selftest-report.txt` in the app's private home. Opt-in portals should read `blocked`; `EXPOSED` means one is reachable without being enabled. Portal rows only appear when the app has a session bus (`portals=1`).
-
-## Tests
-
-```bash
-python3 test_build.py       # ajail and ajail-gui are up to date with src/, and the layer rule holds
-python3 test_parse.py       # settings parser: spaces, comments, warnings
-python3 test_sync.py        # the permission tables in ajail and ajail-gui match
-python3 test_portals.py     # extra portals (unit tests, no sandbox needed)
-python3 test_compat.py      # compat_env: which variables reach the sandbox
-python3 test_output.py      # control characters from an AppImage never reach the terminal
-python3 test_cli.py         # unknown --options are errors
-python3 test_sandbox.py     # properties of the bwrap command that hold for every configuration
-python3 test_hints.py       # troubleshooting hints for log lines (ajail-gui logic)
-python3 test_icons.py       # icon lookup for installed apps
-python3 test_logcolor.py    # Log page colors (ajail-gui logic)
-python3 test_hostile.py     # hostile AppImages (needs bubblewrap and squashfs-tools; run as a normal user)
-```
-
-`test_hostile.py` builds AppImages with links pointing outside the app, link loops, huge icons and `.desktop` files, injected `Exec=` lines, odd file names and impostors of an installed app. It runs a copy of `ajail` in a temporary home and checks that nothing outside the AppImage was copied, shown or run, and that the canary files it planted stayed untouched.
+Prints what the sandbox exposes and saves `selftest-report.txt` in the app's private home. Opt-in portals should read `blocked`; `EXPOSED` means one is reachable without being enabled.
 
 ## Development
 
-`ajail` is generated from `src/*.py` so the security-critical part can be read on its own (`src/20_core.py`). Edit the
-files in `src/`, then run `./build.py` and commit the regenerated `ajail`. Do not edit `ajail` directly.
-`./build.py --check` verifies that the core only depends on lower layers. See [src/README.md](src/README.md) for the
-review order.
+`ajail` and `ajail-gui` are generated from `src/` and `src/gui/`. Edit the fragments, run `./build.py`, commit the result; never edit the generated files. Layering and review order: [src/README.md](src/README.md).
+
+Checks (same as CI):
+
+```bash
+python3 test_build.py                                   # generated files are current, layer rule holds
+python3 -m pyflakes ajail ajail-gui build.py make-selftest test_*.py
+for t in test_*.py; do python3 $t; done                 # test_hostile.py needs bubblewrap and squashfs-tools, run as a normal user
+```
 
 ## Files
 
 | Path | Contents |
 | --- | --- |
-| `~/.config/ajail/` | Settings, app identities, `ui.conf` (choices made in `ajail-gui`) |
+| `~/.config/ajail/` | Settings, app identities, `ui.conf` |
 | `~/.appimage-homes/NAME` | Private home |
 | `~/.local/share/ajail/apps/NAME/` | Installed app: `root/` (unpacked) or `image` (compressed) |
-| `~/.local/share/ajail/extracted/` | Cache for apps run without installing; safe to delete |
-| `~/.local/share/applications/ajail-NAME.desktop` | Generated launcher (name, categories, file types, icon; never the app's `Exec`) |
+| `~/.local/share/ajail/extracted/` | Cache for run-once apps; safe to delete |
+| `~/.local/share/applications/ajail-NAME.desktop` | Generated launcher, never the app's own `Exec` |
 | `~/.local/state/ajail/ajail.log` | Launch log and app stderr |
 
-If an app exits with an error within 10 seconds, ajail sends a notification that opens its log in `ajail-gui`. When the last run of an app ended with an error and its log matches a known failure (its own sandbox, a missing graphics device, a read-only `/app`, X11, network, camera), the Log page suggests the setting that usually fixes it. Nothing changes until you press the button.
+An app that exits with an error within 10 seconds triggers a notification that opens its log. If the log matches a known failure, the Log page suggests a setting; nothing changes until you press the button.
 
 ## Limitations
 
