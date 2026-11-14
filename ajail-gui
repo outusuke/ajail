@@ -620,6 +620,7 @@ class Win(Adw.ApplicationWindow):
         super().__init__(application=app, title="AppImage Jail", default_width=560, default_height=800)
         self._busy = False
         self.rows, self.badges = [], {}
+        self.app_pages = {}      # scope -> the app page last built for it (see refresh_app_page)
         self.toasts = Adw.ToastOverlay()
         self.nav = Adw.NavigationView()
         self.toasts.set_child(self.nav)
@@ -1053,7 +1054,16 @@ class Win(Adw.ApplicationWindow):
         self.dialog = dlg
         dlg.present(self)
 
-    def open_app(self, scope):
+    def refresh_app_page(self, scope):
+        """Build SCOPE's app page again if it is in the page stack. A page keeps its own copy of the settings, so one changed from
+        another page (a suggestion on the troubleshooting page) would stay invisible there, and the next switch pressed on the old
+        page would write its stale copy over the change. Pages above it stay. Nothing happens when the page is not open."""
+        mine = self.app_pages.get(scope)
+        stack = self.nav.get_navigation_stack()
+        pages = [stack.get_item(i) for i in range(stack.get_n_items())]
+        if mine is not None and mine in pages: self.open_app(scope, replace=pages)
+
+    def open_app(self, scope, replace=None):
         d = dump(scope or "")
         G = d["global"]
         A = d.get("app") or empty()
@@ -1626,7 +1636,9 @@ class Win(Adw.ApplicationWindow):
         view.set_content(page)
         np = Adw.NavigationPage(title=title, child=view)
         np.connect("hidden", lambda *_: self.fill_apps())
-        self.nav.push(np)
+        old, self.app_pages[scope] = self.app_pages.get(scope), np
+        if replace is None: self.nav.push(np)
+        else: self.nav.replace([np if p is old else p for p in replace])
 
     def open_trouble(self, scope):
         page = Adw.PreferencesPage()
@@ -1662,6 +1674,7 @@ class Win(Adw.ApplicationWindow):
                         R["s"][key] = want
                     try:
                         write_cfg(scope, R)
+                        self.refresh_app_page(scope)               # the page below shows the new value when you go back
                         self.toast("Saved. It applies the next time the app starts.")
                     except OSError as e:
                         self.toast(f"Could not save: {e.strerror or e}")
