@@ -21,6 +21,7 @@ jobs:
           python3 test_cli.py
           python3 test_sandbox.py
           python3 test_hints.py
+          python3 test_env.py
           python3 test_icons.py
           python3 test_logcolor.py
           python3 test_log.py

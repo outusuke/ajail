@@ -822,9 +822,54 @@ class Win(Adw.ApplicationWindow):
             refill_l()
             page.add(lg)
 
-        list_group("Environment variables", "Extra variables set for this app.", "env",
-                   ["Name", "Value"],
-                   lambda v: f"{v[0]}={v[1]}" if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v[0]) else None)
+        def env_group():
+            """One editable row per variable (NAME=value): the row on top adds one, a row's text is changed where it stands
+            (Enter or the check mark). Variables from the default settings show on an app's page, read-only."""
+            eg = Adw.PreferencesGroup(title="Environment variables",
+                                      description="ajail starts the app with a clean environment. NAME=value sets a "
+                                                  "variable for it, for example SDL_VIDEODRIVER=x11.")
+            erows = []
+
+            def apply(row, old):
+                """old: the entry this row shows, None for the row that adds."""
+                if old is not None and row.get_text().strip() == old:
+                    return                                    # nothing changed
+                item, bad = parse_env_entry(row.get_text())
+                if bad:
+                    self.toast(bad)
+                    if old is not None:
+                        row.set_text(old)
+                    return
+                R["env"] = env_replace(R["env"], item, old)
+                commit()
+                GLib.idle_add(refill_e)                       # not while the row is still handling its own signal
+
+            def refill_e():
+                for r in erows:
+                    eg.remove(r)
+                erows.clear()
+                new = Adw.EntryRow(title="New variable (NAME=value)", show_apply_button=True)
+                new.connect("apply", lambda r: apply(r, None))
+                eg.add(new)
+                erows.append(new)
+                for v in (G["env"] if scope else []):
+                    r = Adw.ActionRow(title=esc(v), subtitle="From default settings")
+                    eg.add(r)
+                    erows.append(r)
+                for v in R["env"]:
+                    r = Adw.EntryRow(title="Variable", text=v, show_apply_button=True)
+                    r.connect("apply", lambda r, old=v: apply(r, old))
+                    rm = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Remove")
+                    rm.add_css_class("flat")
+                    rm.connect("clicked", lambda b, v=v: (R["env"].remove(v), commit(), GLib.idle_add(refill_e)))
+                    r.add_suffix(rm)
+                    eg.add(r)
+                    erows.append(r)
+
+            refill_e()
+            page.add(eg)
+
+        env_group()
         # One switch per opt-in portal. A portal enabled in the default settings shows as on on an app's page;
         # turning it off there stores "portal=-NAME" in that app's settings, which undoes the default for this app only.
         pg = Adw.PreferencesGroup(

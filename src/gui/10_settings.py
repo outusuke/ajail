@@ -64,6 +64,29 @@ def has_comment(v):
     """ajail reads " #..." in a settings line as a comment, so such a value could not be stored faithfully."""
     return bool(re.search(r"(^|\s)#", v))
 
+ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")      # same rule as ajail's env= handling
+
+def parse_env_entry(text):
+    """(item, problem) for what is typed in a variable row: NAME=value. The problem is None when it can be stored."""
+    name, eq, val = text.strip().partition("=")
+    name, val = name.strip(), val.strip()
+    if not eq: return None, "Type NAME=value, for example SDL_VIDEODRIVER=x11."
+    if not ENV_NAME_RE.fullmatch(name): return None, "A variable name has letters, digits and _, and doesn't start with a digit."
+    if has_comment(val): return None, "A value can't contain ' #': ajail would read the rest as a comment."
+    return f"{name}={val}", None
+
+def env_replace(items, item, old=None):
+    """ITEMS with the variable ITEM (NAME=value) stored: in place of OLD (the entry a row showed) when given, else where the
+    same name already stands, else at the end. One value per variable name: other entries with that name are dropped."""
+    name = item.partition("=")[0]
+    out, placed = [], False
+    for v in items:
+        if v == old or v.partition("=")[0] == name:
+            if not placed: out.append(item); placed = True
+            continue
+        out.append(v)
+    return out if placed else out + [item]
+
 def path_ok(p):
     p = os.path.realpath(p)
     if "\n" in p or has_comment(p) or not os.path.exists(p):
