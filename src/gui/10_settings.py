@@ -239,12 +239,31 @@ LOG_HINTS = [
      "net", 1, "Allow internet", "The app tried to use the network.", {}),
     (r"/dev/video\d|no (such )?(video )?(capture )?device.{0,30}camera|camera.{0,30}(not found|no device)",
      "camera", 1, "Allow the camera", "The app tried to open a camera.", {}),
+    # A wgpu app whose shader needs a feature the chosen graphics adapter lacks. OpenGL keeps the card and often gets past
+    # it; for iced apps the processor renderer is the second choice. Both are listed, OpenGL first.
+    (r"wgpu error: validation error[\s\S]*requires capability",
+     "env", "WGPU_BACKEND=gl", "Draw with OpenGL instead of Vulkan (a guess)",
+     "The app's graphics library chose a Vulkan device that lacks a feature the app needs. OpenGL keeps the graphics card and often works.", {}),
+    (r"wgpu error: validation error[\s\S]*iced_wgpu|iced_wgpu[\s\S]*wgpu error: validation error",
+     "env", "ICED_BACKEND=tiny-skia", "If that does not help: draw on the processor (a guess)",
+     "The app draws with iced, which can skip the graphics card entirely. Slower, but it needs nothing from the card.", {}),
+    # A silent crash (segfault, abort, trap) while user namespaces are off: Chrome, Chromium and Electron die like this when
+    # they cannot make their own sandbox, often with only a core dump and no message. Shown only while "userns" is off.
+    (r"\] EXIT code=(13[2-6]|139|159)\b",
+     "userns", 1, "Allow the app's own sandbox (a guess)",
+     "The app crashed and left no reason in the log. Chrome, Chromium and Electron crash like this when they cannot create their own sandbox, and user namespaces are off for this app.", {"userns": 0}),
     # A guess, last so any specific X11 message above wins: a crash right after start, with nothing in the log saying why
     # (installers often send stderr to /dev/null). A GUI that only speaks X11 dies like this.
     (r"aborted \(core dumped\)|\] EXIT code=134\b",
      "x11", 1, "Try X11 compatibility (a guess)",
      "The app crashed right after starting and left no reason in the log. It may be a GUI that needs X11. This weakens isolation, so use it only for this app.", {}),
 ]
+
+HINT_LISTS = ("env",)        # lists a hint may add to; the button appends NAME=value to the app's own file
+
+def effective_lists(G, A):
+    """The list values an app runs with: default.conf and the app's own file add up."""
+    return {k: list(G.get(k, [])) + (list(A.get(k, [])) if A else []) for k in HINT_LISTS}
 
 def effective_switches(G, A):
     """The switch values an app runs with: built-in defaults, then default.conf, then the app's own file."""
@@ -266,22 +285,29 @@ def last_run(lines):
             break
     return run_lines, code
 
-def log_hints(lines, current):
+def log_hints(lines, current, lists=None):
     """Suggestions for an app, as [(setting, wanted value, title, why)]. Only for a last run that ended with an error;
-    LINES are that app's log lines, CURRENT its effective switches (see effective_switches)."""
+    LINES are that app's log lines, CURRENT its effective switches (see effective_switches), LISTS its effective lists
+    (see effective_lists). A hint on a list key (env) wants "NAME=value"."""
     run_lines, code = last_run(lines)
     if code in (None, 0):
         return []
     text = "".join(run_lines[-300:])[-200_000:]
     out, seen = [], set()
     for pat, key, want, title, why, needs in LOG_HINTS:
-        if key in seen or current.get(key) == want:
+        if (key, want) in seen:
+            continue
+        if key in HINT_LISTS:                      # already there (a variable counts when it is set at all: chosen on purpose)
+            have = (lists or {}).get(key, [])
+            if want in have or any(h.partition("=")[0] == want.partition("=")[0] for h in have):
+                continue
+        elif current.get(key) == want:
             continue
         if any(current.get(k) != v for k, v in needs.items()):
             continue
         if re.search(pat, text, re.I):
             out.append((key, want, title, why))
-            seen.add(key)
+            seen.add((key, want))
     return out
 
 # Colors for the Log page. Pure parsing here; the window layer maps each kind to a text color.

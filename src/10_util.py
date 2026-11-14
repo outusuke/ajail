@@ -95,20 +95,21 @@ def notify(msg, critical=False):
         try:
             subprocess.run(["notify-send", "-u", "critical" if critical else "normal", "ajail", msg],
                            timeout=5, check=False)
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             pass
 
-def notify_failure(name):
-    """Critical notification; clicking it (or its 'Open log' button) opens ajail-gui on this app's log. Waiting for the
-    click happens in a detached child, so ajail can exit at once."""
+def notify_click(plain, clicked, label, gui_args, urgency="critical"):
+    """A desktop notification. Where notify-send can do actions, it says CLICKED and a click on the LABEL button opens
+    ajail-gui with GUI_ARGS; the waiting for the click happens in a detached child, so ajail can exit at once. Without
+    actions (an old notify-send, or no ajail-gui to open) it is a plain popup saying PLAIN. Nothing happens without
+    notify-send."""
     ns = shutil.which("notify-send")
     if not ns: return
-    msg = f"{name} failed to start. Click to open the log."
     gui = shutil.which("ajail-gui") or f"{os.path.dirname(SELF)}/ajail-gui"
     try: actions = "--action" in subprocess.run([ns, "--help"], capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError): actions = False
     if not actions or not os.access(gui, os.X_OK):
-        notify(f"{name} failed to start. Open ajail-gui > Log.", critical=True); return
+        notify(plain, critical=urgency == "critical"); return
     try:
         if os.fork(): return                      # parent carries on and exits
     except OSError:
@@ -117,13 +118,42 @@ def notify_failure(name):
         os.setsid()
         dn = os.open(os.devnull, os.O_RDWR)
         for fd in (0, 1, 2): os.dup2(dn, fd)
-        r = subprocess.run([ns, "-u", "critical", "-A", "default=Open log", "--wait", "ajail", msg],
+        r = subprocess.run([ns, "-u", urgency, "-A", f"default={label}", "--wait", "ajail", clicked],
                            capture_output=True, text=True, timeout=900)
-        if r.stdout.strip() == "default": subprocess.Popen([gui, "--log", name], start_new_session=True)
+        if r.stdout.strip() == "default": subprocess.Popen([gui, *gui_args], start_new_session=True)
     except Exception:
         pass
     finally:
         os._exit(0)
+
+# Signals that mean the app itself crashed (nobody stopped it), and how a notification says it.
+CRASH_SIGNALS = {"SIGSEGV": "segmentation fault", "SIGABRT": "aborted", "SIGBUS": "bus error", "SIGILL": "illegal instruction",
+                 "SIGFPE": "arithmetic error", "SIGTRAP": "trap", "SIGSYS": "bad system call"}
+STOP_CODES = (129, 130, 143)    # shell exit codes of SIGHUP, SIGINT, SIGTERM: someone stopped it, nothing went wrong
+
+def crash_signal(rc):
+    """The name of the crash signal (SIGSEGV, SIGABRT, ...) that killed the app, or None. RC is the wait status of what
+    ajail started: negative when a signal killed it directly, 128 + the signal when bwrap reports it for the app inside."""
+    sig = -rc if rc < 0 else rc - 128 if rc > 128 else 0
+    try: name = signal.Signals(sig).name
+    except ValueError: return None
+    return name if name in CRASH_SIGNALS else None
+
+def notify_crash(name, sig):
+    """A critical notification that the app crashed (killed by SIG), however long it had been running. Where
+    notify-send can do actions, clicking it opens ajail-gui on this app's log."""
+    what = f"crashed ({CRASH_SIGNALS[sig]}, {sig})"
+    notify_click(f"{name} {what}. Open ajail-gui > Log.", f"{name} {what}. Click to open the log.", "Open log", ["--log", name])
+
+def notify_ended(name, code):
+    """A normal-urgency notification that an app started without a terminal (app menu, file manager) ended with an
+    error after running for a while. Where it can, clicking it opens the log."""
+    what = f"stopped with an error (exit code {code})"
+    notify_click(f"{name} {what}. Open ajail-gui > Log.", f"{name} {what}. Click to open the log.", "Open log", ["--log", name], "normal")
+
+def notify_failure(name):
+    """Critical notification; clicking it (or its 'Open log' button) opens ajail-gui on this app's log."""
+    notify_click(f"{name} failed to start. Open ajail-gui > Log.", f"{name} failed to start. Click to open the log.", "Open log", ["--log", name])
 
 JOURNAL_SOCK = "/run/systemd/journal/stdout"
 
@@ -148,7 +178,7 @@ def journal_tag(ident, sock=JOURNAL_SOCK):
             s.shutdown(socket.SHUT_RD)
             for f in (sys.stdout, sys.stderr):
                 try: f.flush()
-                except Exception: pass
+                except (OSError, ValueError): pass
             for fd in fds: os.dup2(s.fileno(), fd)
         st = os.fstat(fds[0])
         os.environ["JOURNAL_STREAM"] = f"{st.st_dev}:{st.st_ino}"

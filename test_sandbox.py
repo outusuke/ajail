@@ -241,5 +241,37 @@ class OldBubblewrapFailsClosed(unittest.TestCase):
         a = build(cfg(userns=0, privacy=1))
         self.assertIn("--disable-userns", a); self.assertIn("--hostname", a)
 
+class SeccompList(unittest.TestCase):
+    """What the generated filter blocks, read back from the BPF program itself."""
+    def blocked(self, harden):
+        import struct
+        f = A["seccomp_file"](harden); data = f.read(); f.close()
+        ins = [struct.unpack("=HBBI", data[i:i + 8]) for i in range(0, len(data), 8)]
+        # skip the arch check and the x32 test; what is left are the listed numbers, then the allow and deny returns
+        return {k for code, jt, jf, k in ins[4:] if code == 0x15}
+
+    def test_the_default_filter_has_the_original_list_and_nothing_more(self):
+        import platform
+        base = {"x86_64": A["SYSCALLS_X86_64"], "aarch64": A["SYSCALLS_AARCH64"]}.get(platform.machine())
+        if base is None: self.skipTest("no filter for this CPU")
+        self.assertEqual(self.blocked(False), set(base))
+
+    def test_harden_adds_io_uring_the_new_mount_calls_and_pidfd_getfd(self):
+        import platform
+        if platform.machine() not in A["SYSCALLS_EXTRA"]: self.skipTest("no filter for this CPU")
+        extra = self.blocked(True) - self.blocked(False)
+        for nr in (425, 426, 427,                        # io_uring_setup, _enter, _register
+                   428, 429, 430, 431, 432, 433, 442,    # open_tree, move_mount, fsopen, fsconfig, fsmount, fspick, mount_setattr
+                   438):                                 # pidfd_getfd
+            self.assertIn(nr, extra, nr)
+        self.assertTrue(self.blocked(False) < self.blocked(True))      # harden only ever adds
+        self.assertTrue(extra.isdisjoint(self.blocked(False)))
+
+    def test_the_two_lists_are_the_same_length_on_both_cpus_apart_from_the_cpu_specific_calls(self):
+        e = A["SYSCALLS_EXTRA"]
+        self.assertEqual(len(e["x86_64"]), len(e["aarch64"]))
+        self.assertEqual(len(set(e["x86_64"])), len(e["x86_64"])); self.assertEqual(len(set(e["aarch64"])), len(e["aarch64"]))
+
+
 if __name__ == "__main__":
     unittest.main()

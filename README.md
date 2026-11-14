@@ -84,7 +84,7 @@ portal=Location                  # opt-in portal; portal=-Location turns it off 
 | Key | Default | What you give up | Stricter |
 | --- | --- | --- | --- |
 | `userns` | 1 | The app can create user namespaces, a larger kernel attack surface. Electron and Chromium apps need this. | `userns=0` (bubblewrap 0.8+) |
-| `harden` | 0 | `io_uring_*`, `userfaultfd`, `process_vm_*` and `kcmp` stay available. | `harden=1`; may break apps, check the Log page |
+| `harden` | 0 | `io_uring_*`, `userfaultfd`, `process_vm_*`, `kcmp`, `pidfd_getfd` and the new mount calls (`fsopen`, `move_mount` and friends) stay available. | `harden=1`; may break apps, check the Log page |
 
 Also open on purpose: `net=1`, `sound=1` (includes the microphone), `gpu=1`, `portals=1` with screenshot and screencast (the desktop still asks), `theme=1`.
 
@@ -137,7 +137,7 @@ for t in test_*.py; do python3 $t; done                 # test_hostile.py needs 
 - Installed apps: `~/.local/share/ajail/apps/NAME/`
 - Log: `~/.local/state/ajail/ajail.log`
 
-An app that exits with an error within 10 seconds triggers a notification that opens its log.
+A notification that opens the app's log appears when an app exits with an error within 10 seconds, when it crashes (segmentation fault, abort and similar) at any time, and, for apps started without a terminal, when it exits with an error later.
 
 ## Limitations
 

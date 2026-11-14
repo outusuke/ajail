@@ -188,7 +188,7 @@ Switches (0 or 1, default in brackets):
 .BR tmp_home " (0, private home erased on exit),"
 .BR privacy " (0, minimal /etc/passwd, /etc/group and /etc/hosts and the hostname ajail)"
 and
-.BR harden " (0, also blocks io_uring_*, userfaultfd, process_vm_* and kcmp; may break apps)."
+.BR harden " (0, also blocks io_uring_*, userfaultfd, process_vm_*, kcmp, pidfd_getfd and the new mount calls (open_tree, move_mount, fsopen, fsconfig, fsmount, fspick, mount_setattr); may break apps)."
 .PP
 Limits (0 means none; need
 .BR "systemd\-run \-\-user" ):

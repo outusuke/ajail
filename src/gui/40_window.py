@@ -992,14 +992,17 @@ class Win(Adw.ApplicationWindow):
             hints = []
             if scope:
                 d = dump(scope)
-                hints = log_hints(lines, effective_switches(d["global"], d.get("app")))
+                hints = log_hints(lines, effective_switches(d["global"], d.get("app")), effective_lists(d["global"], d.get("app")))
             for key, want, title, why in hints:
                 row = Adw.ActionRow(title=esc(title), subtitle=esc(why))
-                btn = Gtk.Button(label="Turn on" if want else "Turn off", valign=Gtk.Align.CENTER)
+                btn = Gtk.Button(label="Add" if key in HINT_LISTS else "Turn on" if want else "Turn off", valign=Gtk.Align.CENTER)
 
                 def apply(_b, key=key, want=want):
                     R = dump(scope).get("app") or empty()
-                    R["s"][key] = want
+                    if key in HINT_LISTS:
+                        if want not in R[key]: R[key].append(want)
+                    else:
+                        R["s"][key] = want
                     try:
                         write_cfg(scope, R)
                         self.toast("Saved. It applies the next time the app starts.")

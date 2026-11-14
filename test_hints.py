@@ -7,7 +7,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 def load():
     tree = ast.parse(open(f"{HERE}/ajail-gui").read())
-    want_assign, want_def = {"DEFAULTS", "LOG_HINTS"}, {"effective_switches", "last_run", "log_hints"}
+    want_assign, want_def = {"DEFAULTS", "LOG_HINTS", "HINT_LISTS"}, {"effective_switches", "effective_lists", "last_run", "log_hints"}
     body = [n for n in tree.body
             if (isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name) and n.targets[0].id in want_assign)
             or (isinstance(n, ast.FunctionDef) and n.name in want_def)]
@@ -20,7 +20,7 @@ START = "[2026-11-11 20:00:00] [app] START allow=[net,sound,gpu] limits=[] secco
 def exit_(code): return f"[2026-11-11 20:00:05] [app] EXIT code={code}\n"
 def run(*body, code=1): return [START] + [f"[app] {b}\n" for b in body] + ([exit_(code)] if code is not None else [])
 def cur(**kw): return {**G["DEFAULTS"], **kw}
-def keys(lines, current=None): return [(k, w) for k, w, *_ in G["log_hints"](lines, current or cur())]
+def keys(lines, current=None, lists=None): return [(k, w) for k, w, *_ in G["log_hints"](lines, current or cur(), lists)]
 
 class Hints(unittest.TestCase):
     def test_sandbox_error_suggests_userns_when_it_is_off(self):
@@ -50,6 +50,45 @@ class Hints(unittest.TestCase):
         self.assertNotIn("a guess", G["log_hints"](l, cur())[0][2])
         self.assertEqual(keys(run(code=134), cur()) and G["log_hints"](run(code=134), cur())[0][2][-9:], "(a guess)")
 
+    WGPU = ["wgpu error: Validation Error", "Caused by:", "  In Device::create_shader_module, label = 'iced_wgpu.quad.solid.shader'",
+            "Shader requires capability Capabilities(SHADER_FLOAT16_IN_FLOAT32)"]
+
+    def test_a_wgpu_shader_failure_suggests_opengl_then_for_iced_the_processor(self):
+        l = run(*self.WGPU, code=101)
+        gl, cpu = ("env", "WGPU_BACKEND=gl"), ("env", "ICED_BACKEND=tiny-skia")
+        self.assertEqual(keys(l, lists={}), [gl, cpu])                                       # OpenGL first, the processor second
+        self.assertEqual(keys(l, lists={"env": ["WGPU_BACKEND=gl"]}), [cpu])                 # still failing with it: the next one
+        self.assertEqual(keys(l, lists={"env": ["WGPU_BACKEND=gl", "ICED_BACKEND=tiny-skia"]}), [])
+        self.assertEqual(keys(l, lists={"env": ["WGPU_BACKEND=vulkan", "ICED_BACKEND=wgpu"]}), [])     # chosen on purpose: leave them
+        other = run("wgpu error: Validation Error", "Shader requires capability Capabilities(X)", code=101)    # wgpu, not iced
+        self.assertEqual(keys(other, lists={}), [gl])
+        plain = run("wgpu error: Validation Error", "something in another_crate", code=101)    # no capability message: nothing to say
+        self.assertEqual(keys(plain, lists={}), [])
+        self.assertEqual(keys(run(*self.WGPU, code=0), lists={}), [])                          # a clean run needs no advice
+
+    def test_effective_lists_add_up_the_default_and_the_apps_own_file(self):
+        g = {"env": ["A=1"], "allow": ["/x"]}
+        self.assertEqual(G["effective_lists"](g, {"env": ["WGPU_BACKEND=gl"]}), {"env": ["A=1", "WGPU_BACKEND=gl"]})
+        self.assertEqual(G["effective_lists"](g, None), {"env": ["A=1"]})
+        self.assertEqual(keys(run(*self.WGPU, code=101), lists=G["effective_lists"]({"env": ["WGPU_BACKEND=gl"]}, None)), [("env", "ICED_BACKEND=tiny-skia")])
+
+    def test_a_silent_crash_suggests_userns_only_while_it_is_off(self):
+        for code in (132, 133, 134, 135, 136, 139, 159):
+            l = run(code=code)
+            self.assertIn(("userns", 1), keys(l, cur(userns=0)), code)
+            self.assertNotIn(("userns", 1), keys(l, cur(userns=1)), code)                    # on already: that is not the reason
+        l = run(code=139)
+        self.assertEqual(keys(l, cur(userns=1)), [])                                         # a segfault with userns on is no guess of ours
+        both = keys(run(code=134), cur(userns=0))
+        self.assertEqual(both, [("userns", 1), ("x11", 1)])                                  # the sandbox guess first, X11 last
+        self.assertEqual(keys(run(code=1), cur(userns=0)), [])                               # an ordinary failure is no guess
+        self.assertEqual(keys(run("FATAL: No usable sandbox!", code=139), cur(userns=0)), [("userns", 1)])    # the specific one, once
+
+    def test_the_exit_line_with_a_signal_name_still_counts(self):
+        l = [START, "[2026-11-11 20:00:05] [app] EXIT code=139 (SIGSEGV)\n"]
+        self.assertEqual(G["last_run"](l)[1], 139)
+        self.assertIn(("userns", 1), keys(l, cur(userns=0)))
+
     def test_x11_network_camera(self):
         self.assertEqual(keys(run("Error: cannot open display: :0")), [("x11", 1)])
         self.assertEqual(keys(run("curl: (6) Temporary failure in name resolution"), cur(net=0)), [("net", 1)])
@@ -78,7 +117,9 @@ class Hints(unittest.TestCase):
     def test_every_hint_names_a_real_switch_and_a_real_value(self):
         for pat, key, want, title, why, needs in G["LOG_HINTS"]:
             re.compile(pat)
-            self.assertIn(key, G["DEFAULTS"]); self.assertIn(want, (0, 1)); self.assertTrue(title and why)
+            if key in G["HINT_LISTS"]: self.assertRegex(want, r"^[A-Za-z_][A-Za-z0-9_]*=.+$")      # env=NAME=value
+            else: self.assertIn(key, G["DEFAULTS"]); self.assertIn(want, (0, 1))
+            self.assertTrue(title and why)
             for k, v in needs.items(): self.assertIn(k, G["DEFAULTS"])
 
     def test_effective_switches_layers(self):

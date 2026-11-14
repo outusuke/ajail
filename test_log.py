@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The launch log: how it is written (private, never through a link, trimmed in place, no injected control characters),
 what reaches it (errors, exit codes, an app's stderr) and when a failed-start popup is sent."""
-import contextlib, io, os, signal, socket, subprocess, sys, tempfile, threading, unittest
+import contextlib, io, os, signal, socket, subprocess, sys, tempfile, threading, time, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -74,7 +74,8 @@ class Launch(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
         names = ("check_identity", "sweep_runtime", "start_bus", "work_dir", "limit_prefix", "forward_files", "stop_bus", "running",
-                 "notify_failure", "journal_tag", "HOMES", "RUNNING", "SOURCES", "LOG", "STATE", "subprocess")
+                 "notify_failure", "notify_crash", "notify_ended", "journal_tag", "HOMES", "RUNNING", "SOURCES", "LOG", "STATE",
+                 "subprocess", "time")
         self.keep = {k: A[k] for k in names}
         self.sigs = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
         self.child, self.popups = "pass", []
@@ -86,7 +87,8 @@ class Launch(unittest.TestCase):
             Popen = P
         A.update(check_identity=lambda *a: None, sweep_runtime=lambda: None, start_bus=lambda *a: None, work_dir=lambda: f"{self.d}/wd",
                  limit_prefix=lambda *a: [], forward_files=lambda e: [], stop_bus=lambda b: None, running=lambda n: False,
-                 notify_failure=self.popups.append, journal_tag=lambda n: None, HOMES=f"{self.d}/h", RUNNING=f"{self.d}/r",
+                 notify_failure=self.popups.append, notify_crash=lambda n, sg: self.popups.append((n, sg)),
+                 notify_ended=lambda n, c: self.popups.append(("ended", n, c)), journal_tag=lambda n: None, HOMES=f"{self.d}/h", RUNNING=f"{self.d}/r",
                  SOURCES=f"{self.d}/s", LOG=f"{self.d}/state/ajail.log", STATE=f"{self.d}/state", subprocess=FakeSub())
         os.makedirs(f"{self.d}/root"); open(f"{self.d}/root/AppRun", "w").close()
     def tearDown(self):
@@ -135,6 +137,47 @@ class Launch(unittest.TestCase):
         self.assertEqual(code, 143); self.assertIn("] EXIT code=143\n", self.log())
         self.assertEqual(self.popups, [])
 
+
+    def clock(self, *times):
+        """launch() sees these times from time.time() in turn (the last one repeats); everything else is the real clock."""
+        seq = list(times)
+        class FakeTime:
+            def __getattr__(s, n): return getattr(time, n)
+            @staticmethod
+            def time(): return seq.pop(0) if len(seq) > 1 else seq[0]
+        A["time"] = FakeTime()
+
+    def test_a_crash_is_told_by_its_signal_in_the_log_and_in_a_popup_even_after_a_long_run(self):
+        self.child = "import os, signal; os.kill(os.getpid(), signal.SIGSEGV)"
+        self.clock(0, 3600)                                                    # an hour in: not a failed start
+        code, _ = self.launch()
+        self.assertEqual(code, 139); self.assertIn("] EXIT code=139 (SIGSEGV)\n", self.log())
+        self.assertEqual(self.popups, [("Foo", "SIGSEGV")])
+
+    def test_a_quick_crash_is_a_crash_popup_not_a_failed_start_popup(self):
+        self.child = "import os, signal; os.kill(os.getpid(), signal.SIGABRT)"
+        code, _ = self.launch()
+        self.assertEqual(code, 134); self.assertEqual(self.popups, [("Foo", "SIGABRT")])
+
+    def test_an_error_exit_after_a_long_run_says_so_only_when_there_is_no_terminal(self):
+        self.child = "import sys; sys.exit(2)"
+        self.clock(0, 60)
+        self.launch()                                                          # stderr here is not a terminal
+        self.assertEqual(self.popups, [("ended", "Foo", 2)])
+        self.popups.clear(); self.clock(0, 60)
+        class Tty(io.StringIO):
+            def isatty(s): return True
+        with contextlib.redirect_stderr(Tty()), self.assertRaises(SystemExit):
+            A["launch"]("Foo", f"{self.d}/root", {**A["DEFAULTS"], **A["NUM"], **{k: [] for k in A["LISTS"]}, "theme": 0}, [])
+        self.assertEqual(self.popups, [])                                      # the terminal already showed it
+
+    def test_a_clean_exit_and_a_stop_by_signal_say_nothing(self):
+        self.child = "pass"; self.clock(0, 60)
+        self.launch(); self.assertEqual(self.popups, [])
+        self.child = "import time; time.sleep(30)"
+        t = threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGTERM)); t.start(); self.addCleanup(t.cancel)
+        self.launch(); self.assertEqual(self.popups, [])
+
     def test_errors_before_the_app_starts_are_in_the_log(self):
         os.unlink(f"{self.d}/root/AppRun")
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
@@ -177,6 +220,39 @@ class NotifyFailure(unittest.TestCase):
             return subprocess.CompletedProcess(cmd, 0, "", "")
         self.run_it(lambda x: "/usr/bin/notify-send" if x == "notify-send" else None, run2)
         self.assertIn("critical", calls[-1])
+
+
+class NotifyCrash(unittest.TestCase):
+    def test_a_crash_is_told_by_its_signal_whenever_it_happens(self):
+        cs = A["crash_signal"]
+        self.assertEqual(cs(139), "SIGSEGV"); self.assertEqual(cs(134), "SIGABRT"); self.assertEqual(cs(-11), "SIGSEGV")    # bwrap's 128+n, or a direct signal
+        for rc in (0, 1, 2, 128, 130, 143, -9, -15, 255, 300): self.assertIsNone(cs(rc))                                # exits, Ctrl-C, SIGTERM, SIGKILL: not crashes
+
+    def sent(self, call):
+        import shutil
+        calls = []
+        def fake_run(cmd, **k): calls.append(cmd); return subprocess.CompletedProcess(cmd, 0, "no actions", "")
+        class FakeShutil:
+            def __getattr__(s, n): return getattr(shutil, n)
+            which = staticmethod(lambda x: "/usr/bin/notify-send" if x == "notify-send" else None)
+        class FakeSub:
+            def __getattr__(s, n): return getattr(subprocess, n)
+            run = staticmethod(fake_run)
+        keep = {k: A[k] for k in ("shutil", "subprocess")}
+        A.update(shutil=FakeShutil(), subprocess=FakeSub()); self.addCleanup(A.update, keep)
+        call()
+        return calls[-1]
+
+    def test_the_crash_popup_is_critical_and_names_the_app_and_the_signal(self):
+        sent = self.sent(lambda: A["notify_crash"]("chrome", "SIGSEGV"))
+        self.assertIn("critical", sent); self.assertTrue(any("chrome crashed (segmentation fault, SIGSEGV)" in x for x in sent))
+
+    def test_the_ended_popup_is_normal_urgency_and_gives_the_exit_code(self):
+        sent = self.sent(lambda: A["notify_ended"]("chrome", 1))
+        self.assertIn("normal", sent); self.assertTrue(any("chrome stopped with an error (exit code 1)" in x for x in sent))
+
+    def test_exit_codes_that_mean_somebody_stopped_it(self):
+        self.assertEqual(A["STOP_CODES"], (129, 130, 143))
 
 
 class JournalTag(unittest.TestCase):

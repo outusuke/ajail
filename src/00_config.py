@@ -49,8 +49,11 @@ OUTSIDE = ("/mnt/", "/media/", f"/run/media/{USER}/")
 SYSCALLS_X86_64 = [246, 320, 298, 321, 103, 134, 163, 179, 248, 250, 249, 279, 237, 239, 238, 256, 304, 303]
 SYSCALLS_AARCH64 = [104, 294, 241, 280, 116, 89, 60, 217, 219, 218, 239, 235, 236, 237, 238, 265, 264]
 # Extra blocked syscalls with "Block extra system calls" (harden): io_uring_setup io_uring_enter io_uring_register
-# userfaultfd process_vm_readv process_vm_writev kcmp
-SYSCALLS_EXTRA = {"x86_64": [425, 426, 427, 323, 310, 311, 312], "aarch64": [425, 426, 427, 282, 270, 271, 272]}
+# userfaultfd process_vm_readv process_vm_writev kcmp pidfd_getfd, and the new mount API: open_tree move_mount fsopen
+# fsconfig fsmount fspick mount_setattr (they let a process mount inside a user namespace; desktop apps rarely use them).
+# The generic numbers (424 and up) are the same on both CPUs.
+SYSCALLS_EXTRA = {"x86_64": [425, 426, 427, 323, 310, 311, 312, 438, 428, 429, 430, 431, 432, 433, 442],
+                  "aarch64": [425, 426, 427, 282, 270, 271, 272, 438, 428, 429, 430, 431, 432, 433, 442]}
 # Variables that "compat_env" copies from your session into the sandbox, only when they are set. Graphics, toolkit and
 # audio/video back-end switches, nothing else: no PATH, no tokens or keys, no SSH_AUTH_SOCK, no DBUS_*. Exact names
 # plus the prefixes below. Keep this list short; every entry is something the app can read.

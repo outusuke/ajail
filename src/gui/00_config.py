@@ -90,7 +90,7 @@ SECTIONS = [
         ("privacy", "Hide personal details",
          "Hides your real name and the computer name from the app (minimal user list, hosts file and hostname)."),
         ("harden", "Block extra system calls",
-         "Also blocks io_uring and a few other rarely needed calls. Can slow down or break some apps."),
+         "Also blocks io_uring, the new mount calls and a few other rarely needed calls. Can slow down or break some apps."),
         ("app_writable", "Let the app save into its own folder",
          "For apps that fail with 'Read-only file system' under /app. What it writes is kept in a separate layer; "
          "the app's own files are not changed. Needs bubblewrap 0.11+."),

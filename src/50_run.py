@@ -144,7 +144,10 @@ def launch(name, root, cfg, extra, source=None, once=False):
     try: os.unlink(pidfile)
     except OSError: pass
     if once and not running(name): rm_tree(f"{EXTRACT}/{name}")
-    log(f"EXIT code={exit_code(rc)}", name)
-    if rc != 0 and not stopped[0] and time.time() - start < 10:
-        notify_failure(name)
-    sys.exit(exit_code(rc))
+    code, sig = exit_code(rc), crash_signal(rc)
+    log(f"EXIT code={code}" + (f" ({sig})" if sig else ""), name)
+    if not stopped[0]:
+        if sig: notify_crash(name, sig)                                  # at any time, not only right after starting
+        elif rc != 0 and time.time() - start < 10: notify_failure(name)
+        elif rc != 0 and not sys.stderr.isatty(): notify_ended(name, code)      # no terminal to show the error, so say it
+    sys.exit(code)
