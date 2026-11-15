@@ -136,9 +136,19 @@ it prints to the terminal. The file is created readable by you only, and an exis
 .BR \-\-force .
 Each settings file is a section starting with a line like
 .BR "# [apps/NAME.conf]" ,
-so the whole export is still a valid comment-and-settings text. It does not include the choices
+so the whole export is still a valid comment-and-settings text. The choices
 .B ajail\-gui
-remembers (ui.conf), private homes or installed apps.
+remembers (open mode, install and disk\-space options, from ui.conf) are a section
+.BR "# [ui.conf]" :
+all of them for
+.BR \-\-all ,
+the global ones for
+.BR \-\-default ,
+and the app's own
+.BI mount. NAME
+and
+.BI open_mode. NAME
+for one app. Private homes, installed apps, the binfmt rule and the app menu entry are not included.
 .TP
 .B ajail import FILE [\-\-force]
 Load an export made by
@@ -146,7 +156,9 @@ Load an export made by
 or \fB\-\fR for standard input. Settings files that do not exist yet are created. If a file exists and differs, nothing is
 written unless
 .B \-\-force
-is given, which replaces those files. Imported values are checked when an app starts, like hand-edited files.
+is given, which replaces those files. The ui.conf section is merged into your ui.conf: only the choices it names
+change, and it counts as differing only when one of them is already set to another value. Imported values are checked
+when an app starts, like hand-edited files.
 .TP
 .B ajail list
 Show your apps and which are running.

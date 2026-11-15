@@ -310,7 +310,7 @@ def cmd_dump(arg):
 
 # ---- export / import: every settings file in one text file, to back up or move to another machine.
 EXPORT_MAGIC = "# ajail settings export"
-EXPORT_MARK = re.compile(r"# \[(default\.conf|apps/[A-Za-z0-9][A-Za-z0-9._-]*\.conf)\]")
+EXPORT_MARK = re.compile(r"# \[(default\.conf|ui\.conf|apps/[A-Za-z0-9][A-Za-z0-9._-]*\.conf)\]")
 EXPORT_MAX = 1 << 20       # a settings file is a few lines; refuse to read anything bigger as a bundle
 
 def export_files():
@@ -324,11 +324,51 @@ def export_files():
             out.append((f"apps/{f}", f"{CONF}/apps/{f}"))
     return out
 
+# The choices ajail-gui keeps in ui.conf: KEY=VALUE, and open_mode.NAME / mount.NAME for one app's own choice.
+UI_VALUES = {"mount": ("0", "1"), "open_mode": ("ask", "run"), "install_original": ("ask", "trash", "keep", "move")}
+UI_PER_APP = ("open_mode", "mount")
+
+def ui_pair(line):
+    """(key, value) when LINE is a ui.conf choice ajail-gui knows with a value it accepts, else None."""
+    key, eq, val = line.strip().partition("=")
+    base, dot, name = key.partition(".")
+    if not eq or base not in UI_VALUES or val not in UI_VALUES[base]: return None
+    if dot and not (base in UI_PER_APP and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name)): return None
+    return key, val
+
+def ui_choices(target="--all"):
+    """{key: value} of the ui.conf choices that belong to TARGET: all of them, the global ones, or one app's own."""
+    try:
+        with open(f"{CONF}/ui.conf", errors="replace") as f: lines = f.read().splitlines()
+    except OSError: return {}
+    out = {}
+    for l in lines:
+        p = ui_pair(l)
+        if p: out.setdefault(*p)            # the first line of a key counts, as ui_get reads it
+    if target == "--default": return {k: v for k, v in out.items() if "." not in k}
+    if target != "--all": return {k: v for k, v in out.items() if k in (f"open_mode.{target}", f"mount.{target}")}
+    return out
+
+def ui_merged(new):
+    """The text of ui.conf with the choices NEW put in: a key already there changes in place, the others, and any line
+    ajail does not know, stay as they are."""
+    try:
+        with open(f"{CONF}/ui.conf", errors="replace") as f: lines = f.read().splitlines()
+    except OSError: lines = []
+    left, out = dict(new), []
+    for l in lines:
+        k = l.strip().partition("=")[0]
+        if k not in new: out.append(l)
+        elif k in left: out.append(f"{k}={left.pop(k)}")        # a repeated key is dropped: one line per key
+    out += [f"{k}={v}" for k, v in left.items()]
+    return "".join(l + "\n" for l in out)
+
 def export_text(target):
     """The bundle for TARGET: '--all', '--default' or an app name. Dies when there is nothing to export."""
     want = None if target == "--all" else "default.conf" if target == "--default" else f"apps/{target}.conf"
     files = [(l, p) for l, p in export_files() if want in (None, l)]
-    if not files: die("no settings to export" if want is None else f"no settings file for {target}: the defaults apply to it")
+    ui = ui_choices(target)
+    if not files and not ui: die("no settings to export" if want is None else f"no settings file for {target}: the defaults apply to it")
     out = [EXPORT_MAGIC]
     for label, path in files:
         try:
@@ -337,6 +377,7 @@ def export_text(target):
         out.append(f"# [{label}]")
         # A comment that looks like a section marker would split the file on import: keep it a plain comment.
         out += [("#" + l) if EXPORT_MARK.fullmatch(l.strip()) or l.strip() == EXPORT_MAGIC else l for l in lines]
+    if ui: out += ["# [ui.conf]"] + [f"{k}={v}" for k, v in sorted(ui.items())]
     return "\n".join(out) + "\n"
 
 def write_private(path, text, replace):
@@ -409,6 +450,18 @@ def cmd_import(args):
     todo, same, clash = [], 0, []
     for label, text in secs.items():
         path = f"{CONF}/{label}"
+        if label == "ui.conf":              # not replaced as a file: each choice is put into the one that is there
+            new = {}
+            for l in text.splitlines():
+                if not l.strip() or l.lstrip().startswith("#"): continue
+                p = ui_pair(l)
+                if not p: die(f"the ui.conf section has a line that is not one of ajail-gui's choices: {l.strip()[:60]}")
+                new[p[0]] = p[1]
+            have = ui_choices()
+            if all(have.get(k) == v for k, v in new.items()): same += 1; continue
+            if any(k in have and have[k] != v for k, v in new.items()): clash.append(label)
+            todo.append((path, ui_merged(new)))
+            continue
         try:
             with open(path, errors="replace") as f: old = f.read()
         except OSError: old = None

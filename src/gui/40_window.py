@@ -161,8 +161,9 @@ class Win(Adw.ApplicationWindow):
 
         bg = Adw.PreferencesGroup(
             title="Backup",
-            description="Saves the default permissions and every app's own permissions in one text file, "
-                        "and loads such a file back. App data and installed apps are not included.")
+            description="Saves the default permissions, every app's own permissions and the Open and Install choices in "
+                        "one text file, and loads such a file back. App data, installed apps, Sandbox every AppImage "
+                        "and the app menu entry are not included.")
         exp_row = Adw.ActionRow(title="Export settings…", activatable=True)
         exp_row.add_suffix(Gtk.Image.new_from_icon_name("document-save-symbolic"))
         exp_row.connect("activated", lambda *_: self.export_settings("--all", "ajail-settings.txt"))

@@ -106,6 +106,53 @@ class Export(unittest.TestCase):
         self.put("default.conf", "net=1\n")                    # a file with a real, different setting still needs --force
         self.assertNotEqual(self.run_("import", "-", stdin=text).returncode, 0)
 
+    UI = "open_mode=run\nmount=1\ninstall_original=trash\nmount.Foo=1\nopen_mode.Foo=ask\nmount.Bar=0\njunk=1\nmount.Baz=maybe\n"
+
+    def test_ui_choices_go_with_the_export_for_the_page_they_belong_to(self):
+        self.put("ui.conf", self.UI)
+        allx = self.run_("export").stdout
+        self.assertIn("# [ui.conf]", allx)
+        sect = allx.split("# [ui.conf]\n")[1].splitlines()
+        self.assertEqual(sect, ["install_original=trash", "mount=1", "mount.Bar=0", "mount.Foo=1", "open_mode=run", "open_mode.Foo=ask"])
+        self.assertNotIn("junk", allx); self.assertNotIn("maybe", allx)       # only what ajail-gui knows, with a value it accepts
+        d = self.run_("export", "--default").stdout.split("# [ui.conf]\n")[1].splitlines()
+        self.assertEqual(d, ["install_original=trash", "mount=1", "open_mode=run"])
+        one = self.run_("export", "Foo").stdout.split("# [ui.conf]\n")[1].splitlines()
+        self.assertEqual(one, ["mount.Foo=1", "open_mode.Foo=ask"])
+        os.unlink(f"{self.conf}/apps/Foo.conf")                              # an app with only ui choices still exports
+        self.assertEqual(self.run_("export", "Foo").returncode, 0)
+        self.assertNotIn("# [ui.conf]", self.run_("export", "Empty").stdout)
+
+    def test_ui_choices_round_trip_and_are_merged_not_replaced(self):
+        self.put("ui.conf", self.UI)
+        text = self.run_("export").stdout
+        os.unlink(f"{self.conf}/ui.conf")
+        r = self.run_("import", "-", stdin=text)                              # nothing there yet: no question
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.get("ui.conf").splitlines().count("mount=1"), 1)
+        self.assertEqual(stat.S_IMODE(os.stat(f"{self.conf}/ui.conf").st_mode), 0o600)
+        self.assertIn("already the same", self.run_("import", "-", stdin=text).stdout)
+        self.put("ui.conf", "mount=0\nmount.Other=1\nfoo=bar\nmount=0\n")   # another value for a key in the export
+        r = self.run_("import", "-", stdin=text)
+        self.assertNotEqual(r.returncode, 0); self.assertIn("ui.conf", r.stderr); self.assertIn("--force", r.stderr)
+        self.assertEqual(self.get("ui.conf"), "mount=0\nmount.Other=1\nfoo=bar\nmount=0\n")
+        self.assertEqual(self.run_("import", "-", "--force", stdin=text).returncode, 0)
+        got = self.get("ui.conf").splitlines()
+        self.assertEqual(got.count("mount=1"), 1); self.assertNotIn("mount=0", got)
+        for keep in ("mount.Other=1", "foo=bar", "mount.Foo=1", "open_mode=run"): self.assertIn(keep, got)
+
+    def test_import_adds_ui_choices_without_asking_when_none_differ(self):
+        self.put("ui.conf", "mount.Other=1\n")
+        r = self.run_("import", "-", stdin="# ajail settings export\n# [ui.conf]\nmount.Foo=1\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.get("ui.conf"), "mount.Other=1\nmount.Foo=1\n")
+
+    def test_import_rejects_a_ui_line_it_does_not_know_and_writes_nothing(self):
+        for bad in ("mount=maybe", "evil=1", "mount.=1", "mount.a/b=1", "install_original.Foo=keep"):
+            r = self.run_("import", "-", "--force", stdin=f"# ajail settings export\n# [default.conf]\nnet=1\n# [ui.conf]\n{bad}\n")
+            self.assertNotEqual(r.returncode, 0, bad); self.assertIn("ui.conf", r.stderr)
+            self.assertEqual(self.get("default.conf"), "net=0\nallow=/media/x\n"); self.assertFalse(os.path.exists(f"{self.conf}/ui.conf"))
+
     def test_import_rejects_other_text(self):
         for text in ("net=0\n", "", "# sbx settings export\n# [default.conf]\nnet=0\n", "# ajail settings export\n",
                      "# ajail settings export\nnet=0\n# [default.conf]\n",

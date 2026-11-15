@@ -81,7 +81,7 @@ talk=org.example.Service         # extra D-Bus name
 portal=Location                  # opt-in portal; portal=-Location turns it off in an app file
 ```
 
-Back up or move settings with `ajail export -o FILE` and `ajail import FILE` (`--force` replaces settings that differ); `ajail-gui` has the same buttons.
+Back up or move settings with `ajail export -o FILE` and `ajail import FILE` (`--force` replaces settings that differ); `ajail-gui` has the same buttons. The export holds the permission files and the choices `ajail-gui` remembers (Ask before opening, Use less disk space, what to do with the AppImage after installing); it leaves out app data, installed apps, Sandbox every AppImage and the app menu entry.
 
 ### Defaults that favor compatibility
 
