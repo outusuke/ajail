@@ -173,7 +173,7 @@ Switches (0 or 1, default in brackets):
 .BR gpu " (1),"
 .BR gpu_render_only " (0),"
 .BR wayland " (1, a restricted socket where the desktop supports Wayland security contexts),"
-.BR wayland_strict " (0, no Wayland unless the socket can be restricted),"
+.BR wayland_strict " (automatic: on where the desktop supports Wayland security contexts, otherwise off; 1 gives the app no Wayland unless its socket can be restricted),"
 .BR x11 " (0, weaker isolation),"
 .BR portals " (1),"
 .BR portal_screenshot " (1),"

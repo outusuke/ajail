@@ -29,7 +29,7 @@ OUTSIDE = ("/mnt/", "/media/", f"/run/media/{USER}/")
 os.makedirs(APPS, exist_ok=True)
 
 # Keep in sync with DEFAULTS in ajail.
-DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": 0, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
             "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}

@@ -81,10 +81,14 @@ def launch(name, root, cfg, extra, source=None, once=False):
     secfd = (SEC_FD if secpath else None) if priv else (sec.fileno() if sec else None)
     wl = None                                     # the restricted Wayland socket, where the compositor can make one
     wp = wayland_path() if cfg["wayland"] else None
+    strict = cfg["wayland_strict"]                # None: not set anywhere, so on exactly where the compositor can restrict apps
     if wp:
-        wl = wayland_context(wp, f"{runtime_dir()}/ajail/{os.getpid()}.wl", name, f"{name}-{os.getpid()}")
-        if not wl and cfg["wayland_strict"]:
-            warn("the compositor can't restrict Wayland for this app, and 'Wayland only if restricted' is on: Wayland is off for it", name)
+        can = wl_supported(wp)
+        if strict is None: strict = can
+        wl = wayland_context(wp, f"{runtime_dir()}/ajail/{os.getpid()}.wl", name, f"{name}-{os.getpid()}") if can else None
+        if not wl and strict:
+            warn("no restricted Wayland socket could be made for this app, and 'Wayland only if restricted' is on: Wayland is off for it", name)
+    cfg = {**cfg, "wayland_strict": int(bool(strict))}
     inner = bwrap_args(name, root, cfg, ["/app/AppRun"] + extra, bus[2] if bus else None,
                        secfd, forward_files(extra), gen, gset, wl.path if wl else None)
     cmd = limit_prefix(cfg, name) + (net_wrap(inner, secpath) if priv else inner)

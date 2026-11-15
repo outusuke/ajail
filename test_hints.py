@@ -7,7 +7,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 def load():
     tree = ast.parse(open(f"{HERE}/ajail-gui").read())
-    want_assign, want_def = {"DEFAULTS", "LOG_HINTS", "HINT_LISTS", "SELF", "_WL"}, {"effective_switches", "effective_lists", "last_run", "log_hints", "wayland_restricted"}
+    want_assign, want_def = {"DEFAULTS", "LOG_HINTS", "HINT_LISTS", "SELF", "_WL"}, {"effective_switches", "effective_lists", "last_run", "log_hints", "wayland_restricted", "resolved"}
     body = [n for n in tree.body
             if (isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name) and n.targets[0].id in want_assign)
             or (isinstance(n, ast.FunctionDef) and n.name in want_def)]
@@ -112,6 +112,12 @@ class Hints(unittest.TestCase):
                 self.assertEqual(G["wayland_restricted"](), want, out); self.assertEqual(G["wayland_restricted"](), want)
             self.assertEqual(calls, [[G["SELF"], "wl-check"]])               # asked once, not on every refresh
         G["_WL"].clear()
+
+    def test_an_automatic_default_follows_the_desktop_and_a_set_one_does_not(self):
+        self.assertIsNone(G["DEFAULTS"]["wayland_strict"])
+        for can in (True, False):
+            with unittest.mock.patch.dict(G, {"wayland_restricted": lambda can=can: can}):
+                self.assertEqual(G["resolved"](None), can); self.assertEqual(G["resolved"](0), 0); self.assertEqual(G["resolved"](1), 1)
 
     def test_no_hint_for_a_run_that_ended_cleanly(self):
         self.assertEqual(keys(run("libEGL warning: something", code=0)), [])

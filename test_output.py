@@ -57,8 +57,8 @@ class LaunchOutput(unittest.TestCase):
         names = ("check_identity", "private_net", "sweep_runtime", "start_bus", "seccomp_file", "work_dir", "make_files",
                  "bwrap_args", "limit_prefix", "forward_files", "stop_bus", "running", "notify_failure", "log",
                  "HOMES", "RUNNING", "SOURCES", "LOG", "platform")
-        self.keep = {k: A[k] for k in names + ("wayland_path", "wayland_context")}
-        A.update(wayland_path=lambda: None, wayland_context=lambda *a: None)       # never talk to the real compositor from a test
+        self.keep = {k: A[k] for k in names + ("wayland_path", "wayland_context", "wl_supported")}
+        A.update(wayland_path=lambda: None, wayland_context=lambda *a: None, wl_supported=lambda p: False)       # never talk to the real compositor from a test
         A.update(check_identity=lambda *a: None, private_net=lambda c: False, sweep_runtime=lambda: None,
                  start_bus=lambda *a: None, seccomp_file=lambda h: tempfile.TemporaryFile(), work_dir=lambda: None, make_files=lambda *a: {},
                  bwrap_args=lambda *a: [], limit_prefix=lambda *a: [], forward_files=lambda e: [], stop_bus=lambda b: None,
@@ -98,7 +98,7 @@ class LaunchOutput(unittest.TestCase):
         class Ctx:
             path = "/rt/ajail/1.wl"
             def close(s): seen["closed"] = True
-        A.update(wayland_path=lambda: "/rt/wayland-0", bwrap_args=lambda *a: seen.update(bw=a) or [],
+        A.update(wayland_path=lambda: "/rt/wayland-0", bwrap_args=lambda *a: seen.update(bw=a) or [], wl_supported=lambda p: True,
                  wayland_context=lambda wp, sock, name, inst: seen.update(ctx=(wp, sock.endswith(f"/ajail/{os.getpid()}.wl"), name)) or Ctx())
         self.run_launch(False)
         self.assertEqual(seen["bw"][-1], "/rt/ajail/1.wl")
@@ -107,13 +107,24 @@ class LaunchOutput(unittest.TestCase):
 
     def test_launch_without_a_context_binds_the_real_socket_and_strict_says_why(self):
         seen = {}
-        A.update(wayland_path=lambda: "/rt/wayland-0", bwrap_args=lambda *a: seen.update(bw=a) or [])
+        A.update(wayland_path=lambda: "/rt/wayland-0", bwrap_args=lambda *a: seen.update(bw=a) or [])      # the compositor can't restrict
         _, err = self.run_launch(False)
         self.assertIsNone(seen["bw"][-1]); self.assertNotIn("restrict", err)                    # quiet unless strict was asked for
+        self.assertEqual(seen["bw"][2]["wayland_strict"], 0)                                     # automatic is off where it can't work
         _, err = self.run_launch(False, wayland_strict=1)
         self.assertIn("Wayland only if restricted", err)
         seen.clear(); _, err = self.run_launch(False, wayland=0)                                 # Wayland off: no socket, no context, no warning
         self.assertIsNone(seen["bw"][-1]); self.assertNotIn("restrict", err)
+
+    def test_automatic_strict_is_on_where_the_compositor_supports_it_and_fails_closed(self):
+        seen = {}
+        A.update(wayland_path=lambda: "/rt/wayland-0", bwrap_args=lambda *a: seen.update(bw=a) or [], wl_supported=lambda p: True,
+                 wayland_context=lambda *a: None)                                               # supported, but this attempt failed
+        self.assertIsNone(A["DEFAULTS"]["wayland_strict"])                                       # not set anywhere = automatic
+        _, err = self.run_launch(False)
+        self.assertEqual(seen["bw"][2]["wayland_strict"], 1); self.assertIn("Wayland is off", err)
+        _, err = self.run_launch(False, wayland_strict=0)                                        # you said no: the real socket, no warning
+        self.assertEqual(seen["bw"][2]["wayland_strict"], 0); self.assertNotIn("Wayland is off", err)
 
     def test_stdout_not_a_terminal_is_untouched(self):
         out, err = self.run_launch(False)
@@ -255,8 +266,8 @@ class PidFiles(unittest.TestCase):
         names = ("check_identity", "private_net", "sweep_runtime", "start_bus", "seccomp_file", "work_dir", "make_files",
                  "bwrap_args", "limit_prefix", "forward_files", "stop_bus", "running", "notify_failure", "log",
                  "HOMES", "SOURCES", "LOG", "subprocess")
-        keep = {k: A[k] for k in names + ("wayland_path", "wayland_context")}
-        A.update(wayland_path=lambda: None, wayland_context=lambda *a: None)       # never talk to the real compositor from a test
+        keep = {k: A[k] for k in names + ("wayland_path", "wayland_context", "wl_supported")}
+        A.update(wayland_path=lambda: None, wayland_context=lambda *a: None, wl_supported=lambda p: False)       # never talk to the real compositor from a test
         seen = f"{d}/seen"
         app = "import os; open(%r, 'w').write(open(%r + '/' + str(os.getppid())).read())" % (seen, self.d)    # the parent is the test, i.e. launch()
         class P(subprocess.Popen):
@@ -325,8 +336,8 @@ class PrivateNetLaunch(unittest.TestCase):
         self.d = tempfile.mkdtemp()
         names = ("check_identity", "sweep_runtime", "start_bus", "work_dir", "limit_prefix", "forward_files", "stop_bus", "running",
                  "notify_failure", "log", "HOMES", "RUNNING", "SOURCES", "LOG", "shutil", "subprocess")
-        self.keep = {k: A[k] for k in names + ("wayland_path", "wayland_context")}
-        A.update(wayland_path=lambda: None, wayland_context=lambda *a: None)       # never talk to the real compositor from a test
+        self.keep = {k: A[k] for k in names + ("wayland_path", "wayland_context", "wl_supported")}
+        A.update(wayland_path=lambda: None, wayland_context=lambda *a: None, wl_supported=lambda p: False)       # never talk to the real compositor from a test
         self.wd, self.seen, self.pasta = f"{self.d}/wd", [], True
         test = self
         class P(subprocess.Popen):

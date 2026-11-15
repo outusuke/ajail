@@ -67,7 +67,7 @@ Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.confi
 | `net_private` | With `net`: internet but not services on this computer, via `pasta`. Your LAN stays reachable. |
 | `gpu_render_only` | With `gpu`: only `/dev/dri/renderD*`, not the `card*` devices. |
 | `wayland` | Wayland socket (default on). Where the compositor supports security contexts (`wp_security_context_v1`: Sway, Hyprland, KDE Plasma and others, not GNOME's Mutter as of version 51) the app gets a restricted socket, without screen capture or input injection; elsewhere it gets the full socket. Turn off for an app that runs on `x11` alone or needs no window. |
-| `wayland_strict` | With `wayland`: no Wayland at all when the compositor can't make a restricted socket. Greyed out in `ajail-gui` on a desktop that can't. |
+| `wayland_strict` | With `wayland`: never fall back to the full socket; if a restricted one can't be made, the app gets no Wayland. Not set anywhere means automatic: on where the compositor supports security contexts, off where it doesn't (so apps still start). Greyed out in `ajail-gui` on a desktop that can't. |
 | `x11` | X11 socket, in addition to Wayland. Weaker isolation. |
 | `ssh_agent` | Your SSH agent. The app can sign as you. |
 | `privacy` | Minimal `/etc/passwd`, `/etc/group`, `/etc/hosts`; hostname `ajail`. |
@@ -146,7 +146,7 @@ A notification that opens the app's log appears when an app exits with an error 
 ajail is a convenience layer over bubblewrap, not a security guarantee.
 
 - `net` gives the app your network. `net_private` hides this computer's services, not your LAN or the internet.
-- Without compositor support for security contexts (GNOME today) an app on Wayland gets the full socket. Turn on `wayland_strict` to give it none, or run the self-test (see above) to see what your compositor exposes.
+- Without compositor support for security contexts (GNOME today) an app on Wayland gets the full socket. Set `wayland_strict=1` to give it none, or run the self-test (see above) to see what your compositor exposes.
 - `x11`, `ssh_agent`, `input`, broad folder shares and the `RemoteDesktop`, `InputCapture` and `Secret` portals weaken isolation.
 - Compressed installs read the image outside the sandbox.
 - Resource limits protect your session, not your privacy.

@@ -46,6 +46,10 @@ def wayland_restricted():
     if not _WL: _WL.append(run([SELF, "wl-check"], timeout=5).stdout.strip() == "1")
     return _WL[0]
 
+def resolved(v):
+    """A default of None is automatic: for 'Wayland only if restricted' that means on where this desktop can restrict apps."""
+    return wayland_restricted() if v is None else v
+
 def summary(G, A):
     e = {**DEFAULTS, **G["s"], **(A["s"] if A else {})}
     x = {}

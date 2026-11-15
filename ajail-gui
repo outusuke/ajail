@@ -29,7 +29,7 @@ OUTSIDE = ("/mnt/", "/media/", f"/run/media/{USER}/")
 os.makedirs(APPS, exist_ok=True)
 
 # Keep in sync with DEFAULTS in ajail.
-DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": 0, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
             "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
@@ -149,6 +149,10 @@ def wayland_restricted():
     answer comes from the same code that starts the apps. Unknown counts as no."""
     if not _WL: _WL.append(run([SELF, "wl-check"], timeout=5).stdout.strip() == "1")
     return _WL[0]
+
+def resolved(v):
+    """A default of None is automatic: for 'Wayland only if restricted' that means on where this desktop can restrict apps."""
+    return wayland_restricted() if v is None else v
 
 def summary(G, A):
     e = {**DEFAULTS, **G["s"], **(A["s"] if A else {})}
@@ -1105,13 +1109,13 @@ class Win(Adw.ApplicationWindow):
             v.update(G["s"])
             if scope:
                 v.update(A["s"])
-            return bool(v[k])
+            return bool(resolved(v[k]))
 
         def default_for(k):
             v = dict(DEFAULTS)
             if scope:
                 v.update(G["s"])
-            return v[k]
+            return resolved(v[k])
 
         if scope:
             ag = Adw.PreferencesGroup(title="App")
@@ -1257,9 +1261,10 @@ class Win(Adw.ApplicationWindow):
             if key == "wayland_strict":
                 def usable():
                     # Without a restricted socket this switch only turns Wayland off, so it is greyed out instead of offered.
-                    why = ("Your desktop can't restrict apps (it lacks the wp_security_context_v1 Wayland protocol), so this would only turn Wayland off."
+                    # One that is already on stays usable, so it can still be turned off.
+                    why = ("Your desktop can't restrict apps (it lacks the wp_security_context_v1 Wayland protocol), so this only turns Wayland off."
                            if not wayland_restricted() else "Turn on Wayland first." if not eff("wayland") else "")
-                    sw.set_sensitive(not why)
+                    sw.set_sensitive(not why or eff(key))
                     sw.set_subtitle(sub + (f"\n{why}" if why else ""))
                     sw.set_tooltip_text(why or None)
                 marks.append(usable); usable()      # marks run after every change, so turning Wayland off greys this row at once

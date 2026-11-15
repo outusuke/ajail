@@ -481,13 +481,13 @@ class Win(Adw.ApplicationWindow):
             v.update(G["s"])
             if scope:
                 v.update(A["s"])
-            return bool(v[k])
+            return bool(resolved(v[k]))
 
         def default_for(k):
             v = dict(DEFAULTS)
             if scope:
                 v.update(G["s"])
-            return v[k]
+            return resolved(v[k])
 
         if scope:
             ag = Adw.PreferencesGroup(title="App")
@@ -633,9 +633,10 @@ class Win(Adw.ApplicationWindow):
             if key == "wayland_strict":
                 def usable():
                     # Without a restricted socket this switch only turns Wayland off, so it is greyed out instead of offered.
-                    why = ("Your desktop can't restrict apps (it lacks the wp_security_context_v1 Wayland protocol), so this would only turn Wayland off."
+                    # One that is already on stays usable, so it can still be turned off.
+                    why = ("Your desktop can't restrict apps (it lacks the wp_security_context_v1 Wayland protocol), so this only turns Wayland off."
                            if not wayland_restricted() else "Turn on Wayland first." if not eff("wayland") else "")
-                    sw.set_sensitive(not why)
+                    sw.set_sensitive(not why or eff(key))
                     sw.set_subtitle(sub + (f"\n{why}" if why else ""))
                     sw.set_tooltip_text(why or None)
                 marks.append(usable); usable()      # marks run after every change, so turning Wayland off greys this row at once

@@ -29,8 +29,9 @@ ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch
        "resolv.conf", "localtime", "os-release", "fonts", "ssl", "pki", "crypto-policies",
        "alternatives", "vulkan", "drirc", "mime.types", "protocols", "services"]
 
-# Permission defaults. Keep in sync with DEFAULTS in ajail-gui.
-DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": 0, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
+# Permission defaults. Keep in sync with DEFAULTS in ajail-gui. None means automatic: wayland_strict is on where the
+# compositor can make a restricted socket, off where it can't (launch decides).
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
             "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
