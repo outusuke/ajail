@@ -25,8 +25,9 @@ class Export(unittest.TestCase):
 
     def put(self, rel, text): open(f"{self.conf}/{rel}", "w").write(text)
     def get(self, rel): return open(f"{self.conf}/{rel}").read()
-    def run_(self, *args, stdin=None):
-        return subprocess.run([sys.executable, self.script, *args], capture_output=True, text=True, input=stdin)
+    def run_(self, *args, stdin=None, env=None):
+        return subprocess.run([sys.executable, self.script, *args], capture_output=True, text=True, input=stdin,
+                              env={**os.environ, **env} if env else None)
 
     def test_all_goes_to_stdout_with_markers(self):
         r = self.run_("export")
@@ -103,6 +104,13 @@ class Export(unittest.TestCase):
         self.assertFalse(os.path.exists(f"{self.t}/evil.conf"))
         self.assertNotEqual(self.run_("import", f"{self.t}/missing.txt").returncode, 0)
         self.assertIn("unknown option", self.run_("import", "--forse", "x").stderr)
+
+    def test_import_is_refused_inside_a_sandbox(self):
+        text = self.run_("export").stdout
+        os.unlink(f"{self.conf}/default.conf")
+        r = self.run_("import", "-", "--force", stdin=text, env={"AJAIL_ACTIVE": "1"})
+        self.assertNotEqual(r.returncode, 0); self.assertIn("sandbox", r.stderr)
+        self.assertFalse(os.path.exists(f"{self.conf}/default.conf"))
 
     def test_import_from_stdin(self):
         text = self.run_("export", "Foo").stdout

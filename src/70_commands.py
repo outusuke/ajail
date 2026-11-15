@@ -371,7 +371,7 @@ def cmd_export(args):
     text = export_text(target)
     if out is None: sys.stdout.write(text); return
     write_private(out, text, force)
-    n = text.count("\n# [") + text.startswith("# [")
+    n = text.count("\n# [")
     print(f"Exported {n} settings file{'s' if n != 1 else ''} to {out}")
 
 def parse_bundle(text):
@@ -398,6 +398,7 @@ def cmd_import(args):
     bad = [x for x in rest if x.startswith("-") and x != "-"]
     if bad: die(f"unknown option {bad[0]}")
     if len(rest) != 1: die("usage: ajail import FILE [--force]")
+    if os.environ.get("AJAIL_ACTIVE"): die("not from inside a sandbox")
     try:
         if rest[0] == "-": raw = sys.stdin.read(EXPORT_MAX + 1)
         else:
