@@ -27,7 +27,7 @@ sudo install -Dm644 completions/_ajail /usr/local/share/zsh/site-functions/_ajai
 sudo install -Dm644 completions/ajail.fish /usr/local/share/fish/vendor_completions.d/ajail.fish
 ```
 
-**Required:** Linux, Wayland (X11 is a per-app option), Python 3, `bubblewrap`, `squashfs-tools`.
+**Required:** Linux, Wayland (X11 is a per-app option, and Wayland can be turned off per app), Python 3, `bubblewrap`, `squashfs-tools`.
 **Optional:** `xdg-dbus-proxy` (notifications, portals, tray), `passt` (`net_private`), `squashfuse` + `fuse3` (compressed installs), `systemd --user` (resource limits), `notify-send` (failure popups).
 
 ## Usage
@@ -66,7 +66,8 @@ Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.confi
 | --- | --- |
 | `net_private` | With `net`: internet but not services on this computer, via `pasta`. Your LAN stays reachable. |
 | `gpu_render_only` | With `gpu`: only `/dev/dri/renderD*`, not the `card*` devices. |
-| `x11` | X11 socket. Weaker isolation. |
+| `wayland` | Wayland socket (default on). Turn off for an app that runs on `x11` alone, or needs no window. |
+| `x11` | X11 socket, in addition to Wayland. Weaker isolation. |
 | `ssh_agent` | Your SSH agent. The app can sign as you. |
 | `privacy` | Minimal `/etc/passwd`, `/etc/group`, `/etc/hosts`; hostname `ajail`. |
 

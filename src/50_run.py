@@ -6,7 +6,7 @@ def guard():
     if not shutil.which("bwrap"): die("bubblewrap missing: " + install_hint("bubblewrap"))
 
 def check_display(cfg):
-    if not cfg["x11"] and not wayland_path():
+    if cfg["wayland"] and not cfg["x11"] and not wayland_path():
         die("no Wayland session found. Enable 'X11 compatibility' for this app in ajail-gui.")
 
 def run_app(arg, extra, once=False, mount=False, compat=False):

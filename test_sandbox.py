@@ -110,6 +110,26 @@ class EveryConfig(unittest.TestCase):
             dsts = [d for _, _, d in binds(build(c))]
             self.assertEqual("/tmp/.X11-unix/X0" in dsts, bool(c["x11"]))
 
+    def test_wayland_socket_only_when_enabled(self):
+        for c in self.configs():
+            a = build(c)
+            dsts = [d for _, _, d in binds(a)]
+            self.assertEqual("/run/user/1000/wayland-0" in dsts, bool(c["wayland"]))
+            env = setenv(a)
+            self.assertEqual("WAYLAND_DISPLAY" in env, bool(c["wayland"]))
+            self.assertEqual(env.get("ELECTRON_OZONE_PLATFORM_HINT"),
+                             ("auto" if c["x11"] else "wayland") if c["wayland"] else "x11")
+
+    def test_x11_alone_needs_no_wayland_session(self):
+        def check(**kw):
+            with unittest.mock.patch.dict(A["check_display"].__globals__, {"wayland_path": lambda: None}), \
+                 unittest.mock.patch.dict(A["check_display"].__globals__, {"die": lambda m: (_ for _ in ()).throw(SystemExit(m))}):
+                return A["check_display"](cfg(**kw))
+        with self.assertRaises(SystemExit): check(wayland=1, x11=0)      # Wayland is the only display and it is missing
+        check(wayland=1, x11=1)
+        check(wayland=0, x11=1)
+        check(wayland=0, x11=0)                                          # no display at all is a choice, not an error
+
     def test_dbus_only_through_the_proxy(self):
         for c in self.configs():
             a = build(c)

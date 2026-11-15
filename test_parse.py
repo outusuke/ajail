@@ -58,6 +58,11 @@ class Parse(unittest.TestCase):
         finally: A["NO_LOG"][0] = old
         self.assertFalse(os.path.exists(A["LOG"]))
 
+    def test_wayland_switch(self):
+        d, err = self.parse("wayland=0\nx11=1\n")
+        self.assertEqual(err, ""); self.assertEqual((d["s"]["wayland"], d["s"]["x11"]), (0, 1))
+        self.assertIn("expected 0 or 1", self.parse("wayland=yes\n")[1])
+
     def test_known_good_file_is_silent(self):
         d, err = self.parse("net=0\nprofile=strict\nflag=--x11\nxdg=download:ro\nportal=Secret\nportal=-Secret\ntalk=org.x.Y\n")
         self.assertEqual(err, ""); self.assertEqual(d["s"]["x11"], 1)

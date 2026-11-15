@@ -94,6 +94,12 @@ class Hints(unittest.TestCase):
         self.assertEqual(keys(run("curl: (6) Temporary failure in name resolution"), cur(net=0)), [("net", 1)])
         self.assertEqual(keys(run("cannot open /dev/video0"), cur(camera=0)), [("camera", 1)])
 
+    def test_wayland_hint_only_while_wayland_is_off(self):
+        l = run("qt.qpa.plugin: Failed to connect to the Wayland display")
+        self.assertEqual(keys(l, cur(wayland=0))[0], ("wayland", 1))
+        self.assertNotIn(("wayland", 1), keys(l, cur(wayland=1)))
+        self.assertEqual(keys(run("Error: cannot open display: :0"), cur(wayland=0)), [("x11", 1)])
+
     def test_no_hint_for_a_run_that_ended_cleanly(self):
         self.assertEqual(keys(run("libEGL warning: something", code=0)), [])
 

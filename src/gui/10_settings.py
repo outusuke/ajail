@@ -256,6 +256,8 @@ LOG_HINTS = [
     (r"libegl warning|mesa: error|/dev/dri|failed to create (an )?(egl|gl)|no (suitable|available|compatible) (gpu|vulkan|adapter)",
      "gpu_render_only", 0, "Turn off \"Graphics: render only\"",
      "The app may need a graphics device that this mode hides.", {"gpu": 1}),
+    (r"failed to connect to (the )?wayland|wayland.{0,30}(connection|display).{0,30}(fail|refused)",
+     "wayland", 1, "Turn on Wayland", "The app looked for Wayland, which is off. Better than X11 where it works.", {}),
     (r"cannot open display|could not connect to display|unable to open display|platform plugin .?xcb|failed to connect to (the )?wayland",
      "x11", 1, "Turn on X11 compatibility", "The app looks for X11. This weakens isolation, so use it only for this app.", {}),
     (r"temporary failure in name resolution|name or service not known|network is unreachable",

@@ -367,11 +367,11 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         a += ["--ro-bind", src, f"/etc/{n}"]
     env = {"HOME": HOME, "USER": USER, "LOGNAME": USER, "PATH": "/usr/local/bin:/usr/bin:/usr/sbin",
            "XDG_RUNTIME_DIR": rt, "APPDIR": "/app", "AJAIL_ACTIVE": "1",
-           "ELECTRON_OZONE_PLATFORM_HINT": "auto" if cfg["x11"] else "wayland"}
+           "ELECTRON_OZONE_PLATFORM_HINT": ("auto" if cfg["x11"] else "wayland") if cfg["wayland"] else "x11"}
     for k in ("LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_TIME", "TZ", "TERM",
               "XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "XCURSOR_THEME", "XCURSOR_SIZE"):
         if k in os.environ: env[k] = os.environ[k]
-    wp = wayland_path()
+    wp = wayland_path() if cfg["wayland"] else None
     if wp:
         a += ["--ro-bind", wp, wp]
         env["WAYLAND_DISPLAY"] = os.environ["WAYLAND_DISPLAY"]; env["XDG_SESSION_TYPE"] = "wayland"

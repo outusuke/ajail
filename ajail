@@ -30,7 +30,7 @@ ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch
        "alternatives", "vulkan", "drirc", "mime.types", "protocols", "services"]
 
 # Permission defaults. Keep in sync with DEFAULTS in ajail-gui.
-DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
             "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
@@ -636,11 +636,11 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         a += ["--ro-bind", src, f"/etc/{n}"]
     env = {"HOME": HOME, "USER": USER, "LOGNAME": USER, "PATH": "/usr/local/bin:/usr/bin:/usr/sbin",
            "XDG_RUNTIME_DIR": rt, "APPDIR": "/app", "AJAIL_ACTIVE": "1",
-           "ELECTRON_OZONE_PLATFORM_HINT": "auto" if cfg["x11"] else "wayland"}
+           "ELECTRON_OZONE_PLATFORM_HINT": ("auto" if cfg["x11"] else "wayland") if cfg["wayland"] else "x11"}
     for k in ("LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_TIME", "TZ", "TERM",
               "XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "XCURSOR_THEME", "XCURSOR_SIZE"):
         if k in os.environ: env[k] = os.environ[k]
-    wp = wayland_path()
+    wp = wayland_path() if cfg["wayland"] else None
     if wp:
         a += ["--ro-bind", wp, wp]
         env["WAYLAND_DISPLAY"] = os.environ["WAYLAND_DISPLAY"]; env["XDG_SESSION_TYPE"] = "wayland"
@@ -1123,7 +1123,7 @@ def guard():
     if not shutil.which("bwrap"): die("bubblewrap missing: " + install_hint("bubblewrap"))
 
 def check_display(cfg):
-    if not cfg["x11"] and not wayland_path():
+    if cfg["wayland"] and not cfg["x11"] and not wayland_path():
         die("no Wayland session found. Enable 'X11 compatibility' for this app in ajail-gui.")
 
 def run_app(arg, extra, once=False, mount=False, compat=False):
