@@ -4,7 +4,7 @@
 No sandbox needed; every case fails before anything is read or written."""
 import ast, os, re, subprocess, sys, unittest
 
-AJAIL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ajail")
+AJAIL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ajail")
 
 def run(*args):
     return subprocess.run([sys.executable, AJAIL, *args], capture_output=True, text=True)

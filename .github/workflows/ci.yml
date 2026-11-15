@@ -8,26 +8,14 @@ jobs:
       - name: Install tools
         run: sudo apt-get update && sudo apt-get install -y bubblewrap squashfs-tools xdg-dbus-proxy python3-pyflakes
       - name: ajail is up to date with src/ and the layer rule holds
-        run: python3 test_build.py
+        run: python3 tests/test_build.py
       - name: Lint
-        run: python3 -m pyflakes ajail ajail-gui build.py make-selftest test_*.py
+        run: python3 -m pyflakes ajail ajail-gui build.py make-selftest tests/test_*.py
       - name: Unit tests (no sandbox needed)
         run: |
-          python3 test_parse.py
-          python3 test_sync.py
-          python3 test_portals.py
-          python3 test_compat.py
-          python3 test_output.py
-          python3 test_cli.py
-          python3 test_sandbox.py
-          python3 test_hints.py
-          python3 test_env.py
-          python3 test_icons.py
-          python3 test_logcolor.py
-          python3 test_log.py
-          python3 test_wayland.py
+          for t in $(ls tests/test_*.py | grep -v hostile); do python3 "$t"; done
       - name: Hostile AppImages
         # Needs unprivileged user namespaces; GitHub's Ubuntu images restrict them, so allow them for this job.
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-          python3 test_hostile.py
+          python3 tests/test_hostile.py

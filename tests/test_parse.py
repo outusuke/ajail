@@ -3,7 +3,7 @@
 # Tests for ajail's settings parser: whitespace, comments and warnings about lines it can't use.
 import ast, contextlib, io, os, re, stat, tempfile, threading, unittest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def load(name):
     src = open(f"{HERE}/{name}").read().rstrip()

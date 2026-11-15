@@ -3,7 +3,7 @@
 """Troubleshooting hints: which log lines suggest which setting. Pure logic from ajail-gui, no display needed."""
 import ast, os, re, subprocess, unittest, unittest.mock
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def load():
     tree = ast.parse(open(f"{HERE}/ajail-gui").read())

@@ -127,9 +127,9 @@ Prints what the sandbox exposes and saves `selftest-report.txt` in the app's pri
 Checks (same as CI):
 
 ```bash
-python3 test_build.py                                   # generated files are current, layer rule holds
-python3 -m pyflakes ajail ajail-gui build.py make-selftest test_*.py
-for t in test_*.py; do python3 $t; done                 # test_hostile.py needs bubblewrap and squashfs-tools, run as a normal user
+python3 tests/test_build.py                                 # generated files are current, layer rule holds
+python3 -m pyflakes ajail ajail-gui build.py make-selftest tests/test_*.py
+for t in tests/test_*.py; do python3 $t; done                 # test_hostile.py needs bubblewrap and squashfs-tools, run as a normal user
 ```
 
 ## Files

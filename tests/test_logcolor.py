@@ -3,7 +3,7 @@
 """Log page colors: how a log line is split and classified. Pure logic from ajail-gui, no display needed."""
 import ast, os, re, unittest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def load():
     tree = ast.parse(open(f"{HERE}/ajail-gui").read())

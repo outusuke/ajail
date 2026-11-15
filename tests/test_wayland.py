@@ -4,7 +4,7 @@
 restricted socket it makes. No desktop needed."""
 import os, select, socket, struct, tempfile, threading, unittest, unittest.mock
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def load(name):
     src = open(f"{HERE}/{name}").read().rstrip()

@@ -4,7 +4,7 @@
 # or ajail by hand and did not run ./build.py) or if the security core starts depending on a higher layer.
 import importlib.util, os, unittest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 spec = importlib.util.spec_from_file_location("ajail_build", f"{HERE}/build.py")
 B = importlib.util.module_from_spec(spec); spec.loader.exec_module(B)
 

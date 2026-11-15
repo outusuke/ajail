@@ -3,7 +3,7 @@
 """Icon lookup for installed apps: pure logic from ajail, no sandbox needed."""
 import ast, glob, os, re, shutil, struct, subprocess, tempfile, time, unittest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def load():
     tree = ast.parse(open(f"{HERE}/ajail").read())

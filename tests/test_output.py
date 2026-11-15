@@ -4,7 +4,7 @@
 # title reports and similar). These tests feed hostile text through the paths that print it.
 import contextlib, io, os, shutil, signal, socket, subprocess, sys, tempfile, types, unittest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def load_ajail():
     src = open(f"{HERE}/ajail").read().rstrip()

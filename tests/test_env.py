@@ -3,7 +3,7 @@
 """The environment-variable rows of ajail-gui: what a typed entry becomes and how it replaces another. Pure logic, no display."""
 import ast, os, re, unittest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def load():
     tree = ast.parse(open(f"{HERE}/ajail-gui").read())

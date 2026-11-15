@@ -3,7 +3,7 @@
 # Unit tests for the extra-portals feature. Run from the folder holding ajail, ajail-gui and make-selftest.
 import ast, os, re, tempfile, unittest, unittest.mock, io, contextlib
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def load_ajail():
     src = open(f"{HERE}/ajail").read()

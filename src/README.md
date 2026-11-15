@@ -31,7 +31,7 @@ Section headers (`# ======== NN_name`) in the built file show where each fragmen
 
 | Fragment | What |
 |---|---|
-| `src/gui/00_config.py` | Imports, paths, the permission tables (must match `ajail`; `test_sync.py` checks), UI text tables |
+| `src/gui/00_config.py` | Imports, paths, the permission tables (must match `ajail`; `tests/test_sync.py` checks), UI text tables |
 | `src/gui/10_settings.py` | Reading and writing `*.conf` and `ui.conf`, path checks, app list, running-process checks |
 | `src/gui/20_files.py` | **Destructive operations**: trash an app's data, forget an app. Read these line by line. |
 | `src/gui/30_system.py` | Distro install hint, app-menu entry, folder sizes |

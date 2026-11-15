@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Hostile-AppImage tests for ajail. Run as a normal user (ajail refuses root), from the folder holding ajail:
-#     python3 test_hostile.py
+# Hostile-AppImage tests for ajail. Run as a normal user (ajail refuses root), from the repo root:
+#     python3 tests/test_hostile.py
 # Needs bubblewrap and squashfs-tools; the tests are skipped if they are missing or sandboxes don't work here.
 #
 # ajail reads files from the AppImage OUTSIDE the sandbox (the app's .desktop file, its icon, the Name= used as
@@ -11,7 +11,7 @@
 # Nothing touches your real home: the tests run a copy of ajail whose HOME is a temporary folder.
 import json, os, re, shutil, stat, struct, subprocess, sys, tempfile, time, unittest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOKEN = "CANARY-7f3a91c2-do-not-copy"          # appears only in files that must never be copied or shown
 UNSQ = "/usr/bin/unsquashfs"
 

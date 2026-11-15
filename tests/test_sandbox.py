@@ -5,7 +5,7 @@ They check what the sandbox does NOT get, so a change in src/20_core.py that ope
 No sandbox or desktop needed."""
 import contextlib, io, itertools, os, random, string, tempfile, unittest, unittest.mock
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def load(name):
     src = open(f"{HERE}/{name}").read().rstrip()

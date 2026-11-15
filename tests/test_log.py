@@ -4,7 +4,7 @@
 what reaches it (errors, exit codes, an app's stderr) and when a failed-start popup is sent."""
 import contextlib, io, os, signal, socket, subprocess, sys, tempfile, threading, time, unittest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def load():
     src = open(f"{HERE}/ajail").read().rstrip()

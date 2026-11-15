@@ -4,7 +4,7 @@
 # ignores (or the other way round). This fails as soon as one copy is edited without the other.
 import ast, os, unittest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHARED = ("DEFAULTS", "NUM", "LISTS", "EXTRA_PORTALS", "OUTSIDE", "SELF")      # must be identical in both files
 
 def assigned(path):

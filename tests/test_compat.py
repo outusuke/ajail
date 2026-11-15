@@ -3,7 +3,7 @@
 # Tests for the "compat_env" option: which variables reach the sandbox, and that nothing else ever does.
 import os, shlex, tempfile, unittest, unittest.mock
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def load(name):
     src = open(f"{HERE}/{name}").read().rstrip()
