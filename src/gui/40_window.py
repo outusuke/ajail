@@ -609,10 +609,19 @@ class Win(Adw.ApplicationWindow):
             rb.add_css_class("flat")
             sw.add_suffix(rb)
 
+            block = [lambda: ""]      # why this switch can't be turned on right now ("" if it can); set below for wayland_strict
+
             def on_sw(row, _p):
                 if syncing[0]:
                     return
                 val = int(row.get_active())
+                why = block[0]()
+                if val and why:       # the row stays usable while it holds an override (see usable), but it still can't be turned on
+                    syncing[0] = True
+                    row.set_active(False)
+                    syncing[0] = False
+                    self.toast(why)
+                    return
                 if val == default_for(key):
                     R["s"].pop(key, None)
                 else:
@@ -631,12 +640,17 @@ class Win(Adw.ApplicationWindow):
             marks.append(lambda: rb.set_visible(key in R["s"]))
             rb.set_visible(key in R["s"])
             if key == "wayland_strict":
+                def why_not():
+                    return ("Your desktop can't restrict apps (it lacks the wp_security_context_v1 Wayland protocol), so this only turns Wayland off."
+                            if not wayland_restricted() else "Turn on Wayland first." if not eff("wayland") else "")
+                block[0] = why_not
+
                 def usable():
                     # Without a restricted socket this switch only turns Wayland off, so it is greyed out instead of offered.
-                    # One that is already on stays usable, so it can still be turned off.
-                    why = ("Your desktop can't restrict apps (it lacks the wp_security_context_v1 Wayland protocol), so this only turns Wayland off."
-                           if not wayland_restricted() else "Turn on Wayland first." if not eff("wayland") else "")
-                    sw.set_sensitive(not why or eff(key))
+                    # One that is already on stays usable, so it can still be turned off. So does one that holds an override:
+                    # greying the row would grey its undo button too, and the override could never be removed.
+                    why = why_not()
+                    sw.set_sensitive(not why or eff(key) or key in R["s"])
                     sw.set_subtitle(sub + (f"\n{why}" if why else ""))
                     sw.set_tooltip_text(why or None)
                 marks.append(usable); usable()      # marks run after every change, so turning Wayland off greys this row at once

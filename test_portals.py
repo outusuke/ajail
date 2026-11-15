@@ -361,6 +361,14 @@ class GuiInstallFlow(unittest.TestCase):
                   "Move into app folder", "def ask_trash", "Move the AppImage to the Trash?"):
             self.assertIn(t, s)
 
+    def test_greyed_row_keeps_its_undo_button_usable(self):
+        """Greying a switch row with set_sensitive also greys the undo button inside it, so a row holding an override must stay
+        usable, and on_sw must still refuse to turn it on while it is blocked."""
+        s = self.gui()
+        self.assertIn('sw.set_sensitive(not why or eff(key) or key in R["s"])', s)
+        self.assertIn("block[0] = why_not", s)
+        self.assertIn("why = block[0]()", s)
+
     def test_move_choice_only_with_less_disk_space(self):
         ns = {}
         s = self.gui()
