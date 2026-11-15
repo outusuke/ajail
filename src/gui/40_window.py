@@ -92,7 +92,7 @@ class Win(Adw.ApplicationWindow):
                 elif not force and "--force" in r.stderr:      # some of them exist and differ
                     self.confirm("Replace existing settings?",
                                  self.cli_error(r).replace(" Nothing was imported; --force replaces them", "") +
-                                 ". The imported settings replace them; nothing else changes.", "Replace",
+                                 " The imported settings replace them; nothing else changes.", "Replace",
                                  lambda: go(True))
                 else:
                     self.toast(self.cli_error(r))

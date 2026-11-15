@@ -94,6 +94,18 @@ class Export(unittest.TestCase):
         self.assertEqual(self.get("default.conf"), "net=0\nallow=/media/x\n")
         self.assertTrue(os.path.exists(f"{self.conf}/apps/Foo.conf"))
 
+    def test_files_without_settings_do_not_count_as_existing(self):
+        # "Reset all settings" leaves every file in place but empty: importing over those must not ask or need --force.
+        text = self.run_("export").stdout
+        for rel in ("default.conf", "apps/Foo.conf"): self.put(rel, "\n")
+        self.put("apps/Empty.conf", "# only a comment\n")
+        r = self.run_("import", "-", stdin=text)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.get("default.conf"), "net=0\nallow=/media/x\n")
+        self.assertEqual(self.get("apps/Foo.conf"), "gpu=0\n# my note\nenv=A=1\n")
+        self.put("default.conf", "net=1\n")                    # a file with a real, different setting still needs --force
+        self.assertNotEqual(self.run_("import", "-", stdin=text).returncode, 0)
+
     def test_import_rejects_other_text(self):
         for text in ("net=0\n", "", "# sbx settings export\n# [default.conf]\nnet=0\n", "# ajail settings export\n",
                      "# ajail settings export\nnet=0\n# [default.conf]\n",
