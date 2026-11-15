@@ -8,6 +8,7 @@
 | Fragment | What | How to review |
 |---|---|---|
 | `src/20_core.py` | **Security core**: config parsing and validation, path rules, `bwrap_args`, seccomp filter, D-Bus proxy rules, pasta/net, xauth scoping, identity check, sandboxed extraction | Line by line. Every change here needs a deliberate review. |
+| `src/25_wayland.py` | **Security core**: a minimal Wayland client (no libwayland) that registers a security context, so an app gets a restricted socket where the compositor offers one | Line by line. It talks to your compositor and hands the app a socket. |
 | `src/50_run.py` | `launch`: starts the sandbox, handles the app's output streams, cleanup | Second tier. |
 | `src/00_config.py`, `10_util.py` | Paths, defaults, syscall tables; logging, notifications | Read once; the tables define policy. |
 | `src/30_host.py` | Reads desktop settings for the sandbox, resource limits, stale-file sweep | Skim. |

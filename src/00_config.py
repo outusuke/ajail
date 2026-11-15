@@ -3,7 +3,7 @@
 # ajail - run AppImages in a bubblewrap sandbox with a persistent private home
 # ======== 00_config: Configuration: paths, permission defaults, syscall tables.
 
-import codecs, errno, fcntl, glob, grp, json, os, platform, pwd, re, select, shlex, shutil, signal, struct, subprocess
+import array, codecs, errno, fcntl, glob, grp, json, os, platform, pwd, re, select, shlex, shutil, signal, struct, subprocess
 import socket, sys, tempfile, threading, time, urllib.parse
 
 _pw     = pwd.getpwuid(os.getuid())
@@ -30,7 +30,7 @@ ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch
        "alternatives", "vulkan", "drirc", "mime.types", "protocols", "services"]
 
 # Permission defaults. Keep in sync with DEFAULTS in ajail-gui.
-DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": 0, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
             "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}

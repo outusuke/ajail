@@ -339,8 +339,12 @@ def scoped_xauth(src, disp):
         return None
     return dst
 
-def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, gset=None):
+def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, gset=None, wl=None):
+    """wl: a socket the compositor made for this app with a Wayland security context (see 25_wayland). With it the app gets
+    that restricted socket in place of the real one. 'Wayland only if restricted' (wayland_strict) without it: no Wayland."""
     rt = runtime_dir()
+    wp = wayland_path() if cfg["wayland"] else None
+    if wp and cfg["wayland_strict"] and not wl: wp = None
     a = ["bwrap", "--unshare-all", "--die-with-parent", "--new-session", "--clearenv"]
     if not cfg["userns"]:
         # --disable-userns needs an explicit --unshare-user ("--unshare-all" only tries one). If a user namespace can't be
@@ -367,13 +371,12 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         a += ["--ro-bind", src, f"/etc/{n}"]
     env = {"HOME": HOME, "USER": USER, "LOGNAME": USER, "PATH": "/usr/local/bin:/usr/bin:/usr/sbin",
            "XDG_RUNTIME_DIR": rt, "APPDIR": "/app", "AJAIL_ACTIVE": "1",
-           "ELECTRON_OZONE_PLATFORM_HINT": ("auto" if cfg["x11"] else "wayland") if cfg["wayland"] else "x11"}
+           "ELECTRON_OZONE_PLATFORM_HINT": ("auto" if cfg["x11"] else "wayland") if wp else "x11"}
     for k in ("LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_TIME", "TZ", "TERM",
               "XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "XCURSOR_THEME", "XCURSOR_SIZE"):
         if k in os.environ: env[k] = os.environ[k]
-    wp = wayland_path() if cfg["wayland"] else None
     if wp:
-        a += ["--ro-bind", wp, wp]
+        a += ["--ro-bind", wl or wp, wp]
         env["WAYLAND_DISPLAY"] = os.environ["WAYLAND_DISPLAY"]; env["XDG_SESSION_TYPE"] = "wayland"
     if cfg["x11"]:
         disp = os.environ.get("DISPLAY", "")

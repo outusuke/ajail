@@ -29,7 +29,7 @@ OUTSIDE = ("/mnt/", "/media/", f"/run/media/{USER}/")
 os.makedirs(APPS, exist_ok=True)
 
 # Keep in sync with DEFAULTS in ajail.
-DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": 0, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
             "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
@@ -62,6 +62,8 @@ SECTIONS = [
          "Other devices on your local network are still reachable. Needs passt (pasta)."),
         ("sound", "Audio", "Play sound. Also allows microphone access."),
         ("wayland", "Wayland", "Lets the app open a window. Turn off only for an app that should have no display, or one that runs on X11 alone."),
+        ("wayland_strict", "Wayland only if restricted",
+         "No Wayland at all when your desktop can't limit what the app may do (screen capture, input injection)."),
         ("x11", "X11 compatibility", "Only for apps that won't start otherwise. Weaker isolation."),
         ("printing", "Printing", "Talk to the print service (CUPS)"),
         ("ssh_agent", "SSH agent", "Use your SSH keys without seeing them. The app can sign as you.")]),

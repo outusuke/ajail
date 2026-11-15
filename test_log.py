@@ -76,7 +76,8 @@ class Launch(unittest.TestCase):
         names = ("check_identity", "sweep_runtime", "start_bus", "work_dir", "limit_prefix", "forward_files", "stop_bus", "running",
                  "notify_failure", "notify_crash", "notify_ended", "journal_tag", "HOMES", "RUNNING", "SOURCES", "LOG", "STATE",
                  "subprocess", "time")
-        self.keep = {k: A[k] for k in names}
+        self.keep = {k: A[k] for k in names + ("wayland_path", "wayland_context")}
+        A.update(wayland_path=lambda: None, wayland_context=lambda *a: None)       # never talk to the real compositor from a test
         self.sigs = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
         self.child, self.popups = "pass", []
         test = self

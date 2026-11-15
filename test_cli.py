@@ -112,7 +112,7 @@ class Completions(unittest.TestCase):
         for c in ast.walk(main):                                    # every  c == "name"  /  c in ("a", "b")  in main()
             if isinstance(c, ast.Compare) and isinstance(c.left, ast.Name) and c.left.id == "c":
                 out |= {x.value for x in ast.walk(c.comparators[0]) if isinstance(x, ast.Constant) and isinstance(x.value, str)}
-        return out - {"dump", "-h", "--help"}                      # dump is only for ajail-gui
+        return out - {"dump", "wl-check", "-h", "--help"}          # dump and wl-check are only for ajail-gui
 
     def real_options(self):
         help_ = next(ast.literal_eval(n.value) for n in self.tree.body

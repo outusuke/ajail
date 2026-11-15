@@ -218,6 +218,9 @@ def cmd_check():
     line("OK" if r.returncode == 0 else "WARN", "unprivileged sandboxes work" if r.returncode == 0
          else "bwrap test failed: " + r.stderr.decode(errors="replace").strip()[:150])
     yes(wayland_path(), "Wayland socket found", "no Wayland socket visible to this process")
+    if wayland_path():
+        yes(wl_supported(wayland_path()), "compositor can restrict apps (security context): apps get a restricted Wayland socket",
+            "compositor has no wp_security_context_v1: apps get the full Wayland socket ('Wayland only if restricted' would turn Wayland off)")
     yes(os.path.exists("/dev/dri"), "GPU devices (/dev/dri) present", "no /dev/dri")
     if glob.glob("/dev/nvidia*"): line("OK", "NVIDIA devices will be shared when Graphics is on")
     yes(shutil.which("xdg-dbus-proxy"), "xdg-dbus-proxy installed (notifications, portals, tray)",
@@ -256,7 +259,9 @@ def cmd_preview(n):
     elif not os.path.isdir(root): root = f"{EXTRACT}/{name}/root"
     priv = private_net(cfg)
     gset = f"{runtime_dir()}/ajail/PID.d/gsettings-keyfile" if cfg["theme"] and gsettings_keyfile_text() is not None else None
-    cmd = bwrap_args(name, root, cfg, ["/app/AppRun"], bus, SEC_FD if priv else None, (), preview_files(cfg), gset)
+    wp = wayland_path() if cfg["wayland"] else None
+    wl = f"{runtime_dir()}/ajail/PID.wl" if wp and wl_supported(wp) else None
+    cmd = bwrap_args(name, root, cfg, ["/app/AppRun"], bus, SEC_FD if priv else None, (), preview_files(cfg), gset, wl)
     if priv: cmd = net_wrap(cmd, f"{runtime_dir()}/ajail/PID.d/seccomp.bpf")
     props = limit_props(cfg)
     if props: cmd = ["systemd-run", "--user", "--scope", "--quiet"] + props + ["--"] + cmd
@@ -366,6 +371,7 @@ def main():
     elif c == "check": cmd_check()
     elif c == "preview": cmd_preview(a[1] if len(a) > 1 else "")
     elif c == "dump": cmd_dump(a[1] if len(a) > 1 else "")
+    elif c == "wl-check": print(int(bool(wayland_path() and wl_supported(wayland_path()))))      # for ajail-gui: can this desktop restrict Wayland apps?
     elif c == "list" and len(a) == 1: cmd_list()
     elif c == "stop": cmd_stop(a[1:])
     elif c == "name" and len(a) > 1: print(sanitize(a[1]))

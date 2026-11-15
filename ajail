@@ -3,7 +3,7 @@
 # ajail - run AppImages in a bubblewrap sandbox with a persistent private home
 # ======== 00_config: Configuration: paths, permission defaults, syscall tables.
 
-import codecs, errno, fcntl, glob, grp, json, os, platform, pwd, re, select, shlex, shutil, signal, struct, subprocess
+import array, codecs, errno, fcntl, glob, grp, json, os, platform, pwd, re, select, shlex, shutil, signal, struct, subprocess
 import socket, sys, tempfile, threading, time, urllib.parse
 
 _pw     = pwd.getpwuid(os.getuid())
@@ -30,7 +30,7 @@ ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch
        "alternatives", "vulkan", "drirc", "mime.types", "protocols", "services"]
 
 # Permission defaults. Keep in sync with DEFAULTS in ajail-gui.
-DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": 0, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
             "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
@@ -608,8 +608,12 @@ def scoped_xauth(src, disp):
         return None
     return dst
 
-def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, gset=None):
+def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, gset=None, wl=None):
+    """wl: a socket the compositor made for this app with a Wayland security context (see 25_wayland). With it the app gets
+    that restricted socket in place of the real one. 'Wayland only if restricted' (wayland_strict) without it: no Wayland."""
     rt = runtime_dir()
+    wp = wayland_path() if cfg["wayland"] else None
+    if wp and cfg["wayland_strict"] and not wl: wp = None
     a = ["bwrap", "--unshare-all", "--die-with-parent", "--new-session", "--clearenv"]
     if not cfg["userns"]:
         # --disable-userns needs an explicit --unshare-user ("--unshare-all" only tries one). If a user namespace can't be
@@ -636,13 +640,12 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         a += ["--ro-bind", src, f"/etc/{n}"]
     env = {"HOME": HOME, "USER": USER, "LOGNAME": USER, "PATH": "/usr/local/bin:/usr/bin:/usr/sbin",
            "XDG_RUNTIME_DIR": rt, "APPDIR": "/app", "AJAIL_ACTIVE": "1",
-           "ELECTRON_OZONE_PLATFORM_HINT": ("auto" if cfg["x11"] else "wayland") if cfg["wayland"] else "x11"}
+           "ELECTRON_OZONE_PLATFORM_HINT": ("auto" if cfg["x11"] else "wayland") if wp else "x11"}
     for k in ("LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_TIME", "TZ", "TERM",
               "XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "XCURSOR_THEME", "XCURSOR_SIZE"):
         if k in os.environ: env[k] = os.environ[k]
-    wp = wayland_path() if cfg["wayland"] else None
     if wp:
-        a += ["--ro-bind", wp, wp]
+        a += ["--ro-bind", wl or wp, wp]
         env["WAYLAND_DISPLAY"] = os.environ["WAYLAND_DISPLAY"]; env["XDG_SESSION_TYPE"] = "wayland"
     if cfg["x11"]:
         disp = os.environ.get("DISPLAY", "")
@@ -815,6 +818,142 @@ def inside(root, p):
     return q == r or q.startswith(r + "/")
 
 
+# ======== 25_wayland: SECURITY CORE: registers a Wayland security context so an app gets a restricted socket (only where the compositor offers wp_security_context_v1). Read line by line.
+
+class WlError(Exception):
+    pass
+
+
+def wl_string(s):
+    b = s.encode() + b"\0"
+    return struct.pack("=I", len(b)) + b + b"\0" * (-len(b) % 4)
+
+
+class Wl:
+    """A tiny Wayland client: just enough of the wire protocol to ask for a security context (no libwayland needed)."""
+    def __init__(self, path):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(3)
+        try: self.sock.connect(path)
+        except OSError:
+            self.sock.close(); raise
+        self.last, self.buf = 1, b""              # object 1 is wl_display
+
+    def new_id(self):
+        self.last += 1
+        return self.last
+
+    def send(self, obj, opcode, payload=b"", fds=()):
+        msg = struct.pack("=II", obj, ((8 + len(payload)) << 16) | opcode) + payload
+        if fds: self.sock.sendmsg([msg], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", fds))])
+        else: self.sock.sendall(msg)
+
+    def read(self, n):
+        while len(self.buf) < n:
+            d = self.sock.recv(4096)
+            if not d: raise WlError("the compositor closed the connection")
+            self.buf += d
+        out, self.buf = self.buf[:n], self.buf[n:]
+        return out
+
+    def roundtrip(self, registry):
+        """wl_display.sync, then read events until it is answered. Returns the (name, interface, version) globals seen."""
+        cb = self.new_id()
+        self.send(1, 0, struct.pack("=I", cb))
+        found = []
+        while True:
+            head = self.read(8)
+            obj, word = struct.unpack("=II", head)
+            data = self.read((word >> 16) - 8)
+            op = word & 0xFFFF
+            if obj == 1 and op == 0:              # wl_display.error(object, code, message)
+                (n,) = struct.unpack_from("=I", data, 8)
+                raise WlError(data[12:12 + n - 1].decode(errors="replace"))
+            if obj == registry and op == 0:       # wl_registry.global(name, interface, version)
+                name, n = struct.unpack_from("=II", data)
+                iface = data[8:8 + n - 1].decode(errors="replace")
+                (ver,) = struct.unpack_from("=I", data, 8 + (n + 3) // 4 * 4)
+                found.append((name, iface, ver))
+            elif obj == cb and op == 0:
+                return found
+
+    def close(self):
+        try: self.sock.close()
+        except OSError: pass
+
+
+class WlContext:
+    """What must stay open while the program runs: closing `hangup` tells the compositor to stop listening."""
+    def __init__(self, hangup, path):
+        self.hangup, self.path = hangup, path
+
+    def close(self):
+        try: os.close(self.hangup)
+        except OSError: pass
+        try: os.unlink(self.path)
+        except OSError: pass
+
+
+def wl_supported(display):
+    """Does the compositor at this socket offer wp_security_context_manager_v1? (Read-only: nothing is registered.)"""
+    try: c = Wl(display)
+    except OSError: return False
+    try:
+        reg = c.new_id()
+        c.send(1, 1, struct.pack("=I", reg))      # wl_display.get_registry
+        return any(g[1] == "wp_security_context_manager_v1" for g in c.roundtrip(reg))
+    except (OSError, WlError, struct.error):
+        return False
+    finally:
+        c.close()
+
+
+def wayland_context(display, sock_path, app_id, instance):
+    """Register a listening socket with a security context. The program connects to that socket instead of the
+    compositor's own, and the compositor then treats it as a sandboxed client (no screen capture, no input injection...).
+    Returns a WlContext, or None when the compositor doesn't offer the protocol (or something went wrong; a warning says so)."""
+    try: c = Wl(display)
+    except OSError as e:
+        warn(f"can't reach the Wayland compositor: {e.strerror}"); return None
+    srv, pipe, made = None, None, False
+    try:
+        reg = c.new_id()
+        c.send(1, 1, struct.pack("=I", reg))
+        found = next((g for g in c.roundtrip(reg) if g[1] == "wp_security_context_manager_v1"), None)
+        if not found: return None
+        mgr = c.new_id()
+        c.send(reg, 0, struct.pack("=I", found[0]) + wl_string(found[1]) + struct.pack("=II", 1, mgr))   # wl_registry.bind
+        os.makedirs(os.path.dirname(sock_path), mode=0o700, exist_ok=True)
+        try: os.unlink(sock_path)
+        except FileNotFoundError: pass
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(sock_path); made = True
+        srv.listen(32)
+        pipe = os.pipe()
+        ctx = c.new_id()
+        c.send(mgr, 1, struct.pack("=I", ctx), fds=[srv.fileno(), pipe[0]])    # create_listener(id, listen_fd, close_fd)
+        c.send(ctx, 1, wl_string("org.ajail"))                                   # set_sandbox_engine
+        c.send(ctx, 2, wl_string(app_id))                                      # set_app_id
+        c.send(ctx, 3, wl_string(instance))                                    # set_instance_id
+        c.send(ctx, 4)                                                         # commit
+        c.roundtrip(reg)                                                       # a protocol error shows up here
+        os.close(pipe[0])
+        out = WlContext(pipe[1], sock_path)
+        pipe = None
+        return out
+    except (OSError, WlError, struct.error) as e:
+        warn(f"Wayland security context failed: {e}")
+        if made:
+            try: os.unlink(sock_path)
+            except OSError: pass
+        return None
+    finally:
+        if srv: srv.close()
+        if pipe:
+            for fd in pipe: os.close(fd)
+        c.close()
+
+
 # ======== 30_host: Host integration: desktop settings read for the sandbox, resource limits, stale-file sweep.
 
 # Desktop settings the sandbox can't read: the title-bar button layout (minimize, maximize, close) and the cursor theme
@@ -929,7 +1068,7 @@ def sweep_runtime():
         if not pid.isdigit() or os.path.exists(f"/proc/{pid}"): continue
         p = f"{d}/{e}"
         if os.path.isdir(p) and not os.path.islink(p): shutil.rmtree(p, ignore_errors=True)
-        elif e.endswith(".bus"):
+        elif e.endswith((".bus", ".wl")):
             try: os.unlink(p)
             except OSError: pass
 
@@ -1196,8 +1335,14 @@ def launch(name, root, cfg, extra, source=None, once=False):
         sec.seek(0)
         with open(secpath, "wb") as f: f.write(sec.read())
     secfd = (SEC_FD if secpath else None) if priv else (sec.fileno() if sec else None)
+    wl = None                                     # the restricted Wayland socket, where the compositor can make one
+    wp = wayland_path() if cfg["wayland"] else None
+    if wp:
+        wl = wayland_context(wp, f"{runtime_dir()}/ajail/{os.getpid()}.wl", name, f"{name}-{os.getpid()}")
+        if not wl and cfg["wayland_strict"]:
+            warn("the compositor can't restrict Wayland for this app, and 'Wayland only if restricted' is on: Wayland is off for it", name)
     inner = bwrap_args(name, root, cfg, ["/app/AppRun"] + extra, bus[2] if bus else None,
-                       secfd, forward_files(extra), gen, gset)
+                       secfd, forward_files(extra), gen, gset, wl.path if wl else None)
     cmd = limit_prefix(cfg, name) + (net_wrap(inner, secpath) if priv else inner)
     on = ",".join(k for k in DEFAULTS if cfg[k])
     lim = ",".join(f"{k}={cfg[k]}" for k in NUM if cfg[k])
@@ -1257,6 +1402,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
     rc = p.wait(); t.join(2)
     if t2: t2.join(2)
     stop_bus(bus)
+    if wl: wl.close()
     if wd: shutil.rmtree(wd, ignore_errors=True)
     try: os.unlink(pidfile)
     except OSError: pass
@@ -1588,6 +1734,9 @@ def cmd_check():
     line("OK" if r.returncode == 0 else "WARN", "unprivileged sandboxes work" if r.returncode == 0
          else "bwrap test failed: " + r.stderr.decode(errors="replace").strip()[:150])
     yes(wayland_path(), "Wayland socket found", "no Wayland socket visible to this process")
+    if wayland_path():
+        yes(wl_supported(wayland_path()), "compositor can restrict apps (security context): apps get a restricted Wayland socket",
+            "compositor has no wp_security_context_v1: apps get the full Wayland socket ('Wayland only if restricted' would turn Wayland off)")
     yes(os.path.exists("/dev/dri"), "GPU devices (/dev/dri) present", "no /dev/dri")
     if glob.glob("/dev/nvidia*"): line("OK", "NVIDIA devices will be shared when Graphics is on")
     yes(shutil.which("xdg-dbus-proxy"), "xdg-dbus-proxy installed (notifications, portals, tray)",
@@ -1626,7 +1775,9 @@ def cmd_preview(n):
     elif not os.path.isdir(root): root = f"{EXTRACT}/{name}/root"
     priv = private_net(cfg)
     gset = f"{runtime_dir()}/ajail/PID.d/gsettings-keyfile" if cfg["theme"] and gsettings_keyfile_text() is not None else None
-    cmd = bwrap_args(name, root, cfg, ["/app/AppRun"], bus, SEC_FD if priv else None, (), preview_files(cfg), gset)
+    wp = wayland_path() if cfg["wayland"] else None
+    wl = f"{runtime_dir()}/ajail/PID.wl" if wp and wl_supported(wp) else None
+    cmd = bwrap_args(name, root, cfg, ["/app/AppRun"], bus, SEC_FD if priv else None, (), preview_files(cfg), gset, wl)
     if priv: cmd = net_wrap(cmd, f"{runtime_dir()}/ajail/PID.d/seccomp.bpf")
     props = limit_props(cfg)
     if props: cmd = ["systemd-run", "--user", "--scope", "--quiet"] + props + ["--"] + cmd
@@ -1736,6 +1887,7 @@ def main():
     elif c == "check": cmd_check()
     elif c == "preview": cmd_preview(a[1] if len(a) > 1 else "")
     elif c == "dump": cmd_dump(a[1] if len(a) > 1 else "")
+    elif c == "wl-check": print(int(bool(wayland_path() and wl_supported(wayland_path()))))      # for ajail-gui: can this desktop restrict Wayland apps?
     elif c == "list" and len(a) == 1: cmd_list()
     elif c == "stop": cmd_stop(a[1:])
     elif c == "name" and len(a) > 1: print(sanitize(a[1]))

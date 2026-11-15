@@ -153,8 +153,8 @@ if wl and os.path.exists(wlp):
         risky = [n for n in names if n in WL_RISKY]
         row("EXPOSED" if risky else "hidden", "Wayland privileged protocols",
             ", ".join(f"{n} ({WL_RISKY[n]})" for n in risky) if risky else f"none of the {len(names)} offered")
-        row("INFO", "Wayland security context", "offered by the compositor (ajail does not use it yet)"
-            if "wp_security_context_manager_v1" in names else "not offered by the compositor")
+        row("INFO", "Wayland security context", "offered to this app"
+            if "wp_security_context_manager_v1" in names else "not offered to this app")
     except (OSError, struct.error) as e:
         row("INFO", "Wayland protocols", f"could not read the list: {e}")
 

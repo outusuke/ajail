@@ -1,13 +1,13 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Troubleshooting hints: which log lines suggest which setting. Pure logic from ajail-gui, no display needed."""
-import ast, os, re, unittest
+import ast, os, re, subprocess, unittest, unittest.mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 def load():
     tree = ast.parse(open(f"{HERE}/ajail-gui").read())
-    want_assign, want_def = {"DEFAULTS", "LOG_HINTS", "HINT_LISTS"}, {"effective_switches", "effective_lists", "last_run", "log_hints"}
+    want_assign, want_def = {"DEFAULTS", "LOG_HINTS", "HINT_LISTS", "SELF", "_WL"}, {"effective_switches", "effective_lists", "last_run", "log_hints", "wayland_restricted"}
     body = [n for n in tree.body
             if (isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name) and n.targets[0].id in want_assign)
             or (isinstance(n, ast.FunctionDef) and n.name in want_def)]
@@ -99,6 +99,19 @@ class Hints(unittest.TestCase):
         self.assertEqual(keys(l, cur(wayland=0))[0], ("wayland", 1))
         self.assertNotIn(("wayland", 1), keys(l, cur(wayland=1)))
         self.assertEqual(keys(run("Error: cannot open display: :0"), cur(wayland=0)), [("x11", 1)])
+
+    def test_wayland_restricted_asks_ajail_once_and_unknown_means_no(self):
+        calls = []
+        def fake(out, code=0):
+            def run(cmd, timeout=None):
+                calls.append(cmd); return subprocess.CompletedProcess(cmd, code, out, "")
+            return run
+        for out, code, want in (("1\n", 0, True), ("0\n", 0, False), ("", 127, False), ("garbage", 0, False)):
+            calls.clear(); G["_WL"].clear()
+            with unittest.mock.patch.dict(G, {"run": fake(out, code)}):
+                self.assertEqual(G["wayland_restricted"](), want, out); self.assertEqual(G["wayland_restricted"](), want)
+            self.assertEqual(calls, [[G["SELF"], "wl-check"]])               # asked once, not on every refresh
+        G["_WL"].clear()
 
     def test_no_hint_for_a_run_that_ended_cleanly(self):
         self.assertEqual(keys(run("libEGL warning: something", code=0)), [])

@@ -630,6 +630,15 @@ class Win(Adw.ApplicationWindow):
             rb.connect("clicked", on_reset)
             marks.append(lambda: rb.set_visible(key in R["s"]))
             rb.set_visible(key in R["s"])
+            if key == "wayland_strict":
+                def usable():
+                    # Without a restricted socket this switch only turns Wayland off, so it is greyed out instead of offered.
+                    why = ("Your desktop can't restrict apps (it lacks the wp_security_context_v1 Wayland protocol), so this would only turn Wayland off."
+                           if not wayland_restricted() else "Turn on Wayland first." if not eff("wayland") else "")
+                    sw.set_sensitive(not why)
+                    sw.set_subtitle(sub + (f"\n{why}" if why else ""))
+                    sw.set_tooltip_text(why or None)
+                marks.append(usable); usable()      # marks run after every change, so turning Wayland off greys this row at once
             g.add(sw)
 
         for gtitle, desc, items in SECTIONS:

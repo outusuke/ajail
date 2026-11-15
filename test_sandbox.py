@@ -114,11 +114,11 @@ class EveryConfig(unittest.TestCase):
         for c in self.configs():
             a = build(c)
             dsts = [d for _, _, d in binds(a)]
-            self.assertEqual("/run/user/1000/wayland-0" in dsts, bool(c["wayland"]))
+            on = bool(c["wayland"]) and not c["wayland_strict"]       # no restricted socket here, so "only if restricted" means none
+            self.assertEqual("/run/user/1000/wayland-0" in dsts, on)
             env = setenv(a)
-            self.assertEqual("WAYLAND_DISPLAY" in env, bool(c["wayland"]))
-            self.assertEqual(env.get("ELECTRON_OZONE_PLATFORM_HINT"),
-                             ("auto" if c["x11"] else "wayland") if c["wayland"] else "x11")
+            self.assertEqual("WAYLAND_DISPLAY" in env, on)
+            self.assertEqual(env.get("ELECTRON_OZONE_PLATFORM_HINT"), ("auto" if c["x11"] else "wayland") if on else "x11")
 
     def test_x11_alone_needs_no_wayland_session(self):
         def check(**kw):

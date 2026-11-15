@@ -79,8 +79,14 @@ def launch(name, root, cfg, extra, source=None, once=False):
         sec.seek(0)
         with open(secpath, "wb") as f: f.write(sec.read())
     secfd = (SEC_FD if secpath else None) if priv else (sec.fileno() if sec else None)
+    wl = None                                     # the restricted Wayland socket, where the compositor can make one
+    wp = wayland_path() if cfg["wayland"] else None
+    if wp:
+        wl = wayland_context(wp, f"{runtime_dir()}/ajail/{os.getpid()}.wl", name, f"{name}-{os.getpid()}")
+        if not wl and cfg["wayland_strict"]:
+            warn("the compositor can't restrict Wayland for this app, and 'Wayland only if restricted' is on: Wayland is off for it", name)
     inner = bwrap_args(name, root, cfg, ["/app/AppRun"] + extra, bus[2] if bus else None,
-                       secfd, forward_files(extra), gen, gset)
+                       secfd, forward_files(extra), gen, gset, wl.path if wl else None)
     cmd = limit_prefix(cfg, name) + (net_wrap(inner, secpath) if priv else inner)
     on = ",".join(k for k in DEFAULTS if cfg[k])
     lim = ",".join(f"{k}={cfg[k]}" for k in NUM if cfg[k])
@@ -140,6 +146,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
     rc = p.wait(); t.join(2)
     if t2: t2.join(2)
     stop_bus(bus)
+    if wl: wl.close()
     if wd: shutil.rmtree(wd, ignore_errors=True)
     try: os.unlink(pidfile)
     except OSError: pass

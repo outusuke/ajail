@@ -57,7 +57,8 @@ class LaunchOutput(unittest.TestCase):
         names = ("check_identity", "private_net", "sweep_runtime", "start_bus", "seccomp_file", "work_dir", "make_files",
                  "bwrap_args", "limit_prefix", "forward_files", "stop_bus", "running", "notify_failure", "log",
                  "HOMES", "RUNNING", "SOURCES", "LOG", "platform")
-        self.keep = {k: A[k] for k in names}
+        self.keep = {k: A[k] for k in names + ("wayland_path", "wayland_context")}
+        A.update(wayland_path=lambda: None, wayland_context=lambda *a: None)       # never talk to the real compositor from a test
         A.update(check_identity=lambda *a: None, private_net=lambda c: False, sweep_runtime=lambda: None,
                  start_bus=lambda *a: None, seccomp_file=lambda h: tempfile.TemporaryFile(), work_dir=lambda: None, make_files=lambda *a: {},
                  bwrap_args=lambda *a: [], limit_prefix=lambda *a: [], forward_files=lambda e: [], stop_bus=lambda b: None,
@@ -78,9 +79,9 @@ class LaunchOutput(unittest.TestCase):
         A["subprocess"] = FakeSub()
     def tearDown(self): A.update(self.keep); A["subprocess"] = subprocess
 
-    def run_launch(self, tty):
+    def run_launch(self, tty, **over):
         out, err = (Tty() if tty else io.StringIO()), io.StringIO()
-        cfg = dict(A["DEFAULTS"]); cfg.update(A["NUM"]); cfg["theme"] = 0
+        cfg = dict(A["DEFAULTS"]); cfg.update(A["NUM"]); cfg["theme"] = 0; cfg.update(over)
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
             A["launch"]("Foo", f"{self.d}/root", cfg, [])
         shown = out.getvalue() + (open(self.term).read() if os.path.exists(self.term) else "")
@@ -92,6 +93,28 @@ class LaunchOutput(unittest.TestCase):
         self.assertIn("out bad file", out); self.assertIn("end ok", out)
         self.assertNotIn("\x1b", err)                              # stderr stays filtered and still reaches the log
         self.assertIn("err bad file", open(f"{self.d}/log").read())
+    def test_launch_gives_bwrap_the_restricted_wayland_socket_and_lets_go_of_it(self):
+        seen = {}
+        class Ctx:
+            path = "/rt/ajail/1.wl"
+            def close(s): seen["closed"] = True
+        A.update(wayland_path=lambda: "/rt/wayland-0", bwrap_args=lambda *a: seen.update(bw=a) or [],
+                 wayland_context=lambda wp, sock, name, inst: seen.update(ctx=(wp, sock.endswith(f"/ajail/{os.getpid()}.wl"), name)) or Ctx())
+        self.run_launch(False)
+        self.assertEqual(seen["bw"][-1], "/rt/ajail/1.wl")
+        self.assertEqual(seen["ctx"], ("/rt/wayland-0", True, "Foo"))
+        self.assertTrue(seen["closed"])
+
+    def test_launch_without_a_context_binds_the_real_socket_and_strict_says_why(self):
+        seen = {}
+        A.update(wayland_path=lambda: "/rt/wayland-0", bwrap_args=lambda *a: seen.update(bw=a) or [])
+        _, err = self.run_launch(False)
+        self.assertIsNone(seen["bw"][-1]); self.assertNotIn("restrict", err)                    # quiet unless strict was asked for
+        _, err = self.run_launch(False, wayland_strict=1)
+        self.assertIn("Wayland only if restricted", err)
+        seen.clear(); _, err = self.run_launch(False, wayland=0)                                 # Wayland off: no socket, no context, no warning
+        self.assertIsNone(seen["bw"][-1]); self.assertNotIn("restrict", err)
+
     def test_stdout_not_a_terminal_is_untouched(self):
         out, err = self.run_launch(False)
         self.assertIn(EVIL, out)                                  # data going to a pipe or file is not altered
@@ -232,7 +255,8 @@ class PidFiles(unittest.TestCase):
         names = ("check_identity", "private_net", "sweep_runtime", "start_bus", "seccomp_file", "work_dir", "make_files",
                  "bwrap_args", "limit_prefix", "forward_files", "stop_bus", "running", "notify_failure", "log",
                  "HOMES", "SOURCES", "LOG", "subprocess")
-        keep = {k: A[k] for k in names}
+        keep = {k: A[k] for k in names + ("wayland_path", "wayland_context")}
+        A.update(wayland_path=lambda: None, wayland_context=lambda *a: None)       # never talk to the real compositor from a test
         seen = f"{d}/seen"
         app = "import os; open(%r, 'w').write(open(%r + '/' + str(os.getppid())).read())" % (seen, self.d)    # the parent is the test, i.e. launch()
         class P(subprocess.Popen):
@@ -301,7 +325,8 @@ class PrivateNetLaunch(unittest.TestCase):
         self.d = tempfile.mkdtemp()
         names = ("check_identity", "sweep_runtime", "start_bus", "work_dir", "limit_prefix", "forward_files", "stop_bus", "running",
                  "notify_failure", "log", "HOMES", "RUNNING", "SOURCES", "LOG", "shutil", "subprocess")
-        self.keep = {k: A[k] for k in names}
+        self.keep = {k: A[k] for k in names + ("wayland_path", "wayland_context")}
+        A.update(wayland_path=lambda: None, wayland_context=lambda *a: None)       # never talk to the real compositor from a test
         self.wd, self.seen, self.pasta = f"{self.d}/wd", [], True
         test = self
         class P(subprocess.Popen):

@@ -39,6 +39,13 @@ def dump(arg=""):
     d.setdefault("global", empty())
     return d
 
+_WL = []
+def wayland_restricted():
+    """Can this desktop make a restricted Wayland socket for an app (wp_security_context_v1)? Asked once, from ajail itself, so the
+    answer comes from the same code that starts the apps. Unknown counts as no."""
+    if not _WL: _WL.append(run([SELF, "wl-check"], timeout=5).stdout.strip() == "1")
+    return _WL[0]
+
 def summary(G, A):
     e = {**DEFAULTS, **G["s"], **(A["s"] if A else {})}
     x = {}
