@@ -6,7 +6,7 @@ _ajail_apps() { ajail list 2>/dev/null | awk '{print $1}'; }
 _ajail() {
     local cur=${COMP_WORDS[COMP_CWORD]} cmd=${COMP_WORDS[1]} i
     if (( COMP_CWORD == 1 )); then
-        COMPREPLY=( $(compgen -W "on off status check preview list stop name install uninstall restore run run-file desktop help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "on off status check preview list stop name install uninstall restore run run-file export import desktop help" -- "$cur") )
         compopt -o filenames 2>/dev/null; COMPREPLY+=( $(compgen -f -X '!*.[aA]pp[iI]mage' -- "$cur") )
         return
     fi
@@ -29,6 +29,13 @@ _ajail() {
             if [[ $cur == -* ]]; then COMPREPLY=( $(compgen -W "--keep --to" -- "$cur") )
             elif [[ ${COMP_WORDS[COMP_CWORD-1]} == --to ]]; then compopt -o dirnames 2>/dev/null; COMPREPLY=( $(compgen -d -- "$cur") )
             else COMPREPLY=( $(compgen -W "$(_ajail_apps)" -- "$cur") ); fi ;;
+        export)
+            if [[ $cur == -* ]]; then COMPREPLY=( $(compgen -W "--default --all --force" -- "$cur") )
+            elif [[ ${COMP_WORDS[COMP_CWORD-1]} == -o ]]; then compopt -o filenames 2>/dev/null; COMPREPLY=( $(compgen -f -- "$cur") )
+            else COMPREPLY=( $(compgen -W "$(_ajail_apps)" -- "$cur") ); fi ;;
+        import)
+            if [[ $cur == -* ]]; then COMPREPLY=( $(compgen -W "--force" -- "$cur") )
+            else compopt -o filenames 2>/dev/null; COMPREPLY=( $(compgen -f -- "$cur") ); fi ;;
         preview|stop) (( COMP_CWORD == 2 )) && COMPREPLY=( $(compgen -W "$(_ajail_apps)" -- "$cur") ) ;;
         desktop) COMPREPLY=( $(compgen -W "--install-menu --remove-menu" -- "$cur") ) ;;
         name) compopt -o filenames 2>/dev/null; COMPREPLY=( $(compgen -f -- "$cur") ) ;;

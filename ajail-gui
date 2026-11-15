@@ -675,6 +675,60 @@ class Win(Adw.ApplicationWindow):
         dlg.connect("response", lambda d, r: cb([e.get_text().strip() for e in ents]) if r == "ok" else None)
         dlg.present(self)
 
+    def cli_error(self, r):
+        """The message ajail printed, without its 'ajail: ' prefix. Shown in a toast, never parsed as markup."""
+        lines = [l for l in (r.stderr or "").splitlines() if l.strip()]
+        return re.sub(r"^ajail: ", "", lines[-1] if lines else f"ajail exited with {r.returncode}")
+
+    def export_settings(self, target, name):
+        """Save settings to a text file with 'ajail export'. TARGET is --all, --default or an app name; NAME is the suggested file name.
+        The file dialog already asks before replacing a file, hence --force."""
+        dlg = Gtk.FileDialog(title="Export settings", initial_name=name)
+
+        def cb(d, res):
+            try:
+                f = d.save_finish(res)
+            except GLib.Error:
+                return
+            if not f.get_path():
+                self.toast("Choose a folder on this computer")
+                return
+            r = run([SELF, "export", target, "-o", f.get_path(), "--force"], timeout=30)
+            self.toast("Settings exported" if r.returncode == 0 else self.cli_error(r))
+
+        dlg.save(self, None, cb)
+
+    def import_settings(self):
+        """Load an export with 'ajail import'. Settings that would be replaced are only replaced after a confirmation."""
+        dlg = Gtk.FileDialog(title="Import settings")
+
+        def cb(d, res):
+            try:
+                f = d.open_finish(res)
+            except GLib.Error:
+                return
+            path = f.get_path()
+            if not path:
+                self.toast("Choose a file on this computer")
+                return
+
+            def go(force):
+                r = run([SELF, "import", path] + (["--force"] if force else []), timeout=30)
+                if r.returncode == 0:
+                    self.fill_apps()
+                    self.toast(r.stdout.strip() or "Settings imported")
+                elif not force and "--force" in r.stderr:      # some of them exist and differ
+                    self.confirm("Replace existing settings?",
+                                 self.cli_error(r).replace(" Nothing was imported; --force replaces them", "") +
+                                 ". The imported settings replace them; nothing else changes.", "Replace",
+                                 lambda: go(True))
+                else:
+                    self.toast(self.cli_error(r))
+
+            go(False)
+
+        dlg.open(self, None, cb)
+
     def build_main(self):
         page = Adw.PreferencesPage()
         g = Adw.PreferencesGroup()
@@ -732,6 +786,20 @@ class Win(Adw.ApplicationWindow):
 
         self.apps_group = Adw.PreferencesGroup(title="Apps")
         page.add(self.apps_group)
+
+        bg = Adw.PreferencesGroup(
+            title="Backup",
+            description="Saves the default permissions and every app's own permissions in one text file, "
+                        "and loads such a file back. App data and installed apps are not included.")
+        exp_row = Adw.ActionRow(title="Export settings…", activatable=True)
+        exp_row.add_suffix(Gtk.Image.new_from_icon_name("document-save-symbolic"))
+        exp_row.connect("activated", lambda *_: self.export_settings("--all", "ajail-settings.txt"))
+        imp_row = Adw.ActionRow(title="Import settings…", activatable=True)
+        imp_row.add_suffix(Gtk.Image.new_from_icon_name("document-open-symbolic"))
+        imp_row.connect("activated", lambda *_: self.import_settings())
+        bg.add(exp_row)
+        bg.add(imp_row)
+        page.add(bg)
 
         rg = Adw.PreferencesGroup()
         rbtn = Gtk.Button(label="Reset all settings…", halign=Gtk.Align.CENTER)
@@ -1627,6 +1695,12 @@ class Win(Adw.ApplicationWindow):
         exp.add_row(tech)
         tg.add(exp)
         page.add(tg)
+
+        eg = Adw.PreferencesGroup()
+        ebtn = Gtk.Button(label="Export settings…", halign=Gtk.Align.CENTER)
+        ebtn.connect("clicked", lambda *_: self.export_settings(scope or "--default", f"ajail-{scope or 'default'}.txt"))
+        eg.add(ebtn)
+        page.add(eg)
 
         rg = Adw.PreferencesGroup()
         rbtn = Gtk.Button(label="Reset permissions…", halign=Gtk.Align.CENTER)

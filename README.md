@@ -81,6 +81,8 @@ talk=org.example.Service         # extra D-Bus name
 portal=Location                  # opt-in portal; portal=-Location turns it off in an app file
 ```
 
+Back up or move settings with `ajail export -o FILE` and `ajail import FILE` (`--force` replaces settings that differ); `ajail-gui` has the same buttons.
+
 ### Defaults that favor compatibility
 
 | Key | Default | What you give up | Stricter |
