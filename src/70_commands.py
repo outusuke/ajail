@@ -217,6 +217,7 @@ def cmd_check():
     r = subprocess.run(["bwrap"] + BASE + ["--unshare-all", "/usr/bin/true"], capture_output=True)
     line("OK" if r.returncode == 0 else "WARN", "unprivileged sandboxes work" if r.returncode == 0
          else "bwrap test failed: " + r.stderr.decode(errors="replace").strip()[:150])
+    if r.returncode != 0 and apparmor_userns_hint(): line("WARN", apparmor_userns_hint())
     yes(wayland_path(), "Wayland socket found", "no Wayland socket visible to this process")
     if wayland_path():
         yes(wl_supported(wayland_path()), "compositor can restrict apps (security context): apps get a restricted Wayland socket",

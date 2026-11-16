@@ -19,6 +19,16 @@ def install_hint(*pkgs):
     if fam not in INSTALL_CMD: return "install " + ", ".join(pkgs) + " with your package manager"
     return f"{INSTALL_CMD[fam]} " + " ".join(pkgs)
 
+APPARMOR_USERNS = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
+
+def apparmor_userns_hint(path=APPARMOR_USERNS):
+    """Fix for Ubuntu 24.04+, where AppArmor blocks unprivileged user namespaces and so bubblewrap; None when it doesn't apply."""
+    try:
+        if open(path).read().strip() != "1": return None
+    except OSError:
+        return None
+    return "AppArmor blocks user namespaces here (Ubuntu 24.04+): sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0, or give bwrap an AppArmor profile"
+
 # Control characters (C0 except tab/newline, DEL and C1) are stripped from app output before it reaches a terminal or the log.
 CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
