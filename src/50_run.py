@@ -91,9 +91,23 @@ def launch(name, root, cfg, extra, source=None, once=False):
         if not wl and strict:
             warn("no restricted Wayland socket could be made for this app, and 'Wayland only if restricted' is on: Wayland is off for it", name)
     cfg = {**cfg, "wayland_strict": int(bool(strict))}
+    inst, infopath, infof = None, None, None      # the portal finds the app by the pid in bwrapinfo.json, as it does for a flatpak
+    if bus and cfg["portals"]:
+        inst = f"{runtime_dir()}/.flatpak/{os.getpid()}"
+        infopath = f"{inst}/bwrapinfo.json"
+        shutil.rmtree(inst, ignore_errors=True)    # only a dead ajail with this PID can have left it
+        try:
+            os.makedirs(inst, mode=0o700)
+            infof = os.fdopen(os.open(infopath, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb")
+            if not priv: os.set_inheritable(infof.fileno(), True)      # with pasta a shell opens the file again, inside it
+        except OSError as e:
+            warn(f"could not prepare the portal folder ({e}); the file chooser may not work", name)
+            inst, infopath = None, None
+    infofd = (INFO_FD if priv else infof.fileno()) if infof else None
     inner = bwrap_args(name, root, cfg, ["/app/AppRun"] + extra, bus[2] if bus else None,
-                       secfd, forward_files(extra), gen, gset, wl.path if wl else None)
-    cmd = limit_prefix(cfg, name) + (net_wrap(inner, secpath) if priv else inner)
+                       secfd, forward_files(extra), gen, gset, wl.path if wl else None, infofd)
+    cmd = limit_prefix(cfg, name) + (net_wrap(inner, secpath, infopath if infof else None) if priv else inner)
+    if infof and priv: infof.close()
     on = ",".join(k for k in DEFAULTS if cfg[k])
     lim = ",".join(f"{k}={cfg[k]}" for k in NUM if cfg[k])
     log(f"START allow=[{on}] limits=[{lim}] seccomp={'on' if sec else 'off'} dbus={'on' if bus else 'off'}", name)
@@ -110,7 +124,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
         signal.signal(s, stop)
     tty = sys.stdout.isatty()                     # to a terminal, stdout is filtered too; to a pipe or file it stays untouched
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE if tty else None, stderr=subprocess.PIPE, text=True, errors="replace",
-                         pass_fds=[sec.fileno()] if sec and not priv else ())
+                         pass_fds=([sec.fileno()] if sec and not priv else []) + ([infof.fileno()] if infof and not priv else []))
     child[0] = p
     if stopped[0]: p.terminate()                  # a signal that came while it was starting
     pidfile = f"{RUNNING}/{os.getpid()}"
@@ -156,6 +170,8 @@ def launch(name, root, cfg, extra, source=None, once=False):
     rc = p.wait(); t.join(2)
     if t2: t2.join(2)
     stop_bus(bus)
+    if infof and not infof.closed: infof.close()
+    if inst: shutil.rmtree(inst, ignore_errors=True)
     if wl: wl.close()
     if wd: shutil.rmtree(wd, ignore_errors=True)
     try: os.unlink(pidfile)

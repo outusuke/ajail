@@ -55,7 +55,7 @@ All commands and options: `ajail help` or `man ajail`.
 - Only `/usr` and a few `/etc` files are visible; the environment is rebuilt. Your `$HOME` is hidden except for shared folders. Each app's home is `~/.appimage-homes/NAME`.
 - Unpacking runs in a separate sandbox with no network and no home.
 - A seccomp blocklist denies `bpf`, `perf_event_open`, `kexec_load` and similar calls.
-- Notifications and portals go through `xdg-dbus-proxy`, which allows only the permitted calls.
+- Notifications and portals go through `xdg-dbus-proxy`, which allows only the permitted calls. The proxy tells the portals which app it serves, so the file chooser hands the app only the files you pick, through a folder of its own.
 - The private home is tied to the app's `Name=`. A different app with the same file name is refused.
 
 ## Permissions

@@ -162,7 +162,8 @@ def want_bus(cfg):
 # desktop sees the app as an ordinary unsandboxed program: a portal that is not listed here is simply unreachable.
 # Off unless asked for with portal=NAME (EXTRA_PORTALS): Location, GlobalShortcuts, RemoteDesktop (input injection),
 # InputCapture, Wallpaper, DynamicLauncher, Secret, Background (RequestBackground can register an autostart that runs
-# outside the sandbox). Never reachable: Documents and anything else not listed.
+# outside the sandbox). Never reachable: the Documents portal itself and anything else not listed; with portals on, the app
+# sees only its own folder of picked files (doc/by-app/ID), see portal_app_id.
 # Camera follows the Camera permission; Screenshot and ScreenCast (both show the user a prompt) have their own switches.
 PORTAL_NAME = "org.freedesktop.portal.Desktop"
 PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "Inhibit", "Account",
@@ -199,7 +200,49 @@ def tray_rules():
     return ["--talk=org.kde.StatusNotifierWatcher"] + [
         f"--own=org.kde.StatusNotifierItem-{p}-{i}" for p in TRAY_PIDS for i in TRAY_IDS]
 
+def portal_app_id(name):
+    """The application id the desktop portals know this app by: org.ajail.Run.NAME, with anything outside letters, digits and _
+    turned into _ and a p put in front of a digit (an id part may not start with one). The Documents portal keeps the files you
+    picked for it under doc/by-app/ID."""
+    part = re.sub(r"[^A-Za-z0-9_]", "_", name) or "_"
+    return "org.ajail.Run." + ("p" + part if part[0].isdigit() else part)
+
+PROXY_ROOT_SKIP = ("proc", "dev", "sys", "home", "root", "mnt", "media", "srv", "boot", "lost+found")
+
+def top_binds(skip=()):
+    """One read-only bind for each top-level folder of this computer (links stay links), for the proxy's small root.
+    The new root is then a filesystem a file can be added to, such as /.flatpak-info: bwrap can't make a file on a read-only /."""
+    a = []
+    try: top = sorted(os.listdir("/"))
+    except OSError: top = []
+    for e in top:
+        p = "/" + e
+        if e in skip: continue
+        if os.path.islink(p): a += ["--symlink", os.readlink(p), p]
+        elif os.path.isdir(p): a += ["--ro-bind", p, p]
+    return a
+
+def app_info_text(app, instance=0):
+    """The .flatpak-info the portal reads from the proxy. It wants an [Instance] group too, or it refuses every call."""
+    return f"[Application]\nname={app}\n\n[Instance]\ninstance-id={instance}\n"
+
+def proxy_sandbox(info, rt):
+    """bwrap arguments for a small root to run xdg-dbus-proxy in: the system read-only, your runtime folder read-write (the bus is
+    there, and the proxy makes its own socket there), your home and other private folders not at all, and the app's .flatpak-info
+    at /.flatpak-info. xdg-desktop-portal reads that file from the process that talks to it, which is the proxy, so it knows the
+    app as an app of its own and the file chooser hands out files through the document portal, not as real paths the sandbox
+    can't see."""
+    a = ["bwrap", "--die-with-parent", "--new-session", "--clearenv", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try",
+         "--proc", "/proc", "--dev", "/dev"]
+    return a + top_binds(PROXY_ROOT_SKIP) + ["--bind", rt, rt, "--ro-bind", info, "/.flatpak-info"]
+
+def write_app_info(path, app):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as f: f.write(app_info_text(app, os.getpid()))
+
 def start_bus(cfg, name):
+    """Start xdg-dbus-proxy for this app. With portals on, the proxy runs in a small sandbox that tells the portals which app it
+    is; if that fails it runs plainly. Returns (process, pipe, socket) or None (a warning says why)."""
     if not want_bus(cfg): return None
     px = shutil.which("xdg-dbus-proxy")
     if not px:
@@ -209,34 +252,49 @@ def start_bus(cfg, name):
     d = f"{runtime_dir()}/ajail"
     os.makedirs(d, mode=0o700, exist_ok=True)
     sock = f"{d}/{os.getpid()}.bus"
+    info = sock + ".info"
     rules = ["--filter"]
     if cfg["portals"]:
         rules += portal_rules(cfg)
     if cfg["tray"]:
         rules += tray_rules() + ["--own=org.mpris.MediaPlayer2.*"]
     rules += [f"--talk={n}" for n in cfg["talk"] if talk_ok(n)]
-    r, w = os.pipe()
-    try:
-        proc = subprocess.Popen([px, f"--fd={w}", addr, sock] + rules, pass_fds=[w],
-                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except OSError as e:
-        os.close(r); os.close(w)
-        warn(f"could not start xdg-dbus-proxy ({e}); running without D-Bus", name)
-        log("xdg-dbus-proxy failed to start", name)
-        return None
-    os.close(w)
-    ok = False
-    try:
-        ok = bool(select.select([r], [], [], 3)[0]) and bool(os.read(r, 1))
-    except OSError:
-        pass
-    b = (proc, r, sock)
-    if not ok:
+    for wrapped in ((True, False) if cfg["portals"] and shutil.which("bwrap") else (False,)):
+        if wrapped:
+            try: write_app_info(info, portal_app_id(name))
+            except OSError: continue
+        r, w = os.pipe()
+        cmd = [px, f"--fd={w}", addr, sock] + rules
+        if wrapped: cmd = proxy_sandbox(info, runtime_dir()) + cmd
+        try:
+            proc = subprocess.Popen(cmd, pass_fds=[w], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+        except OSError as e:
+            os.close(r); os.close(w)
+            if wrapped: continue
+            _unlink_all(sock, info)
+            warn(f"could not start xdg-dbus-proxy ({e}); running without D-Bus", name)
+            log("xdg-dbus-proxy failed to start", name)
+            return None
+        os.close(w)
+        ok = False
+        try:
+            ok = bool(select.select([r], [], [], 3)[0]) and bool(os.read(r, 1))
+        except OSError:
+            pass
+        b = (proc, r, sock)
+        if ok: return b
         stop_bus(b)
-        print("ajail: could not start xdg-dbus-proxy; running without D-Bus", file=sys.stderr)
-        log("xdg-dbus-proxy failed to start", name)
-        return None
-    return b
+        if wrapped: warn("the portal proxy could not start as an app of its own; the file chooser may give paths the app can't see", name)
+    _unlink_all(sock, info)
+    print("ajail: could not start xdg-dbus-proxy; running without D-Bus", file=sys.stderr)
+    log("xdg-dbus-proxy failed to start", name)
+    return None
+
+def _unlink_all(*paths):
+    for p in paths:
+        try: os.unlink(p)
+        except OSError: pass
 
 def stop_bus(b):
     if not b: return
@@ -248,8 +306,7 @@ def stop_bus(b):
         try: proc.wait(2)
         except subprocess.TimeoutExpired: proc.kill(); proc.wait(2)       # a stuck proxy must not outlive us
     except (OSError, subprocess.SubprocessError): pass
-    try: os.unlink(sock)
-    except OSError: pass
+    _unlink_all(sock, sock + ".info")
 
 def private_net(cfg):
     """'Keep localhost private': the app gets its own network (via pasta) that reaches the internet but not this computer."""
@@ -261,11 +318,16 @@ DNS_FWD = "169.254.1.1"
 PASTA = ["pasta", "--quiet", "--config-net", "--no-map-gw", "--dns-forward", DNS_FWD,
          "-t", "none", "-u", "none", "-T", "none", "-U", "none", "--"]
 SEC_FD = 9      # pasta closes inherited descriptors, so the seccomp filter is re-opened from a file inside it
+INFO_FD = 8     # and the file bwrap writes its --info-fd to likewise (one digit: dash, the usual /bin/sh, can't open "10>file")
 
-def net_wrap(inner, secpath=None):
-    if secpath:
-        return PASTA + ["/bin/sh", "-c", f'exec {SEC_FD}<"$1"; shift; exec "$@"', "sh", secpath] + inner
-    return PASTA + inner
+def net_wrap(inner, secpath=None, infopath=None):
+    """The words that go in front of bwrap to run it inside pasta. A shell first opens SECPATH (to read) as descriptor 9 and
+    INFOPATH (to write) as descriptor 8, which bwrap then inherits."""
+    files = ([(SEC_FD, "<", secpath)] if secpath else []) + ([(INFO_FD, ">", infopath)] if infopath else [])
+    if not files: return PASTA + inner
+    opens = "; ".join(f'exec {fd}{op}"${i}"' for i, (fd, op, _) in enumerate(files, 1))
+    shift = "shift" if len(files) == 1 else f"shift {len(files)}"
+    return PASTA + ["/bin/sh", "-c", f'{opens}; {shift}; exec "$@"', "sh"] + [p for _, _, p in files] + inner
 
 def work_dir():
     return f"{runtime_dir()}/ajail/{os.getpid()}.d"
@@ -347,9 +409,10 @@ def scoped_xauth(src, disp):
         return None
     return dst
 
-def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, gset=None, wl=None):
+def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, gset=None, wl=None, info=None):
     """wl: a socket the compositor made for this app with a Wayland security context (see 25_wayland). With it the app gets
-    that restricted socket in place of the real one. 'Wayland only if restricted' (wayland_strict) without it: no Wayland."""
+    that restricted socket in place of the real one. 'Wayland only if restricted' (wayland_strict) without it: no Wayland.
+    info: the descriptor bwrap writes its bwrapinfo.json to, which the portals need to find the app (see launch)."""
     rt = runtime_dir()
     wp = wayland_path() if cfg["wayland"] else None
     if wp and cfg["wayland_strict"] and not wl: wp = None
@@ -430,6 +493,11 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={rt}/bus"
         if cfg["portals"]: env["AJAIL_PORTALS"] = ",".join(extra_portals(cfg))     # read by the self-test
         if cfg["tray"]: env["AJAIL_TRAY"] = f"{TRAY_PIDS[0]}-{TRAY_PIDS[-1]}"      # read by the self-test
+        if cfg["portals"]:      # a toolkit uses the file chooser portal only when told to; a theme that compat_env passes through (gtk3, qt6ct) would open Qt's own dialog, so it is replaced; env= still wins (no /.flatpak-info for the app: glycin would then run its image loaders through flatpak-spawn, which fails, and GTK aborts)
+            env["GTK_USE_PORTAL"] = "1"; env["QT_QPA_PLATFORMTHEME"] = "xdgdesktopportal"
+            if info is not None: a += ["--info-fd", str(info)]
+    if cfg["portals"]:      # the files you pick in a chooser appear here, only this app's own (bind-try: nothing when there is no document portal)
+        a += ["--bind-try", f"{rt}/doc/by-app/{portal_app_id(name)}", f"{rt}/doc"]
     if cfg["app_writable"]:
         # /app stays the app's own read-only files; what the app writes goes to a private layer that survives restarts
         up, wk = f"{LAYERS}/{name}/upper", f"{LAYERS}/{name}/work"

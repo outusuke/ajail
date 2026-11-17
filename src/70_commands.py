@@ -262,8 +262,10 @@ def cmd_preview(n):
     gset = f"{runtime_dir()}/ajail/PID.d/gsettings-keyfile" if cfg["theme"] and gsettings_keyfile_text() is not None else None
     wp = wayland_path() if cfg["wayland"] else None
     wl = f"{runtime_dir()}/ajail/PID.wl" if wp and wl_supported(wp) else None
-    cmd = bwrap_args(name, root, cfg, ["/app/AppRun"], bus, SEC_FD if priv else None, (), preview_files(cfg), gset, wl)
-    if priv: cmd = net_wrap(cmd, f"{runtime_dir()}/ajail/PID.d/seccomp.bpf")
+    info = f"{runtime_dir()}/.flatpak/PID/bwrapinfo.json" if bus and cfg["portals"] else None
+    cmd = bwrap_args(name, root, cfg, ["/app/AppRun"], bus, SEC_FD if priv else None, (), preview_files(cfg), gset, wl,
+                     (INFO_FD if priv else "FD") if info else None)
+    if priv: cmd = net_wrap(cmd, f"{runtime_dir()}/ajail/PID.d/seccomp.bpf", info)
     props = limit_props(cfg)
     if props: cmd = ["systemd-run", "--user", "--scope", "--quiet"] + props + ["--"] + cmd
     print(shlex.join(cmd))

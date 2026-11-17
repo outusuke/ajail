@@ -71,6 +71,12 @@ def summary(G, A):
         parts.append(f"{len(extra)} extra portal" + ("" if len(extra) == 1 else "s"))
     return " · ".join(parts) or "Fully isolated"
 
+def open_path(path):
+    """Open PATH with xdg-open. None when it started, else the reason it didn't. The process is reaped when it ends: no zombie."""
+    try: p = subprocess.Popen(["xdg-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e: return e.strerror or str(e)
+    threading.Thread(target=p.wait, daemon=True).start()
+
 def has_comment(v):
     """ajail reads " #..." in a settings line as a comment, so such a value could not be stored faithfully."""
     return bool(re.search(r"(^|\s)#", v))

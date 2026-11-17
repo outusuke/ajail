@@ -101,7 +101,7 @@ class LaunchOutput(unittest.TestCase):
         A.update(wayland_path=lambda: "/rt/wayland-0", bwrap_args=lambda *a: seen.update(bw=a) or [], wl_supported=lambda p: True,
                  wayland_context=lambda wp, sock, name, inst: seen.update(ctx=(wp, sock.endswith(f"/ajail/{os.getpid()}.wl"), name)) or Ctx())
         self.run_launch(False)
-        self.assertEqual(seen["bw"][-1], "/rt/ajail/1.wl")
+        self.assertEqual(seen["bw"][-2], "/rt/ajail/1.wl")      # then the portal info descriptor, None here
         self.assertEqual(seen["ctx"], ("/rt/wayland-0", True, "Foo"))
         self.assertTrue(seen["closed"])
 

@@ -158,6 +158,14 @@ class PrivateNetwork(unittest.TestCase):
                          A["PASTA"] + ["/bin/sh", "-c", 'exec 9<"$1"; shift; exec "$@"', "sh", self.SECPATH] + inner)
         self.assertEqual(A["SEC_FD"], 9)
 
+    def test_pasta_can_open_the_bwrapinfo_file_too(self):
+        inner = ["bwrap"]
+        self.assertEqual(A["net_wrap"](inner, self.SECPATH, "/i.json"),
+                         A["PASTA"] + ["/bin/sh", "-c", 'exec 9<"$1"; exec 8>"$2"; shift 2; exec "$@"', "sh", self.SECPATH, "/i.json"] + inner)
+        self.assertEqual(A["net_wrap"](inner, None, "/i.json"),
+                         A["PASTA"] + ["/bin/sh", "-c", 'exec 8>"$1"; shift; exec "$@"', "sh", "/i.json"] + inner)
+        self.assertEqual(A["INFO_FD"], 8)
+
     def test_it_needs_the_network_to_be_on(self):
         self.assertTrue(A["private_net"](cfg(net=1, net_private=1)))
         for c in (cfg(net=1, net_private=0), cfg(net=0, net_private=1), cfg(net=0, net_private=0)):
@@ -193,6 +201,20 @@ class PrivateNetwork(unittest.TestCase):
             a = build(cfg(net=1, net_private=1), gen=gen)
         self.assertIn(("--ro-bind", gen["resolv.conf"], "/etc/resolv.conf"), binds(a))
         self.assertNotIn("/etc/resolv.conf", [s for _, s, _ in binds(a)])      # not also the host's own file
+
+class PortalApp(unittest.TestCase):
+    """With portals on, the portals must find the app: bwrapinfo.json, toolkit variables, and its own document folder."""
+    def test_portals_tell_toolkits_and_bind_the_document_folder(self):
+        a = build(cfg(portals=1), bus="/run/b.sock", info=7)
+        self.assertEqual(a[a.index("--info-fd") + 1], "7")
+        i = a.index("--bind-try")
+        self.assertTrue(a[i + 1].endswith("/doc/by-app/org.ajail.Run.t"))
+        self.assertTrue(a[i + 2].endswith("/doc"))
+        envs = setenv(a)
+        self.assertEqual(envs["GTK_USE_PORTAL"], "1")
+        self.assertEqual(envs["QT_QPA_PLATFORMTHEME"], "xdgdesktopportal")
+        off = build(cfg(portals=0, tray=1), bus="/run/b.sock")
+        self.assertNotIn("--info-fd", off); self.assertNotIn("GTK_USE_PORTAL", off)
 
 class Shares(unittest.TestCase):
     def test_hidden_and_outside_paths_are_skipped(self):

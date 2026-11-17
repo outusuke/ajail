@@ -1010,7 +1010,7 @@ class Win(Adw.ApplicationWindow):
             data_row = Adw.ActionRow(title="App data", subtitle=dir_size(home_dir))
             openb = Gtk.Button(label="Open", valign=Gtk.Align.CENTER)
             openb.connect("clicked", lambda *_: (os.makedirs(home_dir, exist_ok=True),
-                                                 subprocess.Popen(["xdg-open", home_dir])))
+                                                 open_path(home_dir) and self.toast("Couldn't open it")))
             resetb = Gtk.Button(label="Reset…", valign=Gtk.Align.CENTER)
             resetb.add_css_class("destructive-action")
 
@@ -1041,7 +1041,7 @@ class Win(Adw.ApplicationWindow):
                                           tooltip_text="Files the app saved into its own folder (/app), e.g. game saves. "
                                                        "They are under upper/. Removed by Reset… above.")
                 openl = Gtk.Button(label="Open", valign=Gtk.Align.CENTER)
-                openl.connect("clicked", lambda *_: subprocess.Popen(["xdg-open", layer_dir]))
+                openl.connect("clicked", lambda *_: open_path(layer_dir) and self.toast("Couldn't open it"))
                 layer_row[0].add_suffix(openl)
                 dg.add(layer_row[0])
 

@@ -86,6 +86,45 @@ class Rules(unittest.TestCase):
             self.assertEqual(sorted(os.listdir("/proc/self/fd")), before)
         self.assertTrue(any("could not start xdg-dbus-proxy" in w for w in warned), warned)
 
+    def test_portal_app_id(self):
+        f = A["portal_app_id"]
+        self.assertEqual(f("Foo"), "org.ajail.Run.Foo")
+        self.assertEqual(f("my-app.v2"), "org.ajail.Run.my_app_v2")
+        self.assertEqual(f("7zip"), "org.ajail.Run.p7zip")
+
+    def test_app_info_has_an_instance_group(self):
+        t = A["app_info_text"]("org.ajail.Run.Foo", 42)
+        self.assertIn("[Application]\nname=org.ajail.Run.Foo\n", t)
+        self.assertIn("[Instance]\ninstance-id=42\n", t)
+
+    def test_proxy_sandbox_hides_home_and_shows_the_app_info(self):
+        a = A["proxy_sandbox"]("/run/user/1/ajail/1.bus.info", "/run/user/1")
+        self.assertEqual(a[0], "bwrap")
+        self.assertEqual(a[-3:], ["--ro-bind", "/run/user/1/ajail/1.bus.info", "/.flatpak-info"])
+        self.assertEqual(a[-6:-3], ["--bind", "/run/user/1", "/run/user/1"])
+        for hidden in ("/home", "/root", "/mnt", "/media"):
+            self.assertNotIn(hidden, a)
+
+    def test_start_bus_falls_back_to_a_plain_proxy(self):
+        cmds = []
+        class P:
+            def __init__(s, cmd, **k):
+                cmds.append(cmd)
+                if cmd[0] == "bwrap": raise OSError(1, "no")
+                s.pid = 1
+            def terminate(s): pass
+            def wait(s, t=None): pass
+        fake = {"shutil": types.SimpleNamespace(which=lambda n: "/x/" + n), "warn": lambda *a: None,
+                "subprocess": types.SimpleNamespace(Popen=P, DEVNULL=-3, SubprocessError=Exception, TimeoutExpired=Exception),
+                "select": types.SimpleNamespace(select=lambda *a: ([a[0][0]], [], []))}
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": d}), \
+                unittest.mock.patch.dict(A, fake), unittest.mock.patch.object(os, "read", lambda fd, n: b"x"):
+            b = A["start_bus"](cfg(portals=1), "Foo")
+            self.assertIsNotNone(b)
+            self.assertEqual([c[0] for c in cmds], ["bwrap", "/x/xdg-dbus-proxy"])
+            A["stop_bus"](b)
+            self.assertEqual(os.listdir(f"{d}/ajail"), [])
+
     def test_tray_rules_are_narrow(self):
         r = A["tray_rules"]()
         self.assertIn("--talk=org.kde.StatusNotifierWatcher", r)
