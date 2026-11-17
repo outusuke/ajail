@@ -36,7 +36,7 @@ DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}      # 0 = no limit
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
 # Opt-in desktop portals. Keep in sync with EXTRA_PORTALS in ajail.
-EXTRA_PORTALS = ("Location", "GlobalShortcuts", "RemoteDesktop", "InputCapture", "Wallpaper", "DynamicLauncher", "Secret")
+EXTRA_PORTALS = ("Location", "GlobalShortcuts", "RemoteDesktop", "InputCapture", "Wallpaper", "DynamicLauncher", "Secret", "Background")
 PORTAL_INFO = {      # name -> (switch title, description); must have exactly the EXTRA_PORTALS keys
     "Location": ("Location", "Let the app ask the desktop where you are."),
     "GlobalShortcuts": ("Global shortcuts", "Let the app register keyboard shortcuts that work in any window."),
@@ -46,6 +46,8 @@ PORTAL_INFO = {      # name -> (switch title, description); must have exactly th
     "Wallpaper": ("Wallpaper", "Let the app ask to change your desktop wallpaper."),
     "DynamicLauncher": ("Create launchers", "Let the app ask to add its own entries to your app menu."),
     "Secret": ("Secrets", "Let the app ask the desktop for its stored secrets (keyring). Far-reaching access."),
+    "Background": ("Run in the background",
+                   "Let the app ask to keep running when closed or to start at login. The autostart it registers runs outside the sandbox."),
 }
 XDG =[("download", "Downloads"), ("documents", "Documents"), ("pictures", "Pictures"),
        ("music", "Music"), ("videos", "Videos"), ("desktop", "Desktop")]

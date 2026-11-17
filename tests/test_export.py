@@ -153,6 +153,26 @@ class Export(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0, bad); self.assertIn("ui.conf", r.stderr)
             self.assertEqual(self.get("default.conf"), "net=0\nallow=/media/x\n"); self.assertFalse(os.path.exists(f"{self.conf}/ui.conf"))
 
+    def import_text(self, **files):
+        bundle = "# ajail settings export\n" + "".join(f"\n# [{k.replace('__', '/')}.conf]\n{v}" for k, v in files.items())
+        return self.run_("import", "-", stdin=bundle)
+
+    def test_import_says_what_the_imported_settings_give_apps_beyond_the_defaults(self):
+        os.remove(f"{self.conf}/default.conf"); os.remove(f"{self.conf}/apps/Foo.conf"); os.remove(f"{self.conf}/apps/Empty.conf")
+        r = self.import_text(default="x11=1\nnet=1\nnet_private=1\nportal=Secret\nportal=-Location\nxdg=download:none\nxdg=music:ro\n"
+                                     "# ssh_agent=1\nflag=--x11\ntalk=org.x.App\n",
+                             apps__Foo="ssh_agent=1  # yes\nprivacy=1\nallow=/media/x\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("more than the defaults do", r.stdout)
+        self.assertIn("  default.conf: x11=1, portal=Secret, xdg=music:ro, x11=1, talk=org.x.App\n", r.stdout)
+        self.assertIn("  apps/Foo.conf: ssh_agent=1, allow=/media/x\n", r.stdout)
+
+    def test_import_of_settings_that_only_restrict_prints_no_warning(self):
+        os.remove(f"{self.conf}/default.conf"); os.remove(f"{self.conf}/apps/Foo.conf"); os.remove(f"{self.conf}/apps/Empty.conf")
+        r = self.import_text(default="net=0\nsound=0\nprivacy=1\nnet_private=1\ntmp_home=1\nharden=1\nportal_screenshot=0\nportal=-Secret\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("more than the defaults", r.stdout)
+
     def test_import_rejects_other_text(self):
         for text in ("net=0\n", "", "# sbx settings export\n# [default.conf]\nnet=0\n", "# ajail settings export\n",
                      "# ajail settings export\nnet=0\n# [default.conf]\n",

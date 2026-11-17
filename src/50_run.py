@@ -47,6 +47,8 @@ def run_installed(name, extra, compat=False):
     finally:
         unmount_image(mp)
 
+STOP_GRACE = 5      # seconds between SIGTERM and SIGKILL when ajail is told to stop
+
 def launch(name, root, cfg, extra, source=None, once=False):
     LOG_NAME[0] = name
     journal_tag(name)
@@ -97,9 +99,13 @@ def launch(name, root, cfg, extra, source=None, once=False):
     log(f"START allow=[{on}] limits=[{lim}] seccomp={'on' if sec else 'off'} dbus={'on' if bus else 'off'}", name)
     start = time.time()
     stopped, child = [False], [None]              # stopped: ended by a signal (ajail stop, Ctrl-C, logout): not a failed start
-    def stop(*_):
-        stopped[0] = True
-        if child[0]: child[0].terminate()
+    def stop(*_):                                 # first signal: ask politely, kill after STOP_GRACE s; a second one kills at once
+        again, stopped[0] = stopped[0], True
+        if not child[0]: return
+        if again: child[0].kill()
+        else:
+            child[0].terminate()
+            t = threading.Timer(STOP_GRACE, lambda: child[0].kill()); t.daemon = True; t.start()
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):      # before the child exists, so no signal is missed
         signal.signal(s, stop)
     tty = sys.stdout.isatty()                     # to a terminal, stdout is filtered too; to a pipe or file it stays untouched

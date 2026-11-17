@@ -120,9 +120,9 @@ _has = {}
 def bwrap_has(opt):
     if opt not in _has:
         try:
-            r = subprocess.run(["bwrap", "--help"], capture_output=True, text=True)
+            r = subprocess.run(["bwrap", "--help"], capture_output=True, text=True, timeout=10)
             _has[opt] = opt in (r.stdout + r.stderr)
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             _has[opt] = False
     return _has[opt]
 
@@ -161,10 +161,11 @@ def want_bus(cfg):
 # Desktop portals an app may call when "Notifications and portals" is on. xdg-dbus-proxy runs on the host, so the
 # desktop sees the app as an ordinary unsandboxed program: a portal that is not listed here is simply unreachable.
 # Off unless asked for with portal=NAME (EXTRA_PORTALS): Location, GlobalShortcuts, RemoteDesktop (input injection),
-# InputCapture, Wallpaper, DynamicLauncher, Secret. Never reachable: Documents and anything else not listed.
+# InputCapture, Wallpaper, DynamicLauncher, Secret, Background (RequestBackground can register an autostart that runs
+# outside the sandbox). Never reachable: Documents and anything else not listed.
 # Camera follows the Camera permission; Screenshot and ScreenCast (both show the user a prompt) have their own switches.
 PORTAL_NAME = "org.freedesktop.portal.Desktop"
-PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "Inhibit", "Background", "Account",
+PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "Inhibit", "Account",
                 "Email", "Trash", "NetworkMonitor", "ProxyResolver", "GameMode", "MemoryMonitor",
                 "PowerProfileMonitor", "Realtime")
 
@@ -174,7 +175,7 @@ def extra_portals(cfg):
 
 def portal_rules(cfg):
     """xdg-dbus-proxy rules for Notifications and the allowed portals (see PORTAL_BASIC above)."""
-    ifaces = list(PORTAL_BASIC)
+    ifaces = [i for i in PORTAL_BASIC if not (i == "Account" and cfg["privacy"])]     # Account hands out the real name
     if cfg["camera"]: ifaces.append("Camera")
     if cfg["portal_screenshot"]: ifaces.append("Screenshot")
     if cfg["portal_screencast"]: ifaces.append("ScreenCast")
@@ -215,8 +216,14 @@ def start_bus(cfg, name):
         rules += tray_rules() + ["--own=org.mpris.MediaPlayer2.*"]
     rules += [f"--talk={n}" for n in cfg["talk"] if talk_ok(n)]
     r, w = os.pipe()
-    proc = subprocess.Popen([px, f"--fd={w}", addr, sock] + rules, pass_fds=[w],
-                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        proc = subprocess.Popen([px, f"--fd={w}", addr, sock] + rules, pass_fds=[w],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e:
+        os.close(r); os.close(w)
+        warn(f"could not start xdg-dbus-proxy ({e}); running without D-Bus", name)
+        log("xdg-dbus-proxy failed to start", name)
+        return None
     os.close(w)
     ok = False
     try:
@@ -267,14 +274,15 @@ def machine_id(name):
     """Stable random machine-id per app (D-Bus and SDL want one; the real one would let apps fingerprint you)."""
     p = f"{CONF}/apps/{name}.machine-id"
     try:
-        v = open(p).read().strip()
+        with open(p) as f: v = f.read().strip()
         if len(v) == 32: return v + "\n"
     except OSError: pass
     import uuid
     v = uuid.uuid4().hex
     try:
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        open(p, "w").write(v + "\n")
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as f: f.write(v + "\n")
     except OSError: pass
     return v + "\n"
 
@@ -333,7 +341,7 @@ def scoped_xauth(src, disp):
         return None
     dst = f"{d}/Xauthority"
     try:
-        fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "wb") as f: f.write(b"".join(keep))
     except OSError:
         return None

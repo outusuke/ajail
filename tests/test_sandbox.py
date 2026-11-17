@@ -173,6 +173,17 @@ class PrivateNetwork(unittest.TestCase):
             self.assertNotIn("--uid", build(c)); self.assertNotIn("--gid", build(c))
         self.assertNotIn("--share-net", build(cfg(net=0, net_private=1)))     # no network means none, with or without the switch
 
+    def test_machine_id_is_private_stable_and_never_written_through_a_link(self):
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(A, {"CONF": d}):
+            first = A["machine_id"]("Foo")
+            self.assertEqual(len(first.strip()), 32)
+            self.assertEqual(A["machine_id"]("Foo"), first)                    # stable
+            self.assertEqual(oct(os.stat(f"{d}/apps/Foo.machine-id").st_mode & 0o777), "0o600")
+            target = f"{d}/planted"
+            os.symlink(target, f"{d}/apps/Bar.machine-id")                     # a dangling link where the file would go
+            A["machine_id"]("Bar")
+            self.assertFalse(os.path.exists(target))
+
     def test_resolv_conf_points_at_the_forwarder_only_with_private_net(self):
         with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(A, {"machine_id": lambda n: "0" * 32 + "\n"}):
             gen = A["make_files"](cfg(net=1, net_private=1), d)

@@ -226,7 +226,7 @@ Switches (0 or 1, default in brackets):
 .BR app_writable " (0, for apps that fail with Read\-only file system under /app: what they write goes to a separate layer and the app's own files stay unchanged; needs bubblewrap 0.11+),"
 .BR userns " (1; 0 needs bubblewrap 0.8+),"
 .BR tmp_home " (0, private home erased on exit),"
-.BR privacy " (0, minimal /etc/passwd, /etc/group and /etc/hosts and the hostname ajail)"
+.BR privacy " (0, minimal /etc/passwd, /etc/group and /etc/hosts, the hostname ajail and no Account portal)"
 and
 .BR harden " (0, also blocks io_uring_*, userfaultfd, process_vm_*, kcmp, pidfd_getfd and the new mount calls (open_tree, move_mount, fsopen, fsconfig, fsmount, fspick, mount_setattr); may break apps)."
 .PP
@@ -249,7 +249,7 @@ List keys:
 .B talk=NAME
 (an extra D\-Bus name) and
 .B portal=NAME
-(opt in to Location, GlobalShortcuts, RemoteDesktop, InputCapture, Wallpaper, DynamicLauncher or Secret; needs
+(opt in to Location, GlobalShortcuts, RemoteDesktop, InputCapture, Wallpaper, DynamicLauncher, Secret or Background; needs
 .BR portals=1 ;
 .B portal=\-NAME
 in an app file turns one off again). Shared paths must be non\-hidden items in your home or under

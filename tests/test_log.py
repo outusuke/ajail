@@ -139,6 +139,26 @@ class Launch(unittest.TestCase):
         self.assertEqual(self.popups, [])
 
 
+    def test_an_app_that_ignores_the_stop_signal_is_killed_after_the_grace_period(self):
+        self.child = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"
+        keep = A["STOP_GRACE"]; A["STOP_GRACE"] = 0.5
+        self.addCleanup(A.__setitem__, "STOP_GRACE", keep)
+        t = threading.Timer(1.0, lambda: os.kill(os.getpid(), signal.SIGTERM)); t.start(); self.addCleanup(t.cancel)
+        started = time.time()
+        code, _ = self.launch()
+        self.assertEqual(code, 137); self.assertIn("] EXIT code=137\n", self.log())
+        self.assertLess(time.time() - started, 10)
+        self.assertEqual(self.popups, [])                                      # a stop is not a failed start
+
+    def test_a_second_stop_signal_kills_at_once(self):
+        self.child = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"
+        keep = A["STOP_GRACE"]; A["STOP_GRACE"] = 60
+        self.addCleanup(A.__setitem__, "STOP_GRACE", keep)
+        ts = [threading.Timer(s, lambda: os.kill(os.getpid(), signal.SIGTERM)) for s in (1.0, 1.5)]
+        for t in ts: t.start(); self.addCleanup(t.cancel)
+        code, _ = self.launch()
+        self.assertEqual(code, 137)
+
     def clock(self, *times):
         """launch() sees these times from time.time() in turn (the last one repeats); everything else is the real clock."""
         seq = list(times)

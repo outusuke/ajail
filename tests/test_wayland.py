@@ -148,6 +148,17 @@ class Client(unittest.TestCase):
         self.assertEqual(reqs["wp_security_context_v1"], ["destroy", "set_sandbox_engine", "set_app_id", "set_instance_id", "commit"])
 
 
+class Malformed(unittest.TestCase):
+    def test_a_message_shorter_than_its_header_is_an_error(self):
+        a, b = socket.socketpair()
+        self.addCleanup(a.close); self.addCleanup(b.close)
+        a.settimeout(1)
+        wl = A["Wl"].__new__(A["Wl"])
+        wl.sock, wl.last, wl.buf = a, 1, b""
+        b.sendall(struct.pack("=II", 1, (4 << 16) | 0))                 # claims to be 4 bytes long, less than its own header
+        with self.assertRaises(A["WlError"]):
+            wl.roundtrip(2)
+
 class Sandbox(unittest.TestCase):
     """What bwrap_args does with the restricted socket."""
     WP, WL = "/run/user/1000/wayland-0", "/run/user/1000/ajail/7.wl"

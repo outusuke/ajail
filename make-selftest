@@ -250,7 +250,7 @@ if bus and shutil.which("gdbus"):
         # backend doesn't implement that portal; the bus itself is reachable (Settings just answered).
         for iface, label in (("OpenURI", "open links"), ("FileChooser", "file chooser"),
                              ("Notification", "notifications"), ("Print", "printing"),
-                             ("Inhibit", "keep awake"), ("Background", "background"),
+                             ("Inhibit", "keep awake"),
                              ("Account", "account info"), ("Email", "email"), ("Trash", "trash"),
                              ("NetworkMonitor", "network status"), ("ProxyResolver", "proxy settings"),
                              ("GameMode", "game mode"), ("MemoryMonitor", "low-memory alerts"),
@@ -268,7 +268,8 @@ if bus and shutil.which("gdbus"):
                 ("Location", "CreateSession", "location", True), ("GlobalShortcuts", "CreateSession", "global shortcuts", True),
                 ("RemoteDesktop", "CreateSession", "remote desktop", True), ("InputCapture", "CreateSession", "input capture", True),
                 ("Wallpaper", "SetWallpaperURI", "wallpaper", True), ("DynamicLauncher", "PrepareInstall", "dynamic launcher", True),
-                ("Secret", "RetrieveSecret", "secrets", True)):
+                ("Secret", "RetrieveSecret", "secrets", True),
+                ("Background", "RequestBackground", "background apps", True)):
             on = iface in enabled
             rc, o = portal(f"org.freedesktop.portal.{iface}.{method}")
             if "AccessDenied" in o or "not allowed" in o:

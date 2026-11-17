@@ -432,6 +432,20 @@ def parse_bundle(text):
     if not secs: die("the export holds no settings")
     return {k: "\n".join(v).strip("\n") + "\n" for k, v in secs.items()}
 
+TIGHTENING = ("net_private", "tmp_home", "privacy", "harden", "gpu_render_only", "wayland_strict")      # switches that narrow something when on
+
+def widening(text):
+    """What a settings file's TEXT gives an app beyond the defaults: switches turned on that are off by default (apart from the
+    ones that only restrict), shared folders, passed variables, D-Bus names and portals, as ['ssh_agent=1', 'allow=/media/x']."""
+    out = []
+    for line in text.splitlines():
+        k, _, v = (x.strip() for x in COMMENT.sub("", line).strip().partition("="))
+        if k == "flag" and v in LEGACY_FLAGS: k, v = LEGACY_FLAGS[v][0], str(LEGACY_FLAGS[v][1])
+        if k in DEFAULTS:
+            if v == "1" and not DEFAULTS[k] and k not in TIGHTENING: out.append(f"{k}=1")
+        elif k in LISTS and v and not v.startswith("-") and not (k == "xdg" and v.endswith(":none")): out.append(f"{k}={v}")
+    return out
+
 def cmd_import(args):
     """ajail import FILE|- [--force]: put the settings of an export back. Nothing is written when any file would be replaced
     without --force."""
@@ -477,6 +491,11 @@ def cmd_import(args):
     except OSError as e: die(f"could not create {CONF}/apps: {e.strerror or e}")
     for path, text in todo: write_private(path, text, True)
     print(f"Imported {len(todo)} settings file{'s' if len(todo) != 1 else ''}" + (f", {same} already the same" if same else ""))
+    wide = [(path[len(CONF) + 1:], widening(text)) for path, text in todo if not path.endswith("/ui.conf")]
+    if any(w for _, w in wide):
+        print("Settings that give apps more than the defaults do (read them before running anything; the file may come from someone else):")
+        for label, w in wide:
+            if w: print(f"  {label}: {', '.join(w)}")
 
 def cmd_desktop(args):
     """ajail desktop --install-menu: put ajail-gui in the app menu. The launcher is written by the installed ajail-gui itself, and

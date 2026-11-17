@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Unit tests for the extra-portals feature. Run from the folder holding ajail, ajail-gui and make-selftest.
-import ast, os, re, tempfile, unittest, unittest.mock, io, contextlib
+import ast, os, re, tempfile, types, unittest, unittest.mock, io, contextlib
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -60,6 +60,31 @@ class Rules(unittest.TestCase):
         base = calls(A["portal_rules"](cfg(camera=0, portal_screenshot=0, portal_screencast=0)))
         self.assertTrue({"Camera", "Screenshot", "ScreenCast"}.isdisjoint(base))
         self.assertIn("Secret", calls(A["portal_rules"](cfg(portal=["Secret"], camera=0))))
+
+    def test_background_portal_is_opt_in(self):
+        self.assertNotIn("Background", A["PORTAL_BASIC"])
+        self.assertIn("Background", ALL)
+        self.assertNotIn("Background", calls(A["portal_rules"](cfg())))
+        self.assertNotIn("Background", calls(A["portal_rules"](cfg(portal=["Secret"]))))
+        self.assertIn("Background", calls(A["portal_rules"](cfg(portal=["Background"]))))
+
+    def test_account_portal_is_dropped_with_privacy(self):
+        self.assertIn("Account", calls(A["portal_rules"](cfg(privacy=0))))
+        with_privacy = calls(A["portal_rules"](cfg(privacy=1)))
+        self.assertNotIn("Account", with_privacy)
+        self.assertIn("Settings", with_privacy)                          # the other basic portals stay
+
+    def test_start_bus_survives_popen_failing_and_leaks_no_fds(self):
+        warned = []
+        def boom(*a, **k): raise OSError(8, "Exec format error")
+        fake = {"shutil": types.SimpleNamespace(which=lambda n: "/x/xdg-dbus-proxy"),
+                "subprocess": types.SimpleNamespace(Popen=boom, DEVNULL=-3), "warn": lambda m, n=None: warned.append(m)}
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": d}), \
+                unittest.mock.patch.dict(A, fake):
+            before = sorted(os.listdir("/proc/self/fd"))
+            self.assertIsNone(A["start_bus"](cfg(portals=1), "Foo"))
+            self.assertEqual(sorted(os.listdir("/proc/self/fd")), before)
+        self.assertTrue(any("could not start xdg-dbus-proxy" in w for w in warned), warned)
 
     def test_tray_rules_are_narrow(self):
         r = A["tray_rules"]()

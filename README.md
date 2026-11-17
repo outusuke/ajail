@@ -70,7 +70,7 @@ Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.confi
 | `wayland_strict` | With `wayland`: never fall back to the full socket; if a restricted one can't be made, the app gets no Wayland. Not set anywhere means automatic: on where the compositor supports security contexts, off where it doesn't (so apps still start). Greyed out in `ajail-gui` on a desktop that can't. |
 | `x11` | X11 socket, in addition to Wayland. Weaker isolation. |
 | `ssh_agent` | Your SSH agent. The app can sign as you. |
-| `privacy` | Minimal `/etc/passwd`, `/etc/group`, `/etc/hosts`; hostname `ajail`. |
+| `privacy` | Minimal `/etc/passwd`, `/etc/group`, `/etc/hosts`; hostname `ajail`; the `Account` portal (your real name) is blocked. |
 
 ```ini
 allow=/home/me/Projects          # read & write
@@ -112,7 +112,7 @@ Nothing else is passed: not `PATH`, tokens, keys, `SSH_AUTH_SOCK` or `DBUS_*`. `
 
 ### Opt-in portals
 
-`Location`, `GlobalShortcuts`, `RemoteDesktop`, `InputCapture`, `Wallpaper`, `DynamicLauncher` and `Secret` are blocked unless enabled with `portal=NAME` (needs `portals=1`). `RemoteDesktop` and `InputCapture` can control or capture your keyboard and mouse; `Secret` can read the desktop's stored secrets.
+`Location`, `GlobalShortcuts`, `RemoteDesktop`, `InputCapture`, `Wallpaper`, `DynamicLauncher`, `Secret` and `Background` are blocked unless enabled with `portal=NAME` (needs `portals=1`). `RemoteDesktop` and `InputCapture` can control or capture your keyboard and mouse; `Secret` can read the desktop's stored secrets; `Background` can register an autostart that runs outside the sandbox.
 
 ## Self-test
 
@@ -149,7 +149,7 @@ ajail is a convenience layer over bubblewrap, not a security guarantee.
 
 - `net` gives the app your network. `net_private` hides this computer's services, not your LAN or the internet.
 - Without compositor support for security contexts (GNOME today) an app on Wayland gets the full socket. Set `wayland_strict=1` to give it none, or run the self-test (see above) to see what your compositor exposes.
-- `x11`, `ssh_agent`, `input`, broad folder shares and the `RemoteDesktop`, `InputCapture` and `Secret` portals weaken isolation.
+- `x11`, `ssh_agent`, `input`, broad folder shares and the `RemoteDesktop`, `InputCapture`, `Secret` and `Background` portals weaken isolation.
 - Compressed installs read the image outside the sandbox.
 - Resource limits protect your session, not your privacy.
 
