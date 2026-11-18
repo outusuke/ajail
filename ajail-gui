@@ -3,7 +3,7 @@
 # ajail-gui - GTK4 + libadwaita front-end for ajail (a Flatseal-style permission editor)
 # ======== 00_config: Configuration: paths, permission defaults and labels, UI text tables. Data only.
 
-import errno, json, os, pwd, re, signal, shutil, subprocess, sys, threading
+import errno, json, os, pwd, re, signal, shutil, subprocess, sys, threading, types
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -56,6 +56,9 @@ MODES = ["No access", "Read-only", "Read & write"]
 LABEL = {"net": "Internet", "sound": "Audio", "gpu": "Graphics", "camera": "Camera",
          "input": "Input devices", "x11": "X11", "ssh_agent": "SSH agent", "printing": "Printing",
          "compat_env": "Graphics variables"}
+# Basic portals that stay in one collapsed row, "More desktop portals" (they are on by default and seldom need a change).
+ADVANCED = ("portal_notification", "portal_openuri", "portal_print", "portal_trash", "portal_email", "portal_inhibit", "portal_network")
+
 SECTIONS = [
     ("What can this app use?",
      "Changes apply the next time the app starts. Everything else on your computer stays hidden from it.", [
@@ -1373,8 +1376,15 @@ class Win(Adw.ApplicationWindow):
 
         for gtitle, desc, items in SECTIONS:
             g = Adw.PreferencesGroup(title=gtitle, description=desc or "")
+            more = None
             for key, t, sub in items:
-                add_switch(g, key, t, sub)
+                if key in ADVANCED:      # one collapsed row, "More desktop portals"
+                    if more is None:
+                        more = Adw.ExpanderRow(title="More desktop portals", subtitle="Notifications, links, printing, trash, email, keep awake, network state")
+                        g.add(more)
+                    add_switch(types.SimpleNamespace(add=more.add_row), key, t, sub)
+                else:
+                    add_switch(g, key, t, sub)
             page.add(g)
 
         def eff_num(k):

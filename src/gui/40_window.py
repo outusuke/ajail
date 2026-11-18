@@ -727,8 +727,15 @@ class Win(Adw.ApplicationWindow):
 
         for gtitle, desc, items in SECTIONS:
             g = Adw.PreferencesGroup(title=gtitle, description=desc or "")
+            more = None
             for key, t, sub in items:
-                add_switch(g, key, t, sub)
+                if key in ADVANCED:      # one collapsed row, "More desktop portals"
+                    if more is None:
+                        more = Adw.ExpanderRow(title="More desktop portals", subtitle="Notifications, links, printing, trash, email, keep awake, network state")
+                        g.add(more)
+                    add_switch(types.SimpleNamespace(add=more.add_row), key, t, sub)
+                else:
+                    add_switch(g, key, t, sub)
             page.add(g)
 
         def eff_num(k):
