@@ -64,6 +64,9 @@ def parse_cfg(path):
         elif k in NUM:
             if v.isdigit(): d["s"][k] = min(int(v), 10**7)
             else: bad("expected a whole number")
+        elif k in CHOICES:
+            if v in CHOICES[k]: d["s"][k] = v
+            else: bad("expected " + ", ".join(CHOICES[k][:-1]) + " or " + CHOICES[k][-1])
         elif k == "profile":
             if v == "strict": d["s"].update(net=0, sound=0)
             else: bad("only 'strict' is known")
@@ -78,7 +81,7 @@ def load_cfg(name):
     """Built-in defaults < default.conf < apps/NAME.conf. Lists add up, except xdg (per folder)."""
     g = parse_cfg(f"{CONF}/default.conf") or empty_cfg()
     a = parse_cfg(f"{CONF}/apps/{name}.conf") or empty_cfg()
-    cfg = {**DEFAULTS, **NUM, **g["s"], **a["s"]}
+    cfg = {**DEFAULTS, **NUM, **{k: v[0] for k, v in CHOICES.items()}, **g["s"], **a["s"]}
     for k in ("allow", "allow_ro", "env", "talk"):
         cfg[k] = list(dict.fromkeys(g[k] + a[k]))
     on = []
@@ -494,7 +497,8 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         if cfg["portals"]: env["AJAIL_PORTALS"] = ",".join(extra_portals(cfg))     # read by the self-test
         if cfg["tray"]: env["AJAIL_TRAY"] = f"{TRAY_PIDS[0]}-{TRAY_PIDS[-1]}"      # read by the self-test
         if cfg["portals"]:      # a toolkit uses the file chooser portal only when told to; a theme that compat_env passes through (gtk3, qt6ct) would open Qt's own dialog, so it is replaced; env= still wins (no /.flatpak-info for the app: glycin would then run its image loaders through flatpak-spawn, which fails, and GTK aborts)
-            env["GTK_USE_PORTAL"] = "1"; env["QT_QPA_PLATFORMTHEME"] = "xdgdesktopportal"
+            if cfg.get("gtk_portal") != "0": env["GTK_USE_PORTAL"] = "1"      # "auto" is settled by the caller (settle_gtk_portal); unsettled it counts as on
+            env["QT_QPA_PLATFORMTHEME"] = "xdgdesktopportal"
             if info is not None: a += ["--info-fd", str(info)]
     if cfg["portals"]:      # the files you pick in a chooser appear here, only this app's own (bind-try: nothing when there is no document portal)
         a += ["--bind-try", f"{rt}/doc/by-app/{portal_app_id(name)}", f"{rt}/doc"]

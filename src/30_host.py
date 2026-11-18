@@ -56,6 +56,20 @@ def host_cursor():
     else: size = None
     return theme, size
 
+def cursor_size_is_zero():
+    """True when the host's gsettings cursor-size is 0. host_cursor() counts 0 as unset, so it can't tell 0 from missing."""
+    size = gsettings_get(CURSOR_SCHEMA, "cursor-size")
+    return size is not None and CURSOR_SIZE_RE.fullmatch(size) is not None and int(size) == 0
+
+def settle_gtk_portal(cfg, name=None):
+    """cfg["gtk_portal"] as "1" or "0" for this run. "auto" is "1" except when the host's cursor size is 0, the one case known to make
+    GTK crash with the file chooser portal; that one is logged. Without portals there is nothing to decide, and "1" and "0" stay as set."""
+    v = cfg.get("gtk_portal", "auto")
+    if v != "auto" or not cfg["portals"]: return v
+    if not cursor_size_is_zero(): return "1"
+    if not NO_LOG[0]: log("gtk_portal=auto: the host's cursor size is 0, which crashes GTK with the file chooser portal, so GTK_USE_PORTAL is not set (gtk_portal=1 sets it anyway)", name)
+    return "0"
+
 def gsettings_keyfile_text():
     """Text of the key file: just the host's button layout and cursor theme/size. None if there is nothing to share.
     Always written under GNOME's schemas, which are the ones GTK reads, whichever desktop the values came from."""

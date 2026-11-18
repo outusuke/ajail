@@ -14,7 +14,7 @@ def path_for(scope):
     return CONF + "/default.conf" if scope is None else f"{APPS}/{scope}.conf"
 
 def write_cfg(scope, raw):
-    out = [f"{k}={int(v)}" for k, v in raw["s"].items()]
+    out = [f"{k}={v if isinstance(v, str) else int(v)}" for k, v in raw["s"].items()]      # gtk_portal holds text (auto, 1, 0); the window has no row for it but must keep it
     for k in LISTS:
         out += [f"{k}={v}" for v in raw[k]]
     path = path_for(scope)

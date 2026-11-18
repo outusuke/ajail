@@ -216,6 +216,65 @@ class PortalApp(unittest.TestCase):
         off = build(cfg(portals=0, tray=1), bus="/run/b.sock")
         self.assertNotIn("--info-fd", off); self.assertNotIn("GTK_USE_PORTAL", off)
 
+    def test_gtk_portal_only_decides_the_gtk_variable(self):
+        for v, gtk in (("1", True), ("auto", True), ("0", False)):      # "auto" reaching here unsettled counts as on, as before
+            envs = setenv(build(cfg(portals=1, gtk_portal=v), bus="/run/b.sock", info=7))
+            self.assertEqual("GTK_USE_PORTAL" in envs, gtk, v)
+            self.assertEqual(envs["QT_QPA_PLATFORMTHEME"], "xdgdesktopportal", v)
+        self.assertEqual(setenv(build(cfg(portals=1), bus="/run/b.sock", info=7))["GTK_USE_PORTAL"], "1")     # no gtk_portal in the config: on
+        for v in ("1", "auto"):
+            self.assertNotIn("GTK_USE_PORTAL", build(cfg(portals=0, tray=1, gtk_portal=v), bus="/run/b.sock"))   # forcing 1 does not bypass portals=0
+
+class GtkPortalAuto(unittest.TestCase):
+    """gtk_portal=auto: set GTK_USE_PORTAL unless the host's cursor size is 0 (the one confirmed crash); 1 and 0 never ask the host."""
+    def settle(self, cursor, no_log=False, **kw):
+        asked, logged = [], []
+        def fake_get(schema, key): asked.append((schema, key)); return cursor
+        with unittest.mock.patch.dict(A, {"gsettings_get": fake_get, "log": lambda m, n=None: logged.append((m, n))}):
+            A["NO_LOG"][0] = no_log
+            try: got = A["settle_gtk_portal"](cfg(**kw), "t")
+            finally: A["NO_LOG"][0] = False
+        return got, asked, logged
+
+    def test_auto_is_on_unless_the_cursor_size_is_zero(self):
+        for cursor in ("24", "1", "256", None, "", "uint32 0", "'x'"):       # a normal size, or nothing usable to read
+            got, _, logged = self.settle(cursor, portals=1, gtk_portal="auto")
+            self.assertEqual((got, logged), ("1", []), cursor)
+        got, asked, logged = self.settle("0", portals=1, gtk_portal="auto")
+        self.assertEqual(got, "0"); self.assertEqual(asked, [("org.gnome.desktop.interface", "cursor-size")])
+        self.assertEqual(len(logged), 1); self.assertIn("cursor size is 0", logged[0][0]); self.assertEqual(logged[0][1], "t")
+
+    def test_explicit_values_win_and_do_not_read_the_host(self):
+        for v in ("1", "0"):
+            got, asked, logged = self.settle("0", portals=1, gtk_portal=v)
+            self.assertEqual((got, asked, logged), (v, [], []), v)
+
+    def test_nothing_to_decide_without_portals(self):
+        got, asked, logged = self.settle("0", portals=0, gtk_portal="auto")
+        self.assertEqual((got, asked, logged), ("auto", [], []))
+
+    def test_preview_decides_the_same_way_but_writes_no_log_line(self):
+        got, _, logged = self.settle("0", no_log=True, portals=1, gtk_portal="auto")
+        self.assertEqual((got, logged), ("0", []))
+
+    def test_cursor_size_zero_is_told_apart_from_unset(self):
+        # host_cursor() folds 0 into "unset"; the GTK_USE_PORTAL decision must not
+        with unittest.mock.patch.dict(A, {"gsettings_get": lambda s, k: "0"}):
+            self.assertEqual(A["host_cursor"]()[1], None); self.assertTrue(A["cursor_size_is_zero"]())
+        with unittest.mock.patch.dict(A, {"gsettings_get": lambda s, k: None}):
+            self.assertFalse(A["cursor_size_is_zero"]())
+
+    def test_the_command_that_preview_prints_follows_the_decision(self):
+        import contextlib, shlex
+        d = tempfile.mkdtemp(); os.makedirs(f"{d}/apps")
+        open(f"{d}/default.conf", "w").write("theme=0\nportals=1\n")
+        for cursor, want in (("0", False), ("24", True)):
+            out = io.StringIO()
+            with unittest.mock.patch.dict(A, {"CONF": d, "gsettings_get": lambda s, k: cursor, "want_bus": lambda c: True}), \
+                 unittest.mock.patch.dict(os.environ, SESSION, clear=True), contextlib.redirect_stdout(out):
+                A["cmd_preview"]("t")
+            self.assertEqual("GTK_USE_PORTAL" in setenv(shlex.split(out.getvalue())), want, cursor)
+
 class Shares(unittest.TestCase):
     def test_hidden_and_outside_paths_are_skipped(self):
         with tempfile.TemporaryDirectory() as t, unittest.mock.patch.dict(A["safe_path"].__globals__, {"HOME": t}):

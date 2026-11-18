@@ -200,7 +200,7 @@ Spaces around
 .B =
 are fine and
 .B #
-starts a comment. A line ajail cannot use (unknown key, a value other than 0 or 1, no
+starts a comment. A line ajail cannot use (unknown key, a value the key does not take, no
 .BR = )
 is skipped with a warning in the terminal and in the log, never silently.
 .PP
@@ -229,6 +229,13 @@ Switches (0 or 1, default in brackets):
 .BR privacy " (0, minimal /etc/passwd, /etc/group and /etc/hosts, the hostname ajail and no Account portal)"
 and
 .BR harden " (0, also blocks io_uring_*, userfaultfd, process_vm_*, kcmp, pidfd_getfd and the new mount calls (open_tree, move_mount, fsopen, fsconfig, fsmount, fspick, mount_setattr); may break apps)."
+.PP
+.B gtk_portal
+is auto (the default), 1 or 0. With
+.B portals=1
+it decides whether GTK programs are told to use the file chooser portal (GTK_USE_PORTAL=1). auto sets it, except when the cursor size
+in your desktop settings is 0, which crashes GTK; ajail then leaves it unset and logs one line saying why. 1 and 0 set it or leave it
+unset for that app whatever the cursor size. Qt programs are not affected.
 .PP
 Limits (0 means none; need
 .BR "systemd\-run \-\-user" ):

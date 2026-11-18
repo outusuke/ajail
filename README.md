@@ -68,6 +68,7 @@ Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.confi
 | `gpu_render_only` | With `gpu`: only `/dev/dri/renderD*`, not the `card*` devices. |
 | `wayland` | Wayland socket (default on). Where the compositor supports security contexts (`wp_security_context_v1`: Sway, Hyprland, KDE Plasma and others, not GNOME's Mutter as of version 51) the app gets a restricted socket, without screen capture or input injection; elsewhere it gets the full socket. Turn off for an app that runs on `x11` alone or needs no window. |
 | `wayland_strict` | With `wayland`: never fall back to the full socket; if a restricted one can't be made, the app gets no Wayland. Not set anywhere means automatic: on where the compositor supports security contexts, off where it doesn't (so apps still start). Greyed out in `ajail-gui` on a desktop that can't. |
+| `gtk_portal` | `auto` (default), `1` or `0`. With `portals`: tell GTK apps to use the file chooser portal (`GTK_USE_PORTAL=1`). `auto` does, except when your desktop's cursor size is 0, which crashes GTK (logged once). `1` and `0` force it for an app. Qt is not affected. |
 | `x11` | X11 socket, in addition to Wayland. Weaker isolation. |
 | `ssh_agent` | Your SSH agent. The app can sign as you. |
 | `privacy` | Minimal `/etc/passwd`, `/etc/group`, `/etc/hosts`; hostname `ajail`; the `Account` portal (your real name) is blocked. |

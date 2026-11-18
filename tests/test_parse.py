@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Tests for ajail's settings parser: whitespace, comments and warnings about lines it can't use.
-import ast, contextlib, io, os, re, stat, tempfile, threading, unittest
+import ast, contextlib, io, os, re, stat, tempfile, threading, unittest, unittest.mock
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -92,6 +92,28 @@ class Talk(unittest.TestCase):
         self.assertEqual(d["talk"], good)
         for no in range(len(good) + 1, len(good) + len(bad) + 1): self.assertIn(f"x.conf:{no}", err)
 
+    def test_gtk_portal_takes_auto_1_or_0(self):
+        for v in ("auto", "1", "0"):
+            d, err = self.parse(f"gtk_portal = {v}   # file chooser\n")
+            self.assertEqual(d["s"], {"gtk_portal": v}); self.assertEqual(err, "")
+        for v in ("yes", "2", "AUTO", ""):
+            d, err = self.parse(f"gtk_portal={v}\n")
+            self.assertEqual(d["s"], {}); self.assertIn("x.conf:1", err); self.assertIn("expected auto, 1 or 0", err)
+
+    def test_gtk_portal_is_auto_until_a_file_says_otherwise(self):
+        os.makedirs(f"{self.d}/apps")
+        with unittest.mock.patch.dict(A, {"CONF": self.d}):
+            self.assertEqual(A["load_cfg"]("x")["gtk_portal"], "auto")
+            open(f"{self.d}/default.conf", "w").write("gtk_portal=0\n")
+            self.assertEqual(A["load_cfg"]("x")["gtk_portal"], "0")
+            open(f"{self.d}/apps/x.conf", "w").write("gtk_portal=auto\n")      # an app can go back to automatic
+            self.assertEqual(A["load_cfg"]("x")["gtk_portal"], "auto")
+            open(f"{self.d}/apps/x.conf", "w").write("gtk_portal=1\n")
+            self.assertEqual(A["load_cfg"]("x")["gtk_portal"], "1"); self.assertEqual(A["load_cfg"]("y")["gtk_portal"], "0")
+
+    def test_gtk_portal_is_not_a_permission_an_import_has_to_flag(self):
+        self.assertEqual(A["widening"]("gtk_portal=1\ngtk_portal=0\n"), [])
+
     def test_gui_accepts_exactly_what_ajail_accepts(self):
         G = load_gui()
         names = ["org.gnome.SessionManager", "org.example.App.*", "com.a.b.c.*", "org.*", "org.freedesktop.*", "a..b",
@@ -108,6 +130,18 @@ class Gui(unittest.TestCase):
         src = open(f"{HERE}/ajail-gui").read()
         self.assertNotIn('os.environ.get("USER"', src)
         self.assertIn("pwd.getpwuid(os.getuid()).pw_name", src)
+
+    def test_the_window_keeps_a_text_setting_it_has_no_row_for(self):
+        ns = {"re": re, "os": os}
+        for n in self.tree().body:
+            if (isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "LISTS") \
+               or (isinstance(n, ast.FunctionDef) and n.name == "write_cfg"):
+                exec(compile(ast.Module([n], []), "gui", "exec"), ns)
+        path = tempfile.mkdtemp() + "/x.conf"
+        ns["path_for"] = lambda scope: path
+        ns["write_cfg"]("x", {"s": {"net": 0, "gtk_portal": "auto"}, **{k: [] for k in ns["LISTS"]}})
+        self.assertEqual(open(path).read(), "net=0\ngtk_portal=auto\n")
+        d = A["parse_cfg"](path); self.assertEqual(d["s"], {"net": 0, "gtk_portal": "auto"})     # what the window wrote, ajail reads back
 
     def test_has_comment_matches_the_parser(self):
         ns = {"re": re}

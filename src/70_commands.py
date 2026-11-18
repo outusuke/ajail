@@ -254,6 +254,7 @@ def cmd_preview(n):
     NO_LOG[0] = True
     name = clean(n) if n else "NAME"
     cfg = load_cfg(name)
+    cfg = {**cfg, "gtk_portal": settle_gtk_portal(cfg)}      # as a real run would: the host's cursor size decides "auto"
     bus = f"{runtime_dir()}/ajail/PID.bus" if want_bus(cfg) else None
     root = f"{INSTALLED}/{name}/root"
     if installed_kind(name) == "mount": root = f"{MOUNTS}/{name}"

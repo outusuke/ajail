@@ -37,6 +37,10 @@ DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None
             "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
 # Numeric limits (0 = no limit): memory in MB, CPU in % of one core, number of processes.
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}
+# Settings with named values instead of 0/1: key -> allowed values, the first being the default. Keep in sync with CHOICES in ajail-gui.
+# gtk_portal: whether GTK programs are told to use the file chooser portal (GTK_USE_PORTAL=1). With portals=1, auto means yes, except
+# where the host's cursor size is 0, the one case known to make GTK crash; 1 and 0 force it on or off (see settle_gtk_portal).
+CHOICES = {"gtk_portal": ("auto", "1", "0")}
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
 # Opt-in desktop portals, enabled one at a time with portal=NAME. Anything not listed here is rejected.
 # Keep in sync with EXTRA_PORTALS in ajail-gui.
@@ -344,6 +348,9 @@ def parse_cfg(path):
         elif k in NUM:
             if v.isdigit(): d["s"][k] = min(int(v), 10**7)
             else: bad("expected a whole number")
+        elif k in CHOICES:
+            if v in CHOICES[k]: d["s"][k] = v
+            else: bad("expected " + ", ".join(CHOICES[k][:-1]) + " or " + CHOICES[k][-1])
         elif k == "profile":
             if v == "strict": d["s"].update(net=0, sound=0)
             else: bad("only 'strict' is known")
@@ -358,7 +365,7 @@ def load_cfg(name):
     """Built-in defaults < default.conf < apps/NAME.conf. Lists add up, except xdg (per folder)."""
     g = parse_cfg(f"{CONF}/default.conf") or empty_cfg()
     a = parse_cfg(f"{CONF}/apps/{name}.conf") or empty_cfg()
-    cfg = {**DEFAULTS, **NUM, **g["s"], **a["s"]}
+    cfg = {**DEFAULTS, **NUM, **{k: v[0] for k, v in CHOICES.items()}, **g["s"], **a["s"]}
     for k in ("allow", "allow_ro", "env", "talk"):
         cfg[k] = list(dict.fromkeys(g[k] + a[k]))
     on = []
@@ -774,7 +781,8 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         if cfg["portals"]: env["AJAIL_PORTALS"] = ",".join(extra_portals(cfg))     # read by the self-test
         if cfg["tray"]: env["AJAIL_TRAY"] = f"{TRAY_PIDS[0]}-{TRAY_PIDS[-1]}"      # read by the self-test
         if cfg["portals"]:      # a toolkit uses the file chooser portal only when told to; a theme that compat_env passes through (gtk3, qt6ct) would open Qt's own dialog, so it is replaced; env= still wins (no /.flatpak-info for the app: glycin would then run its image loaders through flatpak-spawn, which fails, and GTK aborts)
-            env["GTK_USE_PORTAL"] = "1"; env["QT_QPA_PLATFORMTHEME"] = "xdgdesktopportal"
+            if cfg.get("gtk_portal") != "0": env["GTK_USE_PORTAL"] = "1"      # "auto" is settled by the caller (settle_gtk_portal); unsettled it counts as on
+            env["QT_QPA_PLATFORMTHEME"] = "xdgdesktopportal"
             if info is not None: a += ["--info-fd", str(info)]
     if cfg["portals"]:      # the files you pick in a chooser appear here, only this app's own (bind-try: nothing when there is no document portal)
         a += ["--bind-try", f"{rt}/doc/by-app/{portal_app_id(name)}", f"{rt}/doc"]
@@ -1100,6 +1108,20 @@ def host_cursor():
     if size is not None and CURSOR_SIZE_RE.fullmatch(size) and 0 < int(size) <= CURSOR_SIZE_MAX: size = int(size)
     else: size = None
     return theme, size
+
+def cursor_size_is_zero():
+    """True when the host's gsettings cursor-size is 0. host_cursor() counts 0 as unset, so it can't tell 0 from missing."""
+    size = gsettings_get(CURSOR_SCHEMA, "cursor-size")
+    return size is not None and CURSOR_SIZE_RE.fullmatch(size) is not None and int(size) == 0
+
+def settle_gtk_portal(cfg, name=None):
+    """cfg["gtk_portal"] as "1" or "0" for this run. "auto" is "1" except when the host's cursor size is 0, the one case known to make
+    GTK crash with the file chooser portal; that one is logged. Without portals there is nothing to decide, and "1" and "0" stay as set."""
+    v = cfg.get("gtk_portal", "auto")
+    if v != "auto" or not cfg["portals"]: return v
+    if not cursor_size_is_zero(): return "1"
+    if not NO_LOG[0]: log("gtk_portal=auto: the host's cursor size is 0, which crashes GTK with the file chooser portal, so GTK_USE_PORTAL is not set (gtk_portal=1 sets it anyway)", name)
+    return "0"
 
 def gsettings_keyfile_text():
     """Text of the key file: just the host's button layout and cursor theme/size. None if there is nothing to share.
@@ -1435,7 +1457,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
         wl = wayland_context(wp, f"{runtime_dir()}/ajail/{os.getpid()}.wl", name, f"{name}-{os.getpid()}") if can else None
         if not wl and strict:
             warn("no restricted Wayland socket could be made for this app, and 'Wayland only if restricted' is on: Wayland is off for it", name)
-    cfg = {**cfg, "wayland_strict": int(bool(strict))}
+    cfg = {**cfg, "wayland_strict": int(bool(strict)), "gtk_portal": settle_gtk_portal(cfg, name)}
     inst, infopath, infof = None, None, None      # the portal finds the app by the pid in bwrapinfo.json, as it does for a flatpak
     if bus and cfg["portals"]:
         inst = f"{runtime_dir()}/.flatpak/{os.getpid()}"
@@ -1885,6 +1907,7 @@ def cmd_preview(n):
     NO_LOG[0] = True
     name = clean(n) if n else "NAME"
     cfg = load_cfg(name)
+    cfg = {**cfg, "gtk_portal": settle_gtk_portal(cfg)}      # as a real run would: the host's cursor size decides "auto"
     bus = f"{runtime_dir()}/ajail/PID.bus" if want_bus(cfg) else None
     root = f"{INSTALLED}/{name}/root"
     if installed_kind(name) == "mount": root = f"{MOUNTS}/{name}"

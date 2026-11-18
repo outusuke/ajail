@@ -90,7 +90,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
         wl = wayland_context(wp, f"{runtime_dir()}/ajail/{os.getpid()}.wl", name, f"{name}-{os.getpid()}") if can else None
         if not wl and strict:
             warn("no restricted Wayland socket could be made for this app, and 'Wayland only if restricted' is on: Wayland is off for it", name)
-    cfg = {**cfg, "wayland_strict": int(bool(strict))}
+    cfg = {**cfg, "wayland_strict": int(bool(strict)), "gtk_portal": settle_gtk_portal(cfg, name)}
     inst, infopath, infof = None, None, None      # the portal finds the app by the pid in bwrapinfo.json, as it does for a flatpak
     if bus and cfg["portals"]:
         inst = f"{runtime_dir()}/.flatpak/{os.getpid()}"

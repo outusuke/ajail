@@ -37,6 +37,10 @@ DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None
             "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
 # Numeric limits (0 = no limit): memory in MB, CPU in % of one core, number of processes.
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}
+# Settings with named values instead of 0/1: key -> allowed values, the first being the default. Keep in sync with CHOICES in ajail-gui.
+# gtk_portal: whether GTK programs are told to use the file chooser portal (GTK_USE_PORTAL=1). With portals=1, auto means yes, except
+# where the host's cursor size is 0, the one case known to make GTK crash; 1 and 0 force it on or off (see settle_gtk_portal).
+CHOICES = {"gtk_portal": ("auto", "1", "0")}
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
 # Opt-in desktop portals, enabled one at a time with portal=NAME. Anything not listed here is rejected.
 # Keep in sync with EXTRA_PORTALS in ajail-gui.
