@@ -506,6 +506,7 @@ class ButtonLayout(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
         self.patch("host_cursor", lambda: (None, None))     # keep the host's real cursor out of these tests
+        p = unittest.mock.patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "GNOME"}); p.start(); self.addCleanup(p.stop)     # not KDE: the host's own KDE files must not leak in
 
     def patch(self, name, value):
         old = A[name]; A[name] = value
@@ -543,6 +544,7 @@ class Cursor(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
         self.patch("host_button_layout", lambda: None)
+        p = unittest.mock.patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "GNOME"}); p.start(); self.addCleanup(p.stop)     # not KDE: the host's own KDE files must not leak in
 
     def patch(self, name, value):
         old = A[name]; A[name] = value
