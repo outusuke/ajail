@@ -1374,17 +1374,42 @@ class Win(Adw.ApplicationWindow):
                 marks.append(usable); usable()      # marks run after every change, so turning Wayland off greys this row at once
             g.add(sw)
 
+        # One switch per opt-in portal, in the "More desktop portals" row. A portal enabled in the default settings shows as on on an
+        # app's page; turning it off there stores "portal=-NAME" in that app's settings, which undoes the default for this app only.
+        def portal_row(pname):
+            ptitle, psub = PORTAL_INFO[pname]
+            inherited = bool(scope) and pname in G["portal"]
+            psw = Adw.SwitchRow(
+                title=ptitle,
+                subtitle=psub + " Needs Notifications and portals." + ("\nOn in the default settings. Turn it off here for this app only." if inherited else ""),
+                active=pname in R["portal"] or (inherited and "-" + pname not in R["portal"]))
+
+            def on_portal(row, _p, pname=pname, inherited=inherited):
+                R["portal"] = [x for x in R["portal"] if x not in (pname, "-" + pname)]
+                if row.get_active():
+                    if not inherited:
+                        R["portal"].append(pname)
+                elif inherited:
+                    R["portal"].append("-" + pname)
+                commit()
+
+            psw.connect("notify::active", on_portal)
+            return psw
+
         for gtitle, desc, items in SECTIONS:
             g = Adw.PreferencesGroup(title=gtitle, description=desc or "")
             more = None
             for key, t, sub in items:
                 if key in ADVANCED:      # one collapsed row, "More desktop portals"
                     if more is None:
-                        more = Adw.ExpanderRow(title="More desktop portals", subtitle="Notifications, links, printing, trash, email, keep awake, network state")
+                        more = Adw.ExpanderRow(title="More desktop portals", subtitle="Notifications, links, printing, trash, email, keep awake, network state, location, shortcuts, wallpaper, launchers, remote control, secrets, background")
                         g.add(more)
                     add_switch(types.SimpleNamespace(add=more.add_row), key, t, sub)
                 else:
                     add_switch(g, key, t, sub)
+            if more is not None:      # the opt-in portals (off by default) share the collapsed row
+                for pname in EXTRA_PORTALS:
+                    more.add_row(portal_row(pname))
             page.add(g)
 
         def eff_num(k):
@@ -1629,32 +1654,6 @@ class Win(Adw.ApplicationWindow):
             page.add(eg)
 
         env_group()
-        # One switch per opt-in portal. A portal enabled in the default settings shows as on on an app's page;
-        # turning it off there stores "portal=-NAME" in that app's settings, which undoes the default for this app only.
-        pg = Adw.PreferencesGroup(
-            title="Extra portals",
-            description="Off by default. Each switch lets the app use one more desktop portal. "
-                        "Needs Notifications and portals. The desktop may still show its own prompt.")
-        for pname in EXTRA_PORTALS:
-            ptitle, psub = PORTAL_INFO[pname]
-            inherited = bool(scope) and pname in G["portal"]
-            psw = Adw.SwitchRow(
-                title=ptitle,
-                subtitle=psub + ("\nOn in the default settings. Turn it off here for this app only." if inherited else ""),
-                active=pname in R["portal"] or (inherited and "-" + pname not in R["portal"]))
-
-            def on_portal(row, _p, pname=pname, inherited=inherited):
-                R["portal"] = [x for x in R["portal"] if x not in (pname, "-" + pname)]
-                if row.get_active():
-                    if not inherited:
-                        R["portal"].append(pname)
-                elif inherited:
-                    R["portal"].append("-" + pname)
-                commit()
-
-            psw.connect("notify::active", on_portal)
-            pg.add(psw)
-        page.add(pg)
         list_group("D-Bus services", "Extra session-bus names the app may talk to (advanced).", "talk",
                    ["Service name, e.g. org.gnome.SessionManager"],
                    lambda v: v[0] if talk_ok(v[0]) else None)

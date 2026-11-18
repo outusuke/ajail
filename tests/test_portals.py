@@ -256,8 +256,9 @@ class Sync(unittest.TestCase):
         for name, (title, sub) in info.items():
             self.assertTrue(title and sub, name)
         with open(f"{HERE}/ajail-gui") as f: s = f.read()
-        self.assertIn('title="Extra portals"', s)
+        self.assertNotIn('title="Extra portals"', s)      # the switches live in the "More desktop portals" row
         self.assertIn('for pname in EXTRA_PORTALS:', s)
+        self.assertIn('more.add_row(portal_row(pname))', s)
         self.assertNotIn('"portal", ["Portal name', s)      # no free-text entry any more
 
     def test_selftest_covers_all_portals_and_compiles(self):
