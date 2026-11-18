@@ -32,7 +32,8 @@ os.makedirs(APPS, exist_ok=True)
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0, "single_instance": 0,
-            "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
+            "portal_screenshot": 1, "portal_screencast": 1,
+            "portal_notification": 1, "portal_openuri": 1, "portal_print": 1, "portal_trash": 1, "portal_email": 1, "portal_inhibit": 1, "portal_network": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}      # 0 = no limit
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
 # Opt-in desktop portals. Keep in sync with EXTRA_PORTALS in ajail.
@@ -82,6 +83,13 @@ SECTIONS = [
          "sandbox, only those that are set. Never your PATH, tokens or keys, SSH agent or D-Bus.")]),
     ("Desktop integration", None, [
         ("portals", "Notifications and portals", "Notifications, opening links, dark mode (needs xdg-dbus-proxy)"),
+        ("portal_notification", "Notifications", "Show desktop notifications. Needs Notifications and portals."),
+        ("portal_openuri", "Open links and files", "Let the app ask the desktop to open a link or file in another program. Needs Notifications and portals."),
+        ("portal_print", "Printing dialog", "Let the app use the desktop's print dialog. Needs Notifications and portals."),
+        ("portal_trash", "Move files to trash", "Let the app move files it can reach to the trash. Needs Notifications and portals."),
+        ("portal_email", "Compose email", "Let the app open your mail program with a new message. Needs Notifications and portals."),
+        ("portal_inhibit", "Keep screen awake", "Let the app stop the screen from sleeping or locking. Needs Notifications and portals."),
+        ("portal_network", "Network state", "Let the app ask whether you are online and which proxy to use. Needs Notifications and portals."),
         ("portal_screenshot", "Screenshots",
          "Let the app ask the desktop for a screenshot. Needs Notifications and portals. The desktop shows its own prompt."),
         ("portal_screencast", "Screen sharing",

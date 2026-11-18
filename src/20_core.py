@@ -177,14 +177,20 @@ def extra_portals(cfg):
     """The opt-in portals enabled for this app: allowlisted names only, no duplicates."""
     return [p for p in dict.fromkeys(cfg["portal"]) if p in EXTRA_PORTALS]
 
+# Basic portals that can be switched off one by one (portal_NAME=0): setting -> portal interfaces. The file chooser and Settings stay in the base.
+PORTAL_TOGGLES = {"portal_notification": ("Notification",), "portal_openuri": ("OpenURI",), "portal_print": ("Print",),
+                  "portal_trash": ("Trash",), "portal_email": ("Email",), "portal_inhibit": ("Inhibit",),
+                  "portal_network": ("NetworkMonitor", "ProxyResolver")}
+
 def portal_rules(cfg):
     """xdg-dbus-proxy rules for Notifications and the allowed portals (see PORTAL_BASIC above)."""
-    ifaces = [i for i in PORTAL_BASIC if not (i == "Account" and cfg["privacy"])]     # Account hands out the real name
+    off = {i for k, v in PORTAL_TOGGLES.items() if not cfg.get(k, 1) for i in v}
+    ifaces = [i for i in PORTAL_BASIC if i not in off and not (i == "Account" and cfg["privacy"])]     # Account hands out the real name
     if cfg["camera"]: ifaces.append("Camera")
     if cfg["portal_screenshot"]: ifaces.append("Screenshot")
     if cfg["portal_screencast"]: ifaces.append("ScreenCast")
     ifaces += [p for p in extra_portals(cfg) if p not in ifaces]
-    rules = ["--talk=org.freedesktop.Notifications", f"--see={PORTAL_NAME}"]
+    rules = (["--talk=org.freedesktop.Notifications"] if cfg.get("portal_notification", 1) else []) + [f"--see={PORTAL_NAME}"]
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.{i}.*" for i in ifaces]
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*",
               f"--call={PORTAL_NAME}=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*",

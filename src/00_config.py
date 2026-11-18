@@ -34,7 +34,8 @@ ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0, "single_instance": 0,
-            "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
+            "portal_screenshot": 1, "portal_screencast": 1,
+            "portal_notification": 1, "portal_openuri": 1, "portal_print": 1, "portal_trash": 1, "portal_email": 1, "portal_inhibit": 1, "portal_network": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
 # Numeric limits (0 = no limit): memory in MB, CPU in % of one core, number of processes.
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}
 # Settings with named values instead of 0/1: key -> allowed values, the first being the default. Keep in sync with CHOICES in ajail-gui.
@@ -47,7 +48,8 @@ LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
 EXTRA_PORTALS = ("Location", "GlobalShortcuts", "RemoteDesktop", "InputCapture", "Wallpaper", "DynamicLauncher", "Secret", "Background")
 XDG_DEFAULT = {"download": "Downloads", "documents": "Documents", "pictures": "Pictures",
                "music": "Music", "videos": "Videos", "desktop": "Desktop"}
-THEME = [".local/share/fonts", ".fonts", ".local/share/icons", ".icons", ".local/share/themes", ".themes"]
+THEME = [".local/share/fonts", ".fonts", ".local/share/icons", ".icons", ".local/share/themes", ".themes",
+         ".config/kdeglobals", ".config/kdedefaults", ".local/share/color-schemes"]      # KDE: colors, icon theme, fonts
 OUTSIDE = ("/mnt/", "/media/", f"/run/media/{USER}/")
 # Blocked syscalls: kexec_load kexec_file_load perf_event_open bpf syslog uselib acct quotactl add_key
 # keyctl request_key move_pages mbind get_mempolicy set_mempolicy migrate_pages open_by_handle_at name_to_handle_at

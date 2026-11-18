@@ -61,6 +61,17 @@ class Rules(unittest.TestCase):
         self.assertTrue({"Camera", "Screenshot", "ScreenCast"}.isdisjoint(base))
         self.assertIn("Secret", calls(A["portal_rules"](cfg(portal=["Secret"], camera=0))))
 
+    def test_basic_portals_can_be_switched_off_one_by_one(self):
+        base = calls(A["portal_rules"](cfg()))
+        for k, ifaces in A["PORTAL_TOGGLES"].items():
+            self.assertEqual(A["DEFAULTS"][k], 1, k)                       # on by default: nothing changes for existing setups
+            self.assertTrue(set(ifaces) <= base, k)
+            off = calls(A["portal_rules"](cfg(**{k: 0})))
+            self.assertTrue(set(ifaces).isdisjoint(off), k)
+            self.assertTrue({"FileChooser", "Settings"} <= off, k)         # the file chooser and Settings stay
+        self.assertIn("--talk=org.freedesktop.Notifications", A["portal_rules"](cfg()))
+        self.assertNotIn("--talk=org.freedesktop.Notifications", A["portal_rules"](cfg(portal_notification=0)))
+
     def test_background_portal_is_opt_in(self):
         self.assertNotIn("Background", A["PORTAL_BASIC"])
         self.assertIn("Background", ALL)
@@ -459,6 +470,36 @@ class GuiInstallFlow(unittest.TestCase):
     def test_cli_move_is_opt_in(self):
         with open(f"{HERE}/ajail") as f: s = f.read()
         self.assertIn("movable = move and can_move", s)       # never moves unless --move was given
+
+class KdeSettings(unittest.TestCase):
+    """On KDE the buttons come from kwinrc and the cursor from kcminputrc, not from gsettings' GNOME defaults."""
+    def setUp(self):
+        self.home = tempfile.mkdtemp(); os.makedirs(f"{self.home}/.config")
+        self.saved = {k: A[k] for k in ("HOME", "gsettings_get")}
+        A["HOME"] = self.home
+        A["gsettings_get"] = lambda s, k: {"button-layout": "'appmenu:close'", "cursor-theme": "'Adwaita'", "cursor-size": "24"}.get(k)
+        p = unittest.mock.patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "KDE"}); p.start(); self.addCleanup(p.stop)
+        self.addCleanup(A.update, self.saved)
+
+    def conf(self, name, text):
+        with open(f"{self.home}/.config/{name}", "w") as f: f.write(text)
+
+    def test_layout_and_cursor_come_from_kwin_and_plasma(self):
+        self.conf("kwinrc", "[Windows]\nFoo=1\n\n[org.kde.kdecoration2]\nButtonsOnLeft=MS\nButtonsOnRight=HIAX\n")
+        self.conf("kcminputrc", "[Mouse]\ncursorTheme=breeze_cursors\ncursorSize=36\n")
+        self.assertEqual(A["gsettings_keyfile_text"](), "[org/gnome/desktop/wm/preferences]\nbutton-layout='menu:minimize,maximize,close'\n\n"
+                                                        "[org/gnome/desktop/interface]\ncursor-theme='breeze_cursors'\ncursor-size=36\n")
+
+    def test_hostile_values_fall_back_and_other_desktops_ignore_kwin(self):
+        self.conf("kwinrc", "[org.kde.kdecoration2]\nButtonsOnRight=X\n")
+        self.conf("kcminputrc", "[Mouse]\ncursorTheme=../../etc\ncursorSize=9999\n")
+        self.assertEqual(A["gsettings_keyfile_text"](), "[org/gnome/desktop/wm/preferences]\nbutton-layout='menu:close'\n\n"
+                                                        "[org/gnome/desktop/interface]\ncursor-theme='Adwaita'\ncursor-size=24\n")
+        with unittest.mock.patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "GNOME"}):
+            self.assertIn("button-layout='appmenu:close'", A["gsettings_keyfile_text"]())
+
+    def test_kde_files_are_shared_read_only_with_the_theme(self):
+        for rel in (".config/kdeglobals", ".config/kdedefaults", ".local/share/color-schemes"): self.assertIn(rel, A["THEME"])
 
 class ButtonLayout(unittest.TestCase):
     """The host's window button layout reaches the app as a read-only GSettings key file."""
