@@ -25,7 +25,13 @@ def cfg(**kw):
     c.update(kw)
     return c
 
-def build(c, **kw):
+def build(c, live=False, **kw):
+    # preview mode (NO_LOG) by default: like 'ajail preview', building the command creates no folders; live=True creates them
+    old, A["NO_LOG"][0] = A["NO_LOG"][0], not live
+    try: return _build(c, **kw)
+    finally: A["NO_LOG"][0] = old
+
+def _build(c, **kw):
     with unittest.mock.patch.dict(os.environ, SESSION, clear=True), \
          unittest.mock.patch.object(A["os"].path, "exists", lambda p: True), \
          unittest.mock.patch.dict(A["bwrap_args"].__globals__, {"bwrap_has": lambda o: True, "wayland_path": lambda: "/run/user/1000/wayland-0"}):
@@ -321,6 +327,21 @@ class ParserFuzz(unittest.TestCase):
     def test_wide_dbus_wildcards_are_refused_narrow_ones_kept(self):
         d = self.parse("talk=org.example.App.*\ntalk=org.example.App\ntalk=*\ntalk=org..x\n")
         self.assertEqual(d["talk"], ["org.example.App.*", "org.example.App"])
+
+class SingleInstance(unittest.TestCase):
+    def test_shares_a_private_tmpdir_per_app_and_keeps_tmp_private(self):
+        d = tempfile.mkdtemp(); self.addCleanup(__import__("shutil").rmtree, d, True)
+        si = f"{d}/ajail/single/t"
+        with unittest.mock.patch.dict(A["bwrap_args"].__globals__, {"runtime_dir": lambda: d}):
+            a = build(cfg(single_instance=1), live=True)
+            self.assertEqual(os.stat(si).st_mode & 0o777, 0o700)
+            self.assertEqual(os.stat(f"{d}/ajail").st_mode & 0o777, 0o700)
+            self.assertEqual(os.stat(f"{d}/ajail/single").st_mode & 0o777, 0o700)
+            self.assertEqual(setenv(a)["TMPDIR"], si)
+            self.assertIn(["--bind", si, si], [a[i:i + 3] for i in range(len(a) - 2)])
+            self.assertIn(["--tmpfs", "/tmp"], [a[i:i + 2] for i in range(len(a) - 1)])      # /tmp is still private
+            b = build(cfg())          # off by default: nothing shared, TMPDIR untouched
+            self.assertNotIn("TMPDIR", setenv(b)); self.assertFalse(any("/single/" in x for x in b))
 
 class OldBubblewrapFailsClosed(unittest.TestCase):
     """Isolation the user asked for is never silently dropped because bubblewrap is too old to do it."""

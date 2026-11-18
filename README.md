@@ -71,6 +71,7 @@ Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.confi
 | `gtk_portal` | `auto` (default), `1` or `0`. With `portals`: tell GTK apps to use the file chooser portal (`GTK_USE_PORTAL=1`). `auto` does, except when your desktop's cursor size is 0, which crashes GTK (logged once). `1` and `0` force it for an app. Qt is not affected. |
 | `x11` | X11 socket, in addition to Wayland. Weaker isolation. |
 | `ssh_agent` | Your SSH agent. The app can sign as you. |
+| `single_instance` | One private folder per app, shared by its sandboxes, with `TMPDIR` pointing at it, so a second launch finds the first (Chrome's singleton socket: opening a file in the running browser). `/tmp` stays private. |
 | `privacy` | Minimal `/etc/passwd`, `/etc/group`, `/etc/hosts`; hostname `ajail`; the `Account` portal (your real name) is blocked. |
 
 ```ini

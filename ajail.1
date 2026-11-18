@@ -226,7 +226,8 @@ Switches (0 or 1, default in brackets):
 .BR app_writable " (0, for apps that fail with Read\-only file system under /app: what they write goes to a separate layer and the app's own files stay unchanged; needs bubblewrap 0.11+),"
 .BR userns " (1; 0 needs bubblewrap 0.8+),"
 .BR tmp_home " (0, private home erased on exit),"
-.BR privacy " (0, minimal /etc/passwd, /etc/group and /etc/hosts, the hostname ajail and no Account portal)"
+.BR privacy " (0, minimal /etc/passwd, /etc/group and /etc/hosts, the hostname ajail and no Account portal),"
+.BR single_instance " (0, one private folder per app from $XDG_RUNTIME_DIR is bound into every sandbox of it and TMPDIR points there, so a second launch can find the first, as Chrome does with its singleton socket; /tmp stays private)"
 and
 .BR harden " (0, also blocks io_uring_*, userfaultfd, process_vm_*, kcmp, pidfd_getfd and the new mount calls (open_tree, move_mount, fsopen, fsconfig, fsmount, fspick, mount_setattr); may break apps)."
 .PP

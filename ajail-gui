@@ -31,7 +31,7 @@ os.makedirs(APPS, exist_ok=True)
 # Keep in sync with DEFAULTS in ajail.
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
-            "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
+            "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0, "single_instance": 0,
             "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}      # 0 = no limit
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
@@ -92,6 +92,8 @@ SECTIONS = [
     ("Hardening", None, [
         ("tmp_home", "Temporary home",
          "Everything the app saves in its private home is erased when it closes. Shared folders are not affected."),
+        ("single_instance", "Open files in the running copy",
+         "A second launch of the app (for example a browser opened by double-clicking a file) finds the first one through a private temp folder shared by this app's sandboxes only. /tmp stays private."),
         ("privacy", "Hide personal details",
          "Hides your real name and the computer name from the app (minimal user list, hosts file and hostname)."),
         ("harden", "Block extra system calls",

@@ -512,6 +512,12 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         a += ["--ro-bind", root, "/app"]
     if cfg["tmp_home"]: a += ["--perms", "0700", "--tmpfs", HOME]      # erased when the app closes
     else: a += ["--bind", f"{HOMES}/{name}", HOME]
+    if cfg["single_instance"]:      # a second launch of the same app finds the first one's lock/socket files (Chrome keeps its singleton socket in $TMPDIR); /tmp stays private
+        si = f"{rt}/ajail/single/{name}"
+        if not NO_LOG[0]:
+            for d in (f"{rt}/ajail", f"{rt}/ajail/single", si): os.makedirs(d, mode=0o700, exist_ok=True)
+        a += ["--bind", si, si]
+        env["TMPDIR"] = si          # set before compat_env and env=, so an env=TMPDIR=... of yours still wins
     if cfg["theme"]:
         for rel in THEME:
             a += ["--ro-bind-try", f"{HOME}/{rel}", f"{HOME}/{rel}"]

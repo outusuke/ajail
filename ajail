@@ -33,7 +33,7 @@ ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch
 # compositor can make a restricted socket, off where it can't (launch decides).
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
-            "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0,
+            "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0, "single_instance": 0,
             "portal_screenshot": 1, "portal_screencast": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
 # Numeric limits (0 = no limit): memory in MB, CPU in % of one core, number of processes.
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}
@@ -796,6 +796,12 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         a += ["--ro-bind", root, "/app"]
     if cfg["tmp_home"]: a += ["--perms", "0700", "--tmpfs", HOME]      # erased when the app closes
     else: a += ["--bind", f"{HOMES}/{name}", HOME]
+    if cfg["single_instance"]:      # a second launch of the same app finds the first one's lock/socket files (Chrome keeps its singleton socket in $TMPDIR); /tmp stays private
+        si = f"{rt}/ajail/single/{name}"
+        if not NO_LOG[0]:
+            for d in (f"{rt}/ajail", f"{rt}/ajail/single", si): os.makedirs(d, mode=0o700, exist_ok=True)
+        a += ["--bind", si, si]
+        env["TMPDIR"] = si          # set before compat_env and env=, so an env=TMPDIR=... of yours still wins
     if cfg["theme"]:
         for rel in THEME:
             a += ["--ro-bind-try", f"{HOME}/{rel}", f"{HOME}/{rel}"]
