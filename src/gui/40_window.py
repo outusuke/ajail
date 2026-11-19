@@ -708,8 +708,9 @@ class Win(Adw.ApplicationWindow):
             rb.connect("clicked", on_reset)
             marks.append(lambda: rb.set_visible(key in R["s"]))
             rb.set_visible(key in R["s"])
-            if key == "wayland_strict":
+            if key == "wayland_strict" or key.startswith("portal_"):
                 def why_not():
+                    if key.startswith("portal_"): return "" if eff("portals") else "Turn on \u201cDesktop portals\u201d first."
                     return ("Your desktop can't restrict apps (it lacks the wp_security_context_v1 Wayland protocol), so this only turns Wayland off."
                             if not wayland_restricted() else "Turn on Wayland first." if not eff("wayland") else "")
                 block[0] = why_not
@@ -719,7 +720,7 @@ class Win(Adw.ApplicationWindow):
                     # One that is already on stays usable, so it can still be turned off. So does one that holds an override:
                     # greying the row would grey its undo button too, and the override could never be removed.
                     why = why_not()
-                    sw.set_sensitive(not why or eff(key) or key in R["s"])
+                    sw.set_sensitive(not why or key in R["s"] or (eff(key) and key == "wayland_strict"))
                     sw.set_subtitle(sub + (f"\n{why}" if why else ""))
                     sw.set_tooltip_text(why or None)
                 marks.append(usable); usable()      # marks run after every change, so turning Wayland off greys this row at once
@@ -732,7 +733,7 @@ class Win(Adw.ApplicationWindow):
             inherited = bool(scope) and pname in G["portal"]
             psw = Adw.SwitchRow(
                 title=ptitle,
-                subtitle=psub + " Needs Notifications and portals." + ("\nOn in the default settings. Turn it off here for this app only." if inherited else ""),
+                subtitle=psub + ("\nOn in the default settings. Turn it off here for this app only." if inherited else ""),
                 active=pname in R["portal"] or (inherited and "-" + pname not in R["portal"]))
 
             def on_portal(row, _p, pname=pname, inherited=inherited):
@@ -745,6 +746,12 @@ class Win(Adw.ApplicationWindow):
                 commit()
 
             psw.connect("notify::active", on_portal)
+
+            def usable():      # greyed while \u201cDesktop portals\u201d is off, unless the row holds a setting that must stay undoable
+                on = bool(eff("portals"))
+                psw.set_sensitive(on or pname in R["portal"] or "-" + pname in R["portal"])
+                psw.set_tooltip_text(None if on else "Turn on \u201cDesktop portals\u201d first.")
+            marks.append(usable); usable()
             return psw
 
         for gtitle, desc, items in SECTIONS:

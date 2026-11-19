@@ -85,18 +85,18 @@ SECTIONS = [
          "audio back-end variables (WGPU_*, MESA_*, SDL_VIDEODRIVER, QT_QPA_PLATFORM, GDK_BACKEND and similar) into the "
          "sandbox, only those that are set. Never your PATH, tokens or keys, SSH agent or D-Bus.")]),
     ("Desktop integration", None, [
-        ("portals", "Notifications and portals", "Notifications, opening links, dark mode (needs xdg-dbus-proxy)"),
-        ("portal_notification", "Notifications", "Show desktop notifications. Needs Notifications and portals."),
-        ("portal_openuri", "Open links and files", "Let the app ask the desktop to open a link or file in another program. Needs Notifications and portals."),
-        ("portal_print", "Printing dialog", "Let the app use the desktop's print dialog. Needs Notifications and portals."),
-        ("portal_trash", "Move files to trash", "Let the app move files it can reach to the trash. Needs Notifications and portals."),
-        ("portal_email", "Compose email", "Let the app open your mail program with a new message. Needs Notifications and portals."),
-        ("portal_inhibit", "Keep screen awake", "Let the app stop the screen from sleeping or locking. Needs Notifications and portals."),
-        ("portal_network", "Network state", "Let the app ask whether you are online and which proxy to use. Needs Notifications and portals."),
+        ("portals", "Desktop portals", "File chooser, dark mode and the portals below (needs xdg-dbus-proxy)"),
+        ("portal_notification", "Notifications", "Show desktop notifications."),
+        ("portal_openuri", "Open links and files", "Let the app ask the desktop to open a link or file in another program."),
+        ("portal_print", "Printing dialog", "Let the app use the desktop's print dialog."),
+        ("portal_trash", "Move files to trash", "Let the app move files it can reach to the trash."),
+        ("portal_email", "Compose email", "Let the app open your mail program with a new message."),
+        ("portal_inhibit", "Keep screen awake", "Let the app stop the screen from sleeping or locking."),
+        ("portal_network", "Network state", "Let the app ask whether you are online and which proxy to use."),
         ("portal_screenshot", "Screenshots",
-         "Let the app ask the desktop for a screenshot. Needs Notifications and portals. The desktop shows its own prompt."),
+         "Let the app ask the desktop for a screenshot. The desktop shows its own prompt."),
         ("portal_screencast", "Screen sharing",
-         "Let the app ask to share your screen or a window (Discord, Teams, Slack). Needs Notifications and portals. "
+         "Let the app ask to share your screen or a window (Discord, Teams, Slack). "
          "The desktop shows its own picker."),
         ("tray", "Tray icon and media keys", "Show a tray icon and answer media keys (needs xdg-dbus-proxy)"),
         ("theme", "Your fonts and themes", "Read-only access to your installed fonts, icons and themes")]),

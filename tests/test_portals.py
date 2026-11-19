@@ -441,7 +441,7 @@ class GuiInstallFlow(unittest.TestCase):
         """Greying a switch row with set_sensitive also greys the undo button inside it, so a row holding an override must stay
         usable, and on_sw must still refuse to turn it on while it is blocked."""
         s = self.gui()
-        self.assertIn('sw.set_sensitive(not why or eff(key) or key in R["s"])', s)
+        self.assertIn('sw.set_sensitive(not why or key in R["s"] or (eff(key) and key == "wayland_strict"))', s)
         self.assertIn("block[0] = why_not", s)
         self.assertIn("why = block[0]()", s)
 
