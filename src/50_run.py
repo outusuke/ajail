@@ -67,11 +67,12 @@ def launch(name, root, cfg, extra, source=None, once=False):
         die("'Keep localhost private' needs pasta: " + install_hint("passt") + ". Or turn that option off for this app.")
     sweep_runtime()
     bus = start_bus(cfg, name)
+    a11y = start_a11y(name) if cfg["a11y"] else None      # a screen reader reads the app over its own bus; works without portals
     sec = seccomp_file(cfg["harden"])
     if sec is None and platform.machine() not in ("x86_64", "aarch64"):
         warn(f"no system-call filter for the {platform.machine()} architecture; running without it", name)
     elif sec is None:                             # a filter exists for this CPU but could not be made: never run without it silently
-        stop_bus(bus)
+        stop_bus(bus); stop_bus(a11y)
         die("could not create the system-call filter (see the log); not starting the app without it")
     secpath, gset = None, None
     wd = work_dir(); gen = make_files(cfg, wd, name)
@@ -105,7 +106,8 @@ def launch(name, root, cfg, extra, source=None, once=False):
             inst, infopath = None, None
     infofd = (INFO_FD if priv else infof.fileno()) if infof else None
     inner = bwrap_args(name, root, cfg, ["/app/AppRun"] + extra, bus[2] if bus else None,
-                       secfd, forward_files(extra), gen, gset, wl.path if wl else None, infofd)
+                       secfd, forward_files(extra), gen, gset, wl.path if wl else None, infofd,
+                       a11y[2] if a11y else None)
     cmd = limit_prefix(cfg, name) + (net_wrap(inner, secpath, infopath if infof else None) if priv else inner)
     if infof and priv: infof.close()
     on = ",".join(k for k in DEFAULTS if cfg[k])
@@ -169,7 +171,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
     if t2: t2.start()
     rc = p.wait(); t.join(2)
     if t2: t2.join(2)
-    stop_bus(bus)
+    stop_bus(bus); stop_bus(a11y)
     if infof and not infof.closed: infof.close()
     if inst: shutil.rmtree(inst, ignore_errors=True)
     if wl: wl.close()

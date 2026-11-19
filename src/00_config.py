@@ -31,7 +31,7 @@ ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch
 
 # Permission defaults. Keep in sync with DEFAULTS in ajail-gui. None means automatic: wayland_strict is on where the
 # compositor can make a restricted socket, off where it can't (launch decides).
-DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "a11y": 0, "gnome_shell": 0, "gnome_shell_manage": 0, "kde": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0, "single_instance": 0,
             "portal_screenshot": 1, "portal_screencast": 1,
@@ -49,6 +49,7 @@ EXTRA_PORTALS = ("Location", "GlobalShortcuts", "RemoteDesktop", "InputCapture",
 XDG_DEFAULT = {"download": "Downloads", "documents": "Documents", "pictures": "Pictures",
                "music": "Music", "videos": "Videos", "desktop": "Desktop"}
 THEME = [".local/share/fonts", ".fonts", ".local/share/icons", ".icons", ".local/share/themes", ".themes",
+         ".config/gtk-3.0/colors.css", ".config/gtk-4.0/colors.css",      # KDE's GTK theme reads its colors from here, or it does not parse
          ".config/kdeglobals", ".config/kdedefaults", ".local/share/color-schemes"]      # KDE: colors, icon theme, fonts
 OUTSIDE = ("/mnt/", "/media/", f"/run/media/{USER}/")
 # Blocked syscalls: kexec_load kexec_file_load perf_event_open bpf syslog uselib acct quotactl add_key
@@ -69,6 +70,10 @@ COMPAT_ENV = ("WGPU_BACKEND", "WGPU_ADAPTER_NAME", "WGPU_POWER_PREF", "ICED_BACK
               "__NV_PRIME_RENDER_OFFLOAD", "DRI_PRIME", "SDL_VIDEODRIVER", "SDL_AUDIODRIVER", "QT_QPA_PLATFORM",
               "QT_QPA_PLATFORMTHEME", "QT_SCALE_FACTOR", "GDK_BACKEND", "GDK_SCALE", "MOZ_ENABLE_WAYLAND")
 COMPAT_ENV_PREFIXES = ("MESA_", "RADV_")
+# Screen reader (a11y=1). AT_SPI_BUS_ADDRESS (where the app finds the accessibility bus) is set by ajail. These two make toolkits that would
+# otherwise ask the desktop whether a screen reader is on (they can't reach it from the sandbox) turn their accessibility support on: Qt, and
+# Firefox and other GNOME programs.
+A11Y_ENV = {"QT_LINUX_ACCESSIBILITY_ALWAYS_ON": "1", "GNOME_ACCESSIBILITY": "1"}
 LEGACY_FLAGS ={"--net=none": ("net", 0), "--nosound": ("sound", 0), "--no3d": ("gpu", 0), "--x11": ("x11", 1)}
 
 # Install hints in error messages. Only families where the packages ajail asks for (bubblewrap, squashfs-tools,

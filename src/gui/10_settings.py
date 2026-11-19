@@ -311,14 +311,34 @@ def effective_switches(G, A):
     """The switch values an app runs with: built-in defaults, then default.conf, then the app's own file."""
     return {**DEFAULTS, **G["s"], **(A["s"] if A else {})}
 
-def last_run(lines):
-    """(lines of the most recent run, its exit code or None). A run starts at a START line and ends at an EXIT line."""
-    start = 0
+def desktop_hidden(key, on, desktop=None):
+    """True if KEY is for another desktop than the one running (XDG_CURRENT_DESKTOP, e.g. "KDE" or "ubuntu:GNOME") and is not ON.
+    Nothing is hidden when the desktop is not GNOME or KDE or is not known, and a switch that is on always stays visible, so it can be turned off."""
+    want = DESKTOP_ONLY.get(key)
+    have = {w.upper() for w in re.split(r"[:;]", os.environ.get("XDG_CURRENT_DESKTOP", "") if desktop is None else desktop)} & {"GNOME", "KDE"}
+    return bool(want and have and want not in have and not on)
+
+def folded_desktops(keys):
+    """The desktops (as DESKTOP_ONLY names them) that have more than DESKTOP_FOLD of KEYS, the rows that are shown. Few rows are easier to reach left open."""
+    count = {}
+    for k in keys:
+        if k in DESKTOP_ONLY: count[DESKTOP_ONLY[k]] = count.get(DESKTOP_ONLY[k], 0) + 1
+    return {d for d, n in count.items() if n > DESKTOP_FOLD}
+
+def last_start(lines):
+    """Index of the most recent START line, or -1 if there is none."""
     for i in range(len(lines) - 1, -1, -1):
         if "] START allow=[" in lines[i]:
-            start = i + 1
-            break
-    run_lines = lines[start:]
+            return i
+    return -1
+
+def latest_run_lines(lines):
+    """The most recent run with its START line: from the last START to the end (everything, when no START is logged)."""
+    return lines[max(last_start(lines), 0):]
+
+def last_run(lines):
+    """(lines of the most recent run, its exit code or None). A run starts at a START line and ends at an EXIT line."""
+    run_lines = lines[last_start(lines) + 1:]
     code = None
     for ln in reversed(run_lines):
         m = re.search(r"\] EXIT code=(-?\d+)", ln)
@@ -374,3 +394,45 @@ def log_line_parts(line):
             kind = k
             break
     return ts or "", name or "", body, kind, nl
+
+START_RE = re.compile(r"^START allow=\[([^\]]*)\] limits=\[([^\]]*)\]")
+RULE = "\u2500" * 32
+
+def switch_title(key):
+    """What the log calls a switch: its title in the settings window, else its key."""
+    for _g, _d, items in SECTIONS:
+        for k, t, _s in items:
+            if k == key: return t
+    return key
+
+def start_changes(allowed, limits=""):
+    """What a START line says, shortened to the switches that differ from the built-in defaults: "+X11 -Internet", or "(defaults)".
+    ALLOWED are the names of the switches that were on; LIMITS is the limits text of the line, shown only when something is limited.
+    wayland_strict has no fixed default (it is automatic), so it is left out."""
+    on = set(allowed)
+    diff = [f"+{switch_title(k)}" for k, d in DEFAULTS.items() if d is not None and k in on and not d]
+    diff += [f"-{switch_title(k)}" for k, d in DEFAULTS.items() if d and k not in on]
+    if limits: diff.append(f"limits {limits}")
+    return " ".join(diff) or "(defaults)"
+
+def short_ts(ts, today):
+    """A timestamp "[2026-11-19 10:41:00] " without its date when it is TODAY's ("YYYY-MM-DD")."""
+    return "[" + ts[len(today) + 2:] if ts.startswith(f"[{today} ") else ts
+
+def log_rows(lines, today=None):
+    """LINES laid out for the log page: one row per line, each a list of (text, tag) chunks, tag "" for plain text, without the newline.
+    Today's timestamps lose their date, a START line shows only what differs from the defaults (dimmed), and a rule
+    comes before every run except the first row, so runs do not run together."""
+    today = today or time.strftime("%F")
+    rows = []
+    for line in lines:
+        ts, name, body, kind, _nl = log_line_parts(line)
+        chunks = [(short_ts(ts, today), "ts"), (name, "name")]
+        m = START_RE.match(body)
+        if m:
+            if rows: rows.append([(RULE, "dim")])
+            chunks += [("START", "info"), (" " + start_changes([k for k in m.group(1).split(",") if k], m.group(2)), "dim")]
+        else:
+            chunks.append((body, kind))
+        rows.append([c for c in chunks if c[0]])
+    return rows

@@ -3,7 +3,7 @@
 # ajail-gui - GTK4 + libadwaita front-end for ajail (a Flatseal-style permission editor)
 # ======== 00_config: Configuration: paths, permission defaults and labels, UI text tables. Data only.
 
-import errno, json, os, pwd, re, signal, shutil, subprocess, sys, threading, types
+import errno, json, os, pwd, re, signal, shutil, subprocess, sys, threading, time, types
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -29,7 +29,7 @@ OUTSIDE = ("/mnt/", "/media/", f"/run/media/{USER}/")
 os.makedirs(APPS, exist_ok=True)
 
 # Keep in sync with DEFAULTS in ajail.
-DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "a11y": 0, "gnome_shell": 0, "gnome_shell_manage": 0, "kde": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0, "single_instance": 0,
             "portal_screenshot": 1, "portal_screencast": 1,
@@ -55,8 +55,13 @@ XDG =[("download", "Downloads"), ("documents", "Documents"), ("pictures", "Pictu
 MODES = ["No access", "Read-only", "Read & write"]
 LABEL = {"net": "Internet", "sound": "Audio", "gpu": "Graphics", "camera": "Camera",
          "input": "Input devices", "x11": "X11", "ssh_agent": "SSH agent", "printing": "Printing",
-         "compat_env": "Graphics variables"}
+         "compat_env": "Graphics variables", "a11y": "Screen reader", "gnome_shell": "GNOME Shell extensions", "kde": "KDE Plasma integration"}
 # Basic portals that stay in one collapsed row, "More desktop portals" (they are on by default and seldom need a change).
+# Switches that only make sense on one desktop: switch -> the desktop it is for (as XDG_CURRENT_DESKTOP names it). They are hidden on the other
+# desktop (see desktop_hidden). A desktop with many rows gets a collapsed row of its own, named by DESKTOP_NAMES (see folded_desktops).
+DESKTOP_NAMES = {"GNOME": "GNOME Shell", "KDE": "KDE Plasma"}
+DESKTOP_ONLY = {"gnome_shell": "GNOME", "gnome_shell_manage": "GNOME", "kde": "KDE"}
+DESKTOP_FOLD = 3      # a desktop with more rows than this gets an expander of its own; with fewer they stay at the top level
 ADVANCED = ("portal_notification", "portal_openuri", "portal_print", "portal_trash", "portal_email", "portal_inhibit", "portal_network")
 
 SECTIONS = [
@@ -99,6 +104,13 @@ SECTIONS = [
          "Let the app ask to share your screen or a window (Discord, Teams, Slack). "
          "The desktop shows its own picker."),
         ("tray", "Tray icon and media keys", "Show a tray icon and answer media keys (needs xdg-dbus-proxy)"),
+        ("a11y", "Screen reader support", "Let a screen reader such as Orca read the app (needs xdg-dbus-proxy)"),
+        ("gnome_shell", "GNOME Shell integration",
+         "Let the browser's GNOME Shell connector list and install extensions (the Shell asks you first; needs xdg-dbus-proxy)"),
+        ("gnome_shell_manage", "Manage GNOME Shell extensions",
+         "Also let it enable, disable and uninstall extensions (needs GNOME Shell integration)"),
+        ("kde", "KDE Plasma integration",
+         "Let the browser's Plasma integration show downloads as Plasma jobs, answer KRunner and the media controls, and keep the computer awake while it downloads (needs xdg-dbus-proxy)"),
         ("theme", "Your fonts and themes", "Read-only access to your installed fonts, icons and themes")]),
     ("Hardening", None, [
         ("tmp_home", "Temporary home",
@@ -430,14 +442,34 @@ def effective_switches(G, A):
     """The switch values an app runs with: built-in defaults, then default.conf, then the app's own file."""
     return {**DEFAULTS, **G["s"], **(A["s"] if A else {})}
 
-def last_run(lines):
-    """(lines of the most recent run, its exit code or None). A run starts at a START line and ends at an EXIT line."""
-    start = 0
+def desktop_hidden(key, on, desktop=None):
+    """True if KEY is for another desktop than the one running (XDG_CURRENT_DESKTOP, e.g. "KDE" or "ubuntu:GNOME") and is not ON.
+    Nothing is hidden when the desktop is not GNOME or KDE or is not known, and a switch that is on always stays visible, so it can be turned off."""
+    want = DESKTOP_ONLY.get(key)
+    have = {w.upper() for w in re.split(r"[:;]", os.environ.get("XDG_CURRENT_DESKTOP", "") if desktop is None else desktop)} & {"GNOME", "KDE"}
+    return bool(want and have and want not in have and not on)
+
+def folded_desktops(keys):
+    """The desktops (as DESKTOP_ONLY names them) that have more than DESKTOP_FOLD of KEYS, the rows that are shown. Few rows are easier to reach left open."""
+    count = {}
+    for k in keys:
+        if k in DESKTOP_ONLY: count[DESKTOP_ONLY[k]] = count.get(DESKTOP_ONLY[k], 0) + 1
+    return {d for d, n in count.items() if n > DESKTOP_FOLD}
+
+def last_start(lines):
+    """Index of the most recent START line, or -1 if there is none."""
     for i in range(len(lines) - 1, -1, -1):
         if "] START allow=[" in lines[i]:
-            start = i + 1
-            break
-    run_lines = lines[start:]
+            return i
+    return -1
+
+def latest_run_lines(lines):
+    """The most recent run with its START line: from the last START to the end (everything, when no START is logged)."""
+    return lines[max(last_start(lines), 0):]
+
+def last_run(lines):
+    """(lines of the most recent run, its exit code or None). A run starts at a START line and ends at an EXIT line."""
+    run_lines = lines[last_start(lines) + 1:]
     code = None
     for ln in reversed(run_lines):
         m = re.search(r"\] EXIT code=(-?\d+)", ln)
@@ -493,6 +525,48 @@ def log_line_parts(line):
             kind = k
             break
     return ts or "", name or "", body, kind, nl
+
+START_RE = re.compile(r"^START allow=\[([^\]]*)\] limits=\[([^\]]*)\]")
+RULE = "\u2500" * 32
+
+def switch_title(key):
+    """What the log calls a switch: its title in the settings window, else its key."""
+    for _g, _d, items in SECTIONS:
+        for k, t, _s in items:
+            if k == key: return t
+    return key
+
+def start_changes(allowed, limits=""):
+    """What a START line says, shortened to the switches that differ from the built-in defaults: "+X11 -Internet", or "(defaults)".
+    ALLOWED are the names of the switches that were on; LIMITS is the limits text of the line, shown only when something is limited.
+    wayland_strict has no fixed default (it is automatic), so it is left out."""
+    on = set(allowed)
+    diff = [f"+{switch_title(k)}" for k, d in DEFAULTS.items() if d is not None and k in on and not d]
+    diff += [f"-{switch_title(k)}" for k, d in DEFAULTS.items() if d and k not in on]
+    if limits: diff.append(f"limits {limits}")
+    return " ".join(diff) or "(defaults)"
+
+def short_ts(ts, today):
+    """A timestamp "[2026-11-19 10:41:00] " without its date when it is TODAY's ("YYYY-MM-DD")."""
+    return "[" + ts[len(today) + 2:] if ts.startswith(f"[{today} ") else ts
+
+def log_rows(lines, today=None):
+    """LINES laid out for the log page: one row per line, each a list of (text, tag) chunks, tag "" for plain text, without the newline.
+    Today's timestamps lose their date, a START line shows only what differs from the defaults (dimmed), and a rule
+    comes before every run except the first row, so runs do not run together."""
+    today = today or time.strftime("%F")
+    rows = []
+    for line in lines:
+        ts, name, body, kind, _nl = log_line_parts(line)
+        chunks = [(short_ts(ts, today), "ts"), (name, "name")]
+        m = START_RE.match(body)
+        if m:
+            if rows: rows.append([(RULE, "dim")])
+            chunks += [("START", "info"), (" " + start_changes([k for k in m.group(1).split(",") if k], m.group(2)), "dim")]
+        else:
+            chunks.append((body, kind))
+        rows.append([c for c in chunks if c[0]])
+    return rows
 
 
 # ======== 20_files: Destructive file operations: trash an app's data, forget an app.
@@ -1357,9 +1431,10 @@ class Win(Adw.ApplicationWindow):
             rb.connect("clicked", on_reset)
             marks.append(lambda: rb.set_visible(key in R["s"]))
             rb.set_visible(key in R["s"])
-            if key == "wayland_strict" or key.startswith("portal_"):
+            if key == "wayland_strict" or key == "gnome_shell_manage" or key.startswith("portal_"):
                 def why_not():
                     if key.startswith("portal_"): return "" if eff("portals") else "Turn on \u201cDesktop portals\u201d first."
+                    if key == "gnome_shell_manage": return "" if eff("gnome_shell") else "Turn on \u201cGNOME Shell integration\u201d first."
                     return ("Your desktop can't restrict apps (it lacks the wp_security_context_v1 Wayland protocol), so this only turns Wayland off."
                             if not wayland_restricted() else "Turn on Wayland first." if not eff("wayland") else "")
                 block[0] = why_not
@@ -1406,14 +1481,29 @@ class Win(Adw.ApplicationWindow):
         for gtitle, desc, items in SECTIONS:
             g = Adw.PreferencesGroup(title=gtitle, description=desc or "")
             more = None
+            fold = folded_desktops([k for k, _t, _s in items if not desktop_hidden(k, eff(k))])
+            boxes, names = {}, {}      # a desktop's collapsed row by title, and the titles of the rows in it
             for key, t, sub in items:
-                if key in ADVANCED:      # one collapsed row, "More desktop portals"
+                if desktop_hidden(key, eff(key)):      # the GNOME Shell rows on KDE, the KDE row on GNOME (one that is on stays)
+                    continue
+                if key in DESKTOP_ONLY and DESKTOP_ONLY[key] in fold:      # a desktop with many rows: one collapsed row
+                    box = DESKTOP_NAMES[DESKTOP_ONLY[key]]
+                    if box not in boxes:
+                        boxes[box] = Adw.ExpanderRow(title=box)
+                        g.add(boxes[box])
+                    add_switch(types.SimpleNamespace(add=boxes[box].add_row), key, t, sub)
+                    names.setdefault(box, []).append(t)
+                    if eff(key):
+                        boxes[box].set_expanded(True)      # a switch that is on never hides behind a closed row
+                elif key in ADVANCED:      # one collapsed row, "More desktop portals"
                     if more is None:
                         more = Adw.ExpanderRow(title="More desktop portals", subtitle="Notifications, links, printing, trash, email, keep awake, network state, location, shortcuts, wallpaper, launchers, remote control, secrets, background")
                         g.add(more)
                     add_switch(types.SimpleNamespace(add=more.add_row), key, t, sub)
                 else:
                     add_switch(g, key, t, sub)
+            for box, titles in names.items():
+                boxes[box].set_subtitle(", ".join(titles))      # built from the rows, so it can't go stale
             if more is not None:      # the opt-in portals (off by default) share the collapsed row
                 for pname in EXTRA_PORTALS:
                     more.add_row(portal_row(pname))
@@ -1837,6 +1927,9 @@ class Win(Adw.ApplicationWindow):
 
         lg = Adw.PreferencesGroup(title="Recent activity" + (f" · {scope}" if scope else ""),
                                   description="Errors from apps appear here. Paste them when asking for help.")
+        everything = [False]      # the latest run only, until "Show all"
+        more = Gtk.Button(valign=Gtk.Align.CENTER)
+        lg.set_header_suffix(more)
         tv = Gtk.TextView(editable=False, cursor_visible=False, monospace=True,
                           wrap_mode=Gtk.WrapMode.WORD_CHAR, left_margin=8, right_margin=8,
                           top_margin=8, bottom_margin=8)
@@ -1864,14 +1957,24 @@ class Win(Adw.ApplicationWindow):
 
         def fill_log(lines):
             buf.set_text("")
-            for line in lines:
-                ts, name, body, kind, nl = log_line_parts(line)
-                for text, tag in ((ts, "ts"), (name, "name"), (body + nl, kind)):
-                    if text:
-                        if tag:
-                            buf.insert_with_tags(buf.get_end_iter(), text, tags[tag])
-                        else:
-                            buf.insert(buf.get_end_iter(), text)
+            rows = log_rows(lines)
+            for i, row in enumerate(rows):
+                for text, tag in row + ([("\n", "")] if i < len(rows) - 1 else []):
+                    if tag:
+                        buf.insert_with_tags(buf.get_end_iter(), text, tags[tag])
+                    else:
+                        buf.insert(buf.get_end_iter(), text)
+
+        cache = [[]]      # the lines of the log (this app's, on an app's page), so "Show all" needn't run the health check again
+
+        def show_log(lines):
+            more.set_label("Latest run only" if everything[0] else "Show all")
+            more.set_visible(len(lines) > len(latest_run_lines(lines)))      # nothing more to show when the latest run is everything
+            shown = (lines if everything[0] else latest_run_lines(lines))[-200:]
+            if shown:
+                fill_log(shown)
+            else:
+                buf.set_text("Nothing logged yet." if os.path.exists(LOG) else "No launches logged yet.")
 
         paint()
         Adw.StyleManager.get_default().connect("notify::dark", paint)
@@ -1883,14 +1986,17 @@ class Win(Adw.ApplicationWindow):
                 lines = open(LOG, errors="replace").readlines()
                 if scope:
                     lines = [l for l in lines if f"[{scope}]" in l]
-                shown = lines[-200:]
             except OSError:
-                lines, shown = [], []
-            if shown:
-                fill_log(shown)
-            else:
-                buf.set_text("Nothing logged yet." if os.path.exists(LOG) else "No launches logged yet.")
+                lines = []
+            cache[0] = lines
+            show_log(lines)
             show_hints(lines)
+
+        def toggle(*_):
+            everything[0] = not everything[0]
+            show_log(cache[0])
+
+        more.connect("clicked", toggle)
 
         header = Adw.HeaderBar()
         rb = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh")

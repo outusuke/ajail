@@ -3,7 +3,7 @@
 # ajail-gui - GTK4 + libadwaita front-end for ajail (a Flatseal-style permission editor)
 # ======== 00_config: Configuration: paths, permission defaults and labels, UI text tables. Data only.
 
-import errno, json, os, pwd, re, signal, shutil, subprocess, sys, threading, types
+import errno, json, os, pwd, re, signal, shutil, subprocess, sys, threading, time, types
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -29,7 +29,7 @@ OUTSIDE = ("/mnt/", "/media/", f"/run/media/{USER}/")
 os.makedirs(APPS, exist_ok=True)
 
 # Keep in sync with DEFAULTS in ajail.
-DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "camera": 0,
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "a11y": 0, "gnome_shell": 0, "gnome_shell_manage": 0, "kde": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0, "single_instance": 0,
             "portal_screenshot": 1, "portal_screencast": 1,
@@ -55,8 +55,13 @@ XDG =[("download", "Downloads"), ("documents", "Documents"), ("pictures", "Pictu
 MODES = ["No access", "Read-only", "Read & write"]
 LABEL = {"net": "Internet", "sound": "Audio", "gpu": "Graphics", "camera": "Camera",
          "input": "Input devices", "x11": "X11", "ssh_agent": "SSH agent", "printing": "Printing",
-         "compat_env": "Graphics variables"}
+         "compat_env": "Graphics variables", "a11y": "Screen reader", "gnome_shell": "GNOME Shell extensions", "kde": "KDE Plasma integration"}
 # Basic portals that stay in one collapsed row, "More desktop portals" (they are on by default and seldom need a change).
+# Switches that only make sense on one desktop: switch -> the desktop it is for (as XDG_CURRENT_DESKTOP names it). They are hidden on the other
+# desktop (see desktop_hidden). A desktop with many rows gets a collapsed row of its own, named by DESKTOP_NAMES (see folded_desktops).
+DESKTOP_NAMES = {"GNOME": "GNOME Shell", "KDE": "KDE Plasma"}
+DESKTOP_ONLY = {"gnome_shell": "GNOME", "gnome_shell_manage": "GNOME", "kde": "KDE"}
+DESKTOP_FOLD = 3      # a desktop with more rows than this gets an expander of its own; with fewer they stay at the top level
 ADVANCED = ("portal_notification", "portal_openuri", "portal_print", "portal_trash", "portal_email", "portal_inhibit", "portal_network")
 
 SECTIONS = [
@@ -99,6 +104,13 @@ SECTIONS = [
          "Let the app ask to share your screen or a window (Discord, Teams, Slack). "
          "The desktop shows its own picker."),
         ("tray", "Tray icon and media keys", "Show a tray icon and answer media keys (needs xdg-dbus-proxy)"),
+        ("a11y", "Screen reader support", "Let a screen reader such as Orca read the app (needs xdg-dbus-proxy)"),
+        ("gnome_shell", "GNOME Shell integration",
+         "Let the browser's GNOME Shell connector list and install extensions (the Shell asks you first; needs xdg-dbus-proxy)"),
+        ("gnome_shell_manage", "Manage GNOME Shell extensions",
+         "Also let it enable, disable and uninstall extensions (needs GNOME Shell integration)"),
+        ("kde", "KDE Plasma integration",
+         "Let the browser's Plasma integration show downloads as Plasma jobs, answer KRunner and the media controls, and keep the computer awake while it downloads (needs xdg-dbus-proxy)"),
         ("theme", "Your fonts and themes", "Read-only access to your installed fonts, icons and themes")]),
     ("Hardening", None, [
         ("tmp_home", "Temporary home",

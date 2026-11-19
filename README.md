@@ -28,7 +28,7 @@ sudo install -Dm644 completions/ajail.fish /usr/local/share/fish/vendor_completi
 ```
 
 **Required:** Linux, Wayland (X11 is a per-app option, and Wayland can be turned off per app), Python 3, `bubblewrap`, `squashfs-tools`.
-**Optional:** `xdg-dbus-proxy` (notifications, portals, tray), `passt` (`net_private`), `squashfuse` + `fuse3` (compressed installs), `systemd --user` (resource limits), `notify-send` (failure popups).
+**Optional:** `xdg-dbus-proxy` (notifications, portals, tray, `a11y`, `gnome_shell`, `kde`), `passt` (`net_private`), `squashfuse` + `fuse3` (compressed installs), `systemd --user` (resource limits), `notify-send` (failure popups).
 
 ## Usage
 
@@ -72,6 +72,10 @@ Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.confi
 | `x11` | X11 socket, in addition to Wayland. Weaker isolation. |
 | `ssh_agent` | Your SSH agent. The app can sign as you. |
 | `single_instance` | One private folder per app, shared by its sandboxes, with `TMPDIR` pointing at it, so a second launch finds the first (Chrome's singleton socket: opening a file in the running browser). `/tmp` stays private. |
+| `a11y` | A screen reader (Orca) can read the app, through a filtered accessibility bus (needs `xdg-dbus-proxy`). The app can publish its own widgets and ask who is listening, nothing else, so it can't read other apps or send keys and clicks. Works without `portals`. |
+| `gnome_shell` | The browser's GNOME Shell connector can list and install extensions, through the filtered session bus (needs `xdg-dbus-proxy`). Only `org.gnome.Shell.Extensions` at `/org/gnome/Shell` is reachable (the Shell asks you before installing); `Eval` stays closed. Works without `portals`. |
+| `gnome_shell_manage` | With `gnome_shell`: also enable, disable and uninstall extensions. |
+| `kde` | The browser's Plasma integration works: downloads show as Plasma jobs, KRunner finds tabs and history, media controls, keep awake while downloading, through the filtered session bus (needs `xdg-dbus-proxy`). Per-method rules only; KDE Connect stays closed. Works without `portals`. |
 | `privacy` | Minimal `/etc/passwd`, `/etc/group`, `/etc/hosts`; hostname `ajail`; the `Account` portal (your real name) is blocked. |
 
 ```ini

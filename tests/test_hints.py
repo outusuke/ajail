@@ -7,7 +7,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def load():
     tree = ast.parse(open(f"{HERE}/ajail-gui").read())
-    want_assign, want_def = {"DEFAULTS", "LOG_HINTS", "HINT_LISTS", "SELF", "_WL"}, {"effective_switches", "effective_lists", "last_run", "log_hints", "wayland_restricted", "resolved"}
+    want_assign, want_def = {"DEFAULTS", "LOG_HINTS", "HINT_LISTS", "SELF", "_WL"}, {"effective_switches", "effective_lists", "last_run", "last_start", "log_hints", "wayland_restricted", "resolved"}
     body = [n for n in tree.body
             if (isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name) and n.targets[0].id in want_assign)
             or (isinstance(n, ast.FunctionDef) and n.name in want_def)]

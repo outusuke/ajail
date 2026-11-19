@@ -159,7 +159,7 @@ def seccomp_file(harden=False):
         return None
 
 def want_bus(cfg):
-    return bool(cfg["portals"] or cfg["tray"] or cfg["talk"])
+    return bool(cfg["portals"] or cfg["tray"] or cfg["gnome_shell"] or cfg["kde"] or cfg["talk"])
 
 # Desktop portals an app may call when "Notifications and portals" is on. xdg-dbus-proxy runs on the host, so the
 # desktop sees the app as an ordinary unsandboxed program: a portal that is not listed here is simply unreachable.
@@ -208,6 +208,93 @@ TRAY_IDS = range(1, 4)
 def tray_rules():
     return ["--talk=org.kde.StatusNotifierWatcher"] + [
         f"--own=org.kde.StatusNotifierItem-{p}-{i}" for p in TRAY_PIDS for i in TRAY_IDS]
+
+# GNOME Shell integration (gnome_shell=1). The browser's connector (gnome-browser-connector, run by the browser inside the sandbox) talks to the
+# Shell as org.gnome.Shell at /org/gnome/Shell, interface org.gnome.Shell.Extensions. The rules name that interface and path only: org.gnome.Shell,
+# the interface of Eval, stays closed, and nothing is --talk. The connector is a GApplication that registers org.gnome.BrowserConnector on the session
+# bus when it starts and exits at once if the bus refuses, so that one name is --own: the app runs the connector itself, and no service outside the
+# sandbox is reached.
+GNOME_SHELL_OWN = "org.gnome.BrowserConnector"
+GNOME_SHELL = "org.gnome.Shell"
+GNOME_SHELL_PATH = "/org/gnome/Shell"
+GNOME_SHELL_EXT = "org.gnome.Shell.Extensions"
+GNOME_SHELL_CALLS = ("ListExtensions", "GetExtensionInfo", "GetExtensionErrors", "InstallRemoteExtension")     # InstallRemoteExtension: the Shell asks you before it installs
+GNOME_SHELL_MANAGE = ("EnableExtension", "DisableExtension", "UninstallExtension")                             # gnome_shell_manage=1 adds these
+
+def gnome_shell_rules(cfg):
+    """Let the app list, inspect and (after your confirmation in the Shell) install GNOME Shell extensions, and read the Shell's version.
+    gnome_shell_manage=1 adds enabling, disabling and uninstalling. Properties.Get and GetAll are read-only (no Set, so UserExtensionsEnabled can't
+    be changed); the broadcasts are the signals the connector listens to. Nothing else of org.gnome.Shell is reachable."""
+    if not cfg["gnome_shell"]: return []
+    p = GNOME_SHELL_PATH; props = "org.freedesktop.DBus.Properties"
+    calls = GNOME_SHELL_CALLS + (GNOME_SHELL_MANAGE if cfg["gnome_shell_manage"] else ())
+    return ([f"--own={GNOME_SHELL_OWN}"] + [f"--call={GNOME_SHELL}={GNOME_SHELL_EXT}.{m}@{p}" for m in calls]
+            + [f"--call={GNOME_SHELL}={props}.Get@{p}", f"--call={GNOME_SHELL}={props}.GetAll@{p}"]
+            + [f"--broadcast={GNOME_SHELL}={GNOME_SHELL_EXT}.{s}@{p}" for s in ("ExtensionStateChanged", "ExtensionStatusChanged")]
+            + [f"--broadcast={GNOME_SHELL}={props}.PropertiesChanged@{p}"])
+
+# KDE Plasma integration (kde=1). The browser's Plasma integration (plasma-browser-integration-host, run by the browser inside the sandbox) does four
+# things on the session bus, and nothing here is --talk: (1) it owns org.kde.plasma.browser_integration, where KRunner finds its tab and history
+# runners (KRunner calls in, so no rule is needed for that) and, when that name is taken, the same name with -PID; (2) it owns
+# org.mpris.MediaPlayer2.plasma-browser-integration (the same -PID fallback) for the media controls; (3) it shows downloads as progress jobs:
+# KUiServerV2JobTracker calls org.kde.JobViewServer.requestView, which answers with an object path /org/kde/notificationmanager/jobs/JobView_N,
+# then calls update and terminate on that object and listens to its cancel, suspend and resume signals; (4) with "inhibit suspend while downloading"
+# on in the extension (off in Chrome by default) it calls Inhibit and UnInhibit on org.freedesktop.PowerManagement.Inhibit (Powerdevil).
+# The host's other plugins stay closed: KDE Connect (it can run commands you saved), the Purpose share menu, and the old org.kde.kuiserver and JobViewV2.
+KDE_NAMES = ("org.kde.plasma.browser_integration", "org.mpris.MediaPlayer2.plasma-browser-integration")
+KDE_JOBS = "org.kde.JobViewServer"
+KDE_JOB_PATH = "/org/kde/notificationmanager/jobs/*"
+KDE_INHIBIT = "org.freedesktop.PowerManagement.Inhibit"
+KDE_INHIBIT_PATH = "/org/freedesktop/PowerManagement/Inhibit"
+
+def kde_rules(cfg):
+    """Let the browser's Plasma integration show downloads as jobs in Plasma, answer KRunner and the media controls, and keep the computer awake
+    while it downloads. Per-method rules and the host's own names only: org.kde.JobViewServer is never --talk, and the object paths are the ones Plasma hands out."""
+    if not cfg["kde"]: return []
+    own = [f"--own={n}{s}" for n in KDE_NAMES for s in [""] + [f"-{p}" for p in TRAY_PIDS]]
+    jobs = [f"--call={KDE_JOBS}=org.kde.JobViewServerV2.requestView@/JobViewServer"]
+    jobs += [f"--call={KDE_JOBS}=org.kde.JobViewV3.{m}@{KDE_JOB_PATH}" for m in ("update", "terminate")]
+    jobs += [f"--broadcast={KDE_JOBS}=org.kde.JobViewV3.{s}@{KDE_JOB_PATH}" for s in ("updateRequested", "suspendRequested", "resumeRequested", "cancelRequested")]
+    return own + jobs + [f"--call={KDE_INHIBIT}={KDE_INHIBIT}.{m}@{KDE_INHIBIT_PATH}" for m in ("Inhibit", "UnInhibit")]
+
+# Screen readers (Orca) don't read the screen: each app publishes its widgets on the accessibility bus, a second D-Bus apart from the session
+# bus, and the reader reads them there. With a11y=1 the app gets a filtered copy of that bus, with the rules Flatpak uses.
+A11Y_REGISTRY = "org.a11y.atspi.Registry"
+A11Y_ROOT = "/org/a11y/atspi/accessible/root"
+A11Y_REG_PATH = "/org/a11y/atspi/registry"
+A11Y_DEC_PATH = "/org/a11y/atspi/registry/deviceeventcontroller"
+
+def a11y_rules():
+    """What the accessibility proxy lets through. The app may plug its widgets into the registry (Socket.Embed), ask who listens for events
+    and keys, and hear that a reader started or stopped listening. There is no --talk, so it can't call anything else: not the other apps'
+    widgets, and not GenerateKeyboardEvent or the other calls that send keys and clicks. --sloppy-names: the peers on this bus use unique names."""
+    r = A11Y_REGISTRY
+    return ["--sloppy-names",
+            f"--call={r}=org.a11y.atspi.Socket.Embed@{A11Y_ROOT}",
+            f"--call={r}=org.a11y.atspi.Socket.Unembed@{A11Y_ROOT}",
+            f"--call={r}=org.a11y.atspi.Registry.GetRegisteredEvents@{A11Y_REG_PATH}",
+            f"--call={r}=org.a11y.atspi.DeviceEventController.GetKeystrokeListeners@{A11Y_DEC_PATH}",
+            f"--call={r}=org.a11y.atspi.DeviceEventController.GetDeviceEventListeners@{A11Y_DEC_PATH}",
+            f"--call={r}=org.a11y.atspi.DeviceEventController.NotifyListenersSync@{A11Y_DEC_PATH}",
+            f"--call={r}=org.a11y.atspi.DeviceEventController.NotifyListenersAsync@{A11Y_DEC_PATH}",
+            f"--broadcast={r}=org.a11y.atspi.Registry.EventListenerRegistered@{A11Y_REG_PATH}",      # so the app emits only what a reader asked for
+            f"--broadcast={r}=org.a11y.atspi.Registry.EventListenerDeregistered@{A11Y_REG_PATH}"]
+
+def a11y_bus_address():
+    """Where your accessibility bus is: $AT_SPI_BUS_ADDRESS if it is set, else what org.a11y.Bus says (asking also starts the bus, which a
+    session only starts when something needs it), else the socket in your runtime folder. None when there is none."""
+    addr = os.environ.get("AT_SPI_BUS_ADDRESS", "")
+    if addr.startswith("unix:"): return addr
+    ask = (("gdbus", ["gdbus", "call", "--session", "--dest", "org.a11y.Bus", "--object-path", "/org/a11y/bus", "--method", "org.a11y.Bus.GetAddress"]),
+           ("busctl", ["busctl", "--user", "call", "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress"]))
+    for tool, cmd in ask:
+        if not shutil.which(tool): continue
+        try: r = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError): continue
+        m = re.search(r"unix:[^'\"\s)]+", r.stdout) if r.returncode == 0 else None
+        if m: return m.group(0)
+    socks = sorted(glob.glob(f"{runtime_dir()}/at-spi/bus_*"))
+    return f"unix:path={socks[0]}" if socks else None
 
 def portal_app_id(name):
     """The application id the desktop portals know this app by: org.ajail.Run.NAME, with anything outside letters, digits and _
@@ -267,6 +354,7 @@ def start_bus(cfg, name):
         rules += portal_rules(cfg)
     if cfg["tray"]:
         rules += tray_rules() + ["--own=org.mpris.MediaPlayer2.*"]
+    rules += gnome_shell_rules(cfg) + kde_rules(cfg)
     rules += [f"--talk={n}" for n in cfg["talk"] if talk_ok(n)]
     for wrapped in ((True, False) if cfg["portals"] and shutil.which("bwrap") else (False,)):
         if wrapped:
@@ -298,6 +386,38 @@ def start_bus(cfg, name):
     _unlink_all(sock, info)
     print("ajail: could not start xdg-dbus-proxy; running without D-Bus", file=sys.stderr)
     log("xdg-dbus-proxy failed to start", name)
+    return None
+
+def start_a11y(name):
+    """Start xdg-dbus-proxy on your accessibility bus with the a11y rules. Returns (process, pipe, socket) like start_bus, or None (a warning says why)."""
+    px = shutil.which("xdg-dbus-proxy")
+    if not px:
+        warn("xdg-dbus-proxy missing, so a11y is off. Install: " + install_hint("xdg-dbus-proxy"), name)
+        return None
+    addr = a11y_bus_address()
+    if not addr:
+        warn("a11y=1, but your accessibility bus was not found (is at-spi2-core installed and a desktop session running?); running without it", name)
+        return None
+    d = f"{runtime_dir()}/ajail"
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    sock = f"{d}/{os.getpid()}.a11y"
+    r, w = os.pipe()
+    try:
+        proc = subprocess.Popen([px, f"--fd={w}", addr, sock, "--filter"] + a11y_rules(), pass_fds=[w],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e:
+        os.close(r); os.close(w)
+        _unlink_all(sock)
+        warn(f"could not start xdg-dbus-proxy ({e}); running without a11y", name)
+        return None
+    os.close(w)
+    ok = False
+    try: ok = bool(select.select([r], [], [], 3)[0]) and bool(os.read(r, 1))
+    except OSError: pass
+    b = (proc, r, sock)
+    if ok: return b
+    stop_bus(b)
+    warn("could not start xdg-dbus-proxy on the accessibility bus; running without a11y", name)
     return None
 
 def _unlink_all(*paths):
@@ -418,10 +538,11 @@ def scoped_xauth(src, disp):
         return None
     return dst
 
-def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, gset=None, wl=None, info=None):
+def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, gset=None, wl=None, info=None, a11y=None):
     """wl: a socket the compositor made for this app with a Wayland security context (see 25_wayland). With it the app gets
     that restricted socket in place of the real one. 'Wayland only if restricted' (wayland_strict) without it: no Wayland.
-    info: the descriptor bwrap writes its bwrapinfo.json to, which the portals need to find the app (see launch)."""
+    info: the descriptor bwrap writes its bwrapinfo.json to, which the portals need to find the app (see launch).
+    a11y: the socket of the filtered accessibility bus (see start_a11y), for a screen reader."""
     rt = runtime_dir()
     wp = wayland_path() if cfg["wayland"] else None
     if wp and cfg["wayland_strict"] and not wl: wp = None
@@ -506,6 +627,10 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
             if cfg.get("gtk_portal") != "0": env["GTK_USE_PORTAL"] = "1"      # "auto" is settled by the caller (settle_gtk_portal); unsettled it counts as on
             env["QT_QPA_PLATFORMTHEME"] = "xdgdesktopportal"
             if info is not None: a += ["--info-fd", str(info)]
+    if a11y and cfg["a11y"]:
+        a += ["--ro-bind", a11y, f"{rt}/at-spi/bus"]
+        env["AT_SPI_BUS_ADDRESS"] = f"unix:path={rt}/at-spi/bus"
+        env.update(A11Y_ENV)
     if cfg["portals"]:      # the files you pick in a chooser appear here, only this app's own (bind-try: nothing when there is no document portal)
         a += ["--bind-try", f"{rt}/doc/by-app/{portal_app_id(name)}", f"{rt}/doc"]
     if cfg["app_writable"]:

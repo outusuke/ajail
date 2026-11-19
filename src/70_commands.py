@@ -224,7 +224,7 @@ def cmd_check():
             "compositor has no wp_security_context_v1: apps get the full Wayland socket ('Wayland only if restricted' would turn Wayland off)")
     yes(os.path.exists("/dev/dri"), "GPU devices (/dev/dri) present", "no /dev/dri")
     if glob.glob("/dev/nvidia*"): line("OK", "NVIDIA devices will be shared when Graphics is on")
-    yes(shutil.which("xdg-dbus-proxy"), "xdg-dbus-proxy installed (notifications, portals, tray)",
+    yes(shutil.which("xdg-dbus-proxy"), "xdg-dbus-proxy installed (notifications, portals, tray, screen reader, GNOME Shell, KDE)",
         "xdg-dbus-proxy missing: " + install_hint("xdg-dbus-proxy"))
     yes(seccomp_file(), "seccomp filter available", "seccomp filter not available on this CPU architecture")
     yes(bwrap_has("--disable-userns"), "bubblewrap supports disabling nested sandboxes",

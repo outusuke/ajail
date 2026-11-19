@@ -708,9 +708,10 @@ class Win(Adw.ApplicationWindow):
             rb.connect("clicked", on_reset)
             marks.append(lambda: rb.set_visible(key in R["s"]))
             rb.set_visible(key in R["s"])
-            if key == "wayland_strict" or key.startswith("portal_"):
+            if key == "wayland_strict" or key == "gnome_shell_manage" or key.startswith("portal_"):
                 def why_not():
                     if key.startswith("portal_"): return "" if eff("portals") else "Turn on \u201cDesktop portals\u201d first."
+                    if key == "gnome_shell_manage": return "" if eff("gnome_shell") else "Turn on \u201cGNOME Shell integration\u201d first."
                     return ("Your desktop can't restrict apps (it lacks the wp_security_context_v1 Wayland protocol), so this only turns Wayland off."
                             if not wayland_restricted() else "Turn on Wayland first." if not eff("wayland") else "")
                 block[0] = why_not
@@ -757,14 +758,29 @@ class Win(Adw.ApplicationWindow):
         for gtitle, desc, items in SECTIONS:
             g = Adw.PreferencesGroup(title=gtitle, description=desc or "")
             more = None
+            fold = folded_desktops([k for k, _t, _s in items if not desktop_hidden(k, eff(k))])
+            boxes, names = {}, {}      # a desktop's collapsed row by title, and the titles of the rows in it
             for key, t, sub in items:
-                if key in ADVANCED:      # one collapsed row, "More desktop portals"
+                if desktop_hidden(key, eff(key)):      # the GNOME Shell rows on KDE, the KDE row on GNOME (one that is on stays)
+                    continue
+                if key in DESKTOP_ONLY and DESKTOP_ONLY[key] in fold:      # a desktop with many rows: one collapsed row
+                    box = DESKTOP_NAMES[DESKTOP_ONLY[key]]
+                    if box not in boxes:
+                        boxes[box] = Adw.ExpanderRow(title=box)
+                        g.add(boxes[box])
+                    add_switch(types.SimpleNamespace(add=boxes[box].add_row), key, t, sub)
+                    names.setdefault(box, []).append(t)
+                    if eff(key):
+                        boxes[box].set_expanded(True)      # a switch that is on never hides behind a closed row
+                elif key in ADVANCED:      # one collapsed row, "More desktop portals"
                     if more is None:
                         more = Adw.ExpanderRow(title="More desktop portals", subtitle="Notifications, links, printing, trash, email, keep awake, network state, location, shortcuts, wallpaper, launchers, remote control, secrets, background")
                         g.add(more)
                     add_switch(types.SimpleNamespace(add=more.add_row), key, t, sub)
                 else:
                     add_switch(g, key, t, sub)
+            for box, titles in names.items():
+                boxes[box].set_subtitle(", ".join(titles))      # built from the rows, so it can't go stale
             if more is not None:      # the opt-in portals (off by default) share the collapsed row
                 for pname in EXTRA_PORTALS:
                     more.add_row(portal_row(pname))
@@ -1188,6 +1204,9 @@ class Win(Adw.ApplicationWindow):
 
         lg = Adw.PreferencesGroup(title="Recent activity" + (f" · {scope}" if scope else ""),
                                   description="Errors from apps appear here. Paste them when asking for help.")
+        everything = [False]      # the latest run only, until "Show all"
+        more = Gtk.Button(valign=Gtk.Align.CENTER)
+        lg.set_header_suffix(more)
         tv = Gtk.TextView(editable=False, cursor_visible=False, monospace=True,
                           wrap_mode=Gtk.WrapMode.WORD_CHAR, left_margin=8, right_margin=8,
                           top_margin=8, bottom_margin=8)
@@ -1215,14 +1234,24 @@ class Win(Adw.ApplicationWindow):
 
         def fill_log(lines):
             buf.set_text("")
-            for line in lines:
-                ts, name, body, kind, nl = log_line_parts(line)
-                for text, tag in ((ts, "ts"), (name, "name"), (body + nl, kind)):
-                    if text:
-                        if tag:
-                            buf.insert_with_tags(buf.get_end_iter(), text, tags[tag])
-                        else:
-                            buf.insert(buf.get_end_iter(), text)
+            rows = log_rows(lines)
+            for i, row in enumerate(rows):
+                for text, tag in row + ([("\n", "")] if i < len(rows) - 1 else []):
+                    if tag:
+                        buf.insert_with_tags(buf.get_end_iter(), text, tags[tag])
+                    else:
+                        buf.insert(buf.get_end_iter(), text)
+
+        cache = [[]]      # the lines of the log (this app's, on an app's page), so "Show all" needn't run the health check again
+
+        def show_log(lines):
+            more.set_label("Latest run only" if everything[0] else "Show all")
+            more.set_visible(len(lines) > len(latest_run_lines(lines)))      # nothing more to show when the latest run is everything
+            shown = (lines if everything[0] else latest_run_lines(lines))[-200:]
+            if shown:
+                fill_log(shown)
+            else:
+                buf.set_text("Nothing logged yet." if os.path.exists(LOG) else "No launches logged yet.")
 
         paint()
         Adw.StyleManager.get_default().connect("notify::dark", paint)
@@ -1234,14 +1263,17 @@ class Win(Adw.ApplicationWindow):
                 lines = open(LOG, errors="replace").readlines()
                 if scope:
                     lines = [l for l in lines if f"[{scope}]" in l]
-                shown = lines[-200:]
             except OSError:
-                lines, shown = [], []
-            if shown:
-                fill_log(shown)
-            else:
-                buf.set_text("Nothing logged yet." if os.path.exists(LOG) else "No launches logged yet.")
+                lines = []
+            cache[0] = lines
+            show_log(lines)
             show_hints(lines)
+
+        def toggle(*_):
+            everything[0] = not everything[0]
+            show_log(cache[0])
+
+        more.connect("clicked", toggle)
 
         header = Adw.HeaderBar()
         rb = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh")
