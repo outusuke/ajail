@@ -81,13 +81,13 @@ def launch(name, root, cfg, extra, source=None, once=False):
         sec.seek(0)
         with open(secpath, "wb") as f: f.write(sec.read())
     secfd = (SEC_FD if secpath else None) if priv else (sec.fileno() if sec else None)
-    wl = None                                     # the restricted Wayland socket, where the compositor can make one
+    wl = None                                     # the restricted Wayland socket, where the compositor can make one; its app id is the launcher's id (ajail-NAME), which is how KDE finds the launcher
     wp = wayland_path() if cfg["wayland"] else None
     strict = cfg["wayland_strict"]                # None: not set anywhere, so on exactly where the compositor can restrict apps
     if wp:
         can = wl_supported(wp)
         if strict is None: strict = can
-        wl = wayland_context(wp, f"{runtime_dir()}/ajail/{os.getpid()}.wl", name, f"{name}-{os.getpid()}") if can else None
+        wl = wayland_context(wp, f"{runtime_dir()}/ajail/{os.getpid()}.wl", f"ajail-{name}", f"{name}-{os.getpid()}") if can else None
         if not wl and strict:
             warn("no restricted Wayland socket could be made for this app, and 'Wayland only if restricted' is on: Wayland is off for it", name)
     cfg = {**cfg, "wayland_strict": int(bool(strict)), "gtk_portal": settle_gtk_portal(cfg, name)}

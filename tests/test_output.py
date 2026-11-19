@@ -102,7 +102,7 @@ class LaunchOutput(unittest.TestCase):
                  wayland_context=lambda wp, sock, name, inst: seen.update(ctx=(wp, sock.endswith(f"/ajail/{os.getpid()}.wl"), name)) or Ctx())
         self.run_launch(False)
         self.assertEqual(seen["bw"][-2], "/rt/ajail/1.wl")      # then the portal info descriptor, None here
-        self.assertEqual(seen["ctx"], ("/rt/wayland-0", True, "Foo"))
+        self.assertEqual(seen["ctx"], ("/rt/wayland-0", True, "ajail-Foo"))      # the launcher's id, not the bare name
         self.assertTrue(seen["closed"])
 
     def test_launch_without_a_context_binds_the_real_socket_and_strict_says_why(self):
