@@ -13,7 +13,7 @@ def load_ajail():
 
 def load_gui():
     tree = ast.parse(open(f"{HERE}/ajail-gui").read())
-    names = {"DEFAULTS", "SECTIONS", "DESKTOP_ONLY", "DESKTOP_NAMES", "DESKTOP_FOLD", "START_RE", "RULE", "LOG_LINE_RE", "LOG_KINDS",
+    names = {"DEFAULTS", "SECTIONS", "DESKTOP_ONLY", "DESKTOP_NAMES", "DESKTOP_FOLD", "START_RE", "DIVIDER", "LOG_LINE_RE", "LOG_KINDS",
              "desktop_hidden", "folded_desktops", "last_start", "latest_run_lines", "last_run", "switch_title", "start_changes",
              "short_ts", "log_rows", "log_line_parts"}
     body = [n for n in tree.body
@@ -165,7 +165,7 @@ class LogPage(unittest.TestCase):
         text = ["".join(c for c, _t in r) for r in rows]
         self.assertTrue(text[0].startswith("[2026-11-18 09:00:00] "))
         self.assertTrue(any(t.startswith("[10:41:00] ") for t in text))
-        self.assertEqual(text.count(G["RULE"]), 1)                      # a rule before the second run only
+        self.assertEqual(text.count(G["DIVIDER"]), 1)                      # a rule before the second run only
         self.assertTrue(all("\n" not in t for t in text))
         self.assertIn("plain app output", text)
 
