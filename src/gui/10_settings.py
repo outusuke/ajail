@@ -396,7 +396,7 @@ def log_line_parts(line):
     return ts or "", name or "", body, kind, nl
 
 START_RE = re.compile(r"^START allow=\[([^\]]*)\] limits=\[([^\]]*)\]")
-RULE = "\u2500" * 32
+DIVIDER = "\u2500" * 32
 
 def switch_title(key):
     """What the log calls a switch: its title in the settings window, else its key."""
@@ -430,7 +430,7 @@ def log_rows(lines, today=None):
         chunks = [(short_ts(ts, today), "ts"), (name, "name")]
         m = START_RE.match(body)
         if m:
-            if rows: rows.append([(RULE, "dim")])
+            if rows: rows.append([(DIVIDER, "dim")])
             chunks += [("START", "info"), (" " + start_changes([k for k in m.group(1).split(",") if k], m.group(2)), "dim")]
         else:
             chunks.append((body, kind))
