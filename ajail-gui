@@ -38,7 +38,7 @@ NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}      # 0 = no limit
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
 # DEFAULT_PORTALS start on, the rest off. Keep in sync with ajail.
 EXTRA_PORTALS = ("Location", "GlobalShortcuts", "RemoteDesktop", "InputCapture", "Clipboard", "Wallpaper", "DynamicLauncher", "Secret", "Background", "Usb", "FileTransfer")
-DEFAULT_PORTALS = ("FileTransfer", "Usb", "Clipboard", "Location", "GlobalShortcuts", "Wallpaper")
+DEFAULT_PORTALS = ("FileTransfer", "Usb", "Clipboard", "Location", "GlobalShortcuts", "Wallpaper", "Secret")
 PORTAL_INFO = {      # name -> (switch title, description); must have exactly the EXTRA_PORTALS keys
     "Location": ("Location", "Let the app ask the desktop where you are."),
     "GlobalShortcuts": ("Global shortcuts", "Let the app register keyboard shortcuts that work in any window."),

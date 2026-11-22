@@ -98,12 +98,13 @@ class Rules(unittest.TestCase):
         self.assertFalse(any("portal.Desktop=org.freedesktop.portal.FileTransfer" in x for x in on))
 
     def test_default_portals_are_on_without_any_setting_and_the_others_are_not(self):
-        self.assertEqual(DEF, ["FileTransfer", "Usb", "Clipboard", "Location", "GlobalShortcuts", "Wallpaper"])
+        self.assertEqual(DEF, ["FileTransfer", "Usb", "Clipboard", "Location", "GlobalShortcuts", "Wallpaper", "Secret"])
         self.assertTrue(set(DEF) <= set(ALL))
         got = calls(A["portal_rules"](A["load_cfg"]("Foo")))
         self.assertTrue(set(DEF) <= got)
         for p in set(ALL) - set(DEF): self.assertNotIn(p, got, p)
-        for p in ("RemoteDesktop", "InputCapture", "Background", "DynamicLauncher", "Secret"): self.assertNotIn(p, DEF)
+        for p in ("RemoteDesktop", "InputCapture", "Background", "DynamicLauncher"): self.assertNotIn(p, DEF)
+        self.assertIn("Secret", DEF)
 
     def test_account_portal_is_dropped_with_privacy(self):
         self.assertIn("Account", calls(A["portal_rules"](cfg(privacy=0))))
@@ -184,11 +185,11 @@ class Config(unittest.TestCase):
         open(f"{self.d}/{rel}", "w").write(text)
 
     def test_parse_valid_and_invalid(self):
-        self.put("default.conf", "portal=Location\nportal=Bogus\nportal=location\nportal=\nportal=Secret\n")
+        self.put("default.conf", "portal=Location\nportal=Bogus\nportal=location\nportal=\nportal=DynamicLauncher\n")
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             d = A["parse_cfg"](f"{self.d}/default.conf")
-        self.assertEqual(d["portal"], ["Location", "Secret"])
+        self.assertEqual(d["portal"], ["Location", "DynamicLauncher"])
         self.assertIn("Bogus", err.getvalue()); self.assertIn("'location'", err.getvalue())
 
     def test_empty_cfg_has_portal(self):
@@ -198,16 +199,16 @@ class Config(unittest.TestCase):
         self.assertEqual(A["load_cfg"]("Foo")["portal"], DEF)
 
     def test_load_merges_default_and_app(self):
-        self.put("default.conf", "portal=Secret\n")
-        self.put("apps/Foo.conf", "portal=Background\nportal=Secret\n")
-        self.assertEqual(A["load_cfg"]("Foo")["portal"], DEF + ["Secret", "Background"])
-        self.assertEqual(A["load_cfg"]("Other")["portal"], DEF + ["Secret"])
+        self.put("default.conf", "portal=DynamicLauncher\n")
+        self.put("apps/Foo.conf", "portal=Background\nportal=DynamicLauncher\n")
+        self.assertEqual(A["load_cfg"]("Foo")["portal"], DEF + ["DynamicLauncher", "Background"])
+        self.assertEqual(A["load_cfg"]("Other")["portal"], DEF + ["DynamicLauncher"])
 
     def test_app_can_opt_out_of_default_portal(self):
-        self.put("default.conf", "portal=Secret\nportal=Background\n")
-        self.put("apps/Foo.conf", "portal=-Secret\nportal=-Location\n")
+        self.put("default.conf", "portal=DynamicLauncher\nportal=Background\n")
+        self.put("apps/Foo.conf", "portal=-DynamicLauncher\nportal=-Location\n")
         self.assertEqual(A["load_cfg"]("Foo")["portal"], [p for p in DEF if p != "Location"] + ["Background"])
-        self.assertEqual(A["load_cfg"]("Other")["portal"], DEF + ["Secret", "Background"])
+        self.assertEqual(A["load_cfg"]("Other")["portal"], DEF + ["DynamicLauncher", "Background"])
 
     def test_default_conf_can_switch_a_default_portal_off_and_an_app_back_on(self):
         self.put("default.conf", "portal=-FileTransfer\nportal=-Usb\n")
@@ -218,14 +219,14 @@ class Config(unittest.TestCase):
         self.assertFalse(any("portal.Documents" in x for x in A["portal_rules"](A["load_cfg"]("Other"))))
 
     def test_optout_order_and_edge_cases(self):
-        self.put("default.conf", "portal=Secret\nportal=-Background\n")
-        self.put("apps/A.conf", "portal=-Secret\nportal=Secret\n")      # later line wins
-        self.put("apps/B.conf", "portal=-Bogus\nportal=--Secret\nportal=-Background\n")
+        self.put("default.conf", "portal=DynamicLauncher\nportal=-Background\n")
+        self.put("apps/A.conf", "portal=-DynamicLauncher\nportal=DynamicLauncher\n")      # later line wins
+        self.put("apps/B.conf", "portal=-Bogus\nportal=--DynamicLauncher\nportal=-Background\n")
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            self.assertEqual(A["load_cfg"]("A")["portal"], DEF + ["Secret"])
-            self.assertEqual(A["load_cfg"]("B")["portal"], DEF + ["Secret"])    # opting out of an off portal is harmless
-        self.assertIn("-Bogus", err.getvalue()); self.assertIn("--Secret", err.getvalue())
+            self.assertEqual(A["load_cfg"]("A")["portal"], DEF + ["DynamicLauncher"])
+            self.assertEqual(A["load_cfg"]("B")["portal"], DEF + ["DynamicLauncher"])    # opting out of an off portal is harmless
+        self.assertIn("-Bogus", err.getvalue()); self.assertIn("--DynamicLauncher", err.getvalue())
 
     def test_optout_removes_rules(self):
         self.put("default.conf", "portal=Location\n")
