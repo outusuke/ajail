@@ -22,10 +22,10 @@ def cfg(**kw):
     return c
 
 def calls(rules):
-    """{interface: True} for every --call=org.freedesktop.portal.Desktop=org.freedesktop.portal.X.* rule."""
+    """{interface: True} for every --call=org.freedesktop.portal.Desktop=org.freedesktop.portal.X.* rule (X.*@PATH on Documents too)."""
     out = set()
     for r in rules:
-        m = re.fullmatch(r"--call=org\.freedesktop\.portal\.Desktop=org\.freedesktop\.portal\.(\w+)\.\*", r)
+        m = re.fullmatch(r"--call=org\.freedesktop\.portal\.(?:Desktop|Documents)=org\.freedesktop\.portal\.(\w+)\.\*(?:@\S+)?", r)
         if m: out.add(m.group(1))
     return out
 
@@ -78,6 +78,23 @@ class Rules(unittest.TestCase):
         self.assertNotIn("Background", calls(A["portal_rules"](cfg())))
         self.assertNotIn("Background", calls(A["portal_rules"](cfg(portal=["Secret"]))))
         self.assertIn("Background", calls(A["portal_rules"](cfg(portal=["Background"]))))
+
+    def test_usb_and_clipboard_portals_are_opt_in(self):
+        for p in ("Usb", "Clipboard"):
+            self.assertIn(p, ALL)
+            self.assertNotIn(p, A["PORTAL_BASIC"])
+            self.assertNotIn(p, calls(A["portal_rules"](cfg())))
+            self.assertIn(p, calls(A["portal_rules"](cfg(portal=[p]))))
+        self.assertNotIn("Clipboard", calls(A["portal_rules"](cfg(portal=["Usb"]))))
+
+    def test_file_transfer_portal_is_opt_in_and_narrow(self):
+        self.assertIn("FileTransfer", ALL)
+        self.assertFalse(any("portal.Documents" in x for x in A["portal_rules"](cfg())))
+        on = A["portal_rules"](cfg(portal=["FileTransfer"]))
+        self.assertIn("--see=org.freedesktop.portal.Documents", on)
+        self.assertIn("--call=org.freedesktop.portal.Documents=org.freedesktop.portal.FileTransfer.*@/org/freedesktop/portal/documents", on)
+        self.assertEqual(len([x for x in on if "portal.Documents" in x]), 2)
+        self.assertFalse(any("portal.Desktop=org.freedesktop.portal.FileTransfer" in x for x in on))
 
     def test_account_portal_is_dropped_with_privacy(self):
         self.assertIn("Account", calls(A["portal_rules"](cfg(privacy=0))))

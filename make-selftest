@@ -236,9 +236,8 @@ if bus and shutil.which("gdbus"):
                 "/org/freedesktop/Notifications", "--method", "org.freedesktop.Notifications.Notify",
                 "ajail-selftest", "0", "", "ajail self-test", "If you see this, notifications work.", "[]", "{}", "5000"])
     row(yn(rc == 0), "  Notifications", "popup sent" if rc == 0 else o[:70])
-    def portal(method, *args):
-        return sh(["gdbus", "call", "--session", "--dest", "org.freedesktop.portal.Desktop", "--object-path",
-                   "/org/freedesktop/portal/desktop", "--method", method, *args])
+    def portal(method, *args, dest="org.freedesktop.portal.Desktop", path="/org/freedesktop/portal/desktop"):
+        return sh(["gdbus", "call", "--session", "--dest", dest, "--object-path", path, "--method", method, *args])
     def portal_version(iface):
         rc, o = portal("org.freedesktop.DBus.Properties.Get", f"org.freedesktop.portal.{iface}", "version")
         m = re.search(r"uint32 (\d+)", o)
@@ -269,9 +268,12 @@ if bus and shutil.which("gdbus"):
                 ("RemoteDesktop", "CreateSession", "remote desktop", True), ("InputCapture", "CreateSession", "input capture", True),
                 ("Wallpaper", "SetWallpaperURI", "wallpaper", True), ("DynamicLauncher", "PrepareInstall", "dynamic launcher", True),
                 ("Secret", "RetrieveSecret", "secrets", True),
-                ("Background", "RequestBackground", "background apps", True)):
+                ("Background", "RequestBackground", "background apps", True),
+                ("Usb", "CreateSession", "USB devices", True), ("Clipboard", "RequestClipboard", "shared clipboard", True),
+                ("FileTransfer", "RetrieveFiles", "file drag and drop", True)):
             on = iface in enabled
-            rc, o = portal(f"org.freedesktop.portal.{iface}.{method}")
+            where = {"dest": "org.freedesktop.portal.Documents", "path": "/org/freedesktop/portal/documents"} if iface == "FileTransfer" else {}
+            rc, o = portal(f"org.freedesktop.portal.{iface}.{method}", **where)
             if "AccessDenied" in o or "not allowed" in o:
                 row("blocked", f"  Portal: {label}", "enabled in settings but blocked by the proxy" if on else "blocked by the proxy")
             elif "UnknownMethod" in o or "UnknownInterface" in o or "UnknownObject" in o:

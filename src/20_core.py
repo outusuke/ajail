@@ -165,10 +165,13 @@ def want_bus(cfg):
 # desktop sees the app as an ordinary unsandboxed program: a portal that is not listed here is simply unreachable.
 # Off unless asked for with portal=NAME (EXTRA_PORTALS): Location, GlobalShortcuts, RemoteDesktop (input injection),
 # InputCapture, Wallpaper, DynamicLauncher, Secret, Background (RequestBackground can register an autostart that runs
-# outside the sandbox). Never reachable: the Documents portal itself and anything else not listed; with portals on, the app
+# outside the sandbox), Usb, Clipboard (only with RemoteDesktop or InputCapture) and FileTransfer (drag and drop, served by the Documents portal).
+# Never reachable: the rest of the Documents portal and anything else not listed; with portals on, the app
 # sees only its own folder of picked files (doc/by-app/ID), see portal_app_id.
 # Camera follows the Camera permission; Screenshot and ScreenCast (both show the user a prompt) have their own switches.
 PORTAL_NAME = "org.freedesktop.portal.Desktop"
+PORTAL_DOCS_NAME = "org.freedesktop.portal.Documents"
+PORTAL_DOCS_PATH = "/org/freedesktop/portal/documents"
 PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "Inhibit", "Account",
                 "Email", "Trash", "NetworkMonitor", "ProxyResolver", "GameMode", "MemoryMonitor",
                 "PowerProfileMonitor", "Realtime")
@@ -189,9 +192,11 @@ def portal_rules(cfg):
     if cfg["camera"]: ifaces.append("Camera")
     if cfg["portal_screenshot"]: ifaces.append("Screenshot")
     if cfg["portal_screencast"]: ifaces.append("ScreenCast")
-    ifaces += [p for p in extra_portals(cfg) if p not in ifaces]
+    ifaces += [p for p in extra_portals(cfg) if p not in ifaces and p != "FileTransfer"]
     rules = (["--talk=org.freedesktop.Notifications"] if cfg.get("portal_notification", 1) else []) + [f"--see={PORTAL_NAME}"]
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.{i}.*" for i in ifaces]
+    if "FileTransfer" in extra_portals(cfg):
+        rules += [f"--see={PORTAL_DOCS_NAME}", f"--call={PORTAL_DOCS_NAME}=org.freedesktop.portal.FileTransfer.*@{PORTAL_DOCS_PATH}"]
     rules += [f"--call={PORTAL_NAME}=org.freedesktop.portal.Request.*@/org/freedesktop/portal/desktop/request/*",
               f"--call={PORTAL_NAME}=org.freedesktop.portal.Session.*@/org/freedesktop/portal/desktop/session/*",
               f"--call={PORTAL_NAME}=org.freedesktop.DBus.Properties.*@/org/freedesktop/portal/desktop",

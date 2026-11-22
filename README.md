@@ -118,7 +118,7 @@ Nothing else is passed: not `PATH`, tokens, keys, `SSH_AUTH_SOCK` or `DBUS_*`. `
 
 ### Opt-in portals
 
-`Location`, `GlobalShortcuts`, `RemoteDesktop`, `InputCapture`, `Wallpaper`, `DynamicLauncher`, `Secret` and `Background` are blocked unless enabled with `portal=NAME` (needs `portals=1`). `RemoteDesktop` and `InputCapture` can control or capture your keyboard and mouse; `Secret` can read the desktop's stored secrets; `Background` can register an autostart that runs outside the sandbox.
+`Location`, `GlobalShortcuts`, `RemoteDesktop`, `InputCapture`, `Wallpaper`, `DynamicLauncher`, `Secret`, `Background`, `Usb`, `Clipboard` and `FileTransfer` are blocked unless enabled with `portal=NAME` (needs `portals=1`). `Usb` lets an app ask for a USB device; `Clipboard` only works together with `RemoteDesktop` or `InputCapture`; `FileTransfer` lets an app receive files you drag in from other programs, and opens only that one interface of the Documents portal. `RemoteDesktop` and `InputCapture` can control or capture your keyboard and mouse; `Secret` can read the desktop's stored secrets; `Background` can register an autostart that runs outside the sandbox.
 
 ## Self-test
 
