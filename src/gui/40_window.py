@@ -734,6 +734,10 @@ class Win(Adw.ApplicationWindow):
                 elif p == "-" + pname: on = False
             return on
 
+        def portal_on(pname):
+            inherited = portal_state(G["portal"] if scope else [], pname in DEFAULT_PORTALS, pname)
+            return portal_state(R["portal"], inherited, pname)
+
         def portal_row(pname):
             ptitle, psub = PORTAL_INFO[pname]
             inherited = portal_state(G["portal"] if scope else [], pname in DEFAULT_PORTALS, pname)
@@ -754,6 +758,8 @@ class Win(Adw.ApplicationWindow):
                 on = bool(eff("portals"))
                 psw.set_sensitive(on or pname in R["portal"] or "-" + pname in R["portal"])
                 psw.set_tooltip_text(None if on else "Turn on \u201cDesktop portals\u201d first.")
+                if pname == "Clipboard":      # the portal does nothing without remote control, so the row only shows next to it
+                    psw.set_visible(portal_on("RemoteDesktop") or portal_on("InputCapture") or pname in R["portal"] or "-" + pname in R["portal"])
             marks.append(usable); usable()
             return psw
 

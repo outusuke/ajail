@@ -51,7 +51,7 @@ PORTAL_INFO = {      # name -> (switch title, description); must have exactly th
     "Background": ("Run in the background",
                    "Let the app ask to keep running when closed or to start at login. The autostart it registers runs outside the sandbox."),
     "Usb": ("USB devices", "Let the app ask to use a USB device. The desktop shows its own prompt."),
-    "Clipboard": ("Shared clipboard", "Let a remote-desktop session read and set your clipboard (needs Remote desktop and input control)."),
+    "Clipboard": ("Clipboard in remote control", "Also let a remote-control session read and set your clipboard. Normal copy and paste is not affected."),
     "FileTransfer": ("Drag and drop files", "Let the app receive files you drag in from other programs, through the Documents portal."),
 }
 XDG =[("download", "Downloads"), ("documents", "Documents"), ("pictures", "Pictures"),
