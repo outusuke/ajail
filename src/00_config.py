@@ -44,7 +44,7 @@ NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}
 CHOICES = {"gtk_portal": ("auto", "1", "0")}
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
 # portal=NAME / portal=-NAME switch these; DEFAULT_PORTALS start on, the rest off. Keep in sync with ajail-gui.
-EXTRA_PORTALS = ("Location", "GlobalShortcuts", "RemoteDesktop", "InputCapture", "Wallpaper", "DynamicLauncher", "Secret", "Background", "Usb", "Clipboard", "FileTransfer")
+EXTRA_PORTALS = ("Location", "GlobalShortcuts", "RemoteDesktop", "InputCapture", "Clipboard", "Wallpaper", "DynamicLauncher", "Secret", "Background", "Usb", "FileTransfer")
 DEFAULT_PORTALS = ("FileTransfer", "Usb", "Clipboard", "Location", "GlobalShortcuts", "Wallpaper")
 XDG_DEFAULT = {"download": "Downloads", "documents": "Documents", "pictures": "Pictures",
                "music": "Music", "videos": "Videos", "desktop": "Desktop"}

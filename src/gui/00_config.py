@@ -37,7 +37,7 @@ DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}      # 0 = no limit
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
 # DEFAULT_PORTALS start on, the rest off. Keep in sync with ajail.
-EXTRA_PORTALS = ("Location", "GlobalShortcuts", "RemoteDesktop", "InputCapture", "Wallpaper", "DynamicLauncher", "Secret", "Background", "Usb", "Clipboard", "FileTransfer")
+EXTRA_PORTALS = ("Location", "GlobalShortcuts", "RemoteDesktop", "InputCapture", "Clipboard", "Wallpaper", "DynamicLauncher", "Secret", "Background", "Usb", "FileTransfer")
 DEFAULT_PORTALS = ("FileTransfer", "Usb", "Clipboard", "Location", "GlobalShortcuts", "Wallpaper")
 PORTAL_INFO = {      # name -> (switch title, description); must have exactly the EXTRA_PORTALS keys
     "Location": ("Location", "Let the app ask the desktop where you are."),
@@ -51,7 +51,7 @@ PORTAL_INFO = {      # name -> (switch title, description); must have exactly th
     "Background": ("Run in the background",
                    "Let the app ask to keep running when closed or to start at login. The autostart it registers runs outside the sandbox."),
     "Usb": ("USB devices", "Let the app ask to use a USB device. The desktop shows its own prompt."),
-    "Clipboard": ("Clipboard in remote control", "Also let a remote-control session read and set your clipboard. Normal copy and paste is not affected."),
+    "Clipboard": ("Clipboard in remote control", "Also let a remote-control session read and set your clipboard. Normal copy and paste is not affected, and with X11 on the app can read your clipboard anyway."),
     "FileTransfer": ("Drag and drop files", "Let the app receive files you drag in from other programs, through the Documents portal."),
 }
 XDG =[("download", "Downloads"), ("documents", "Documents"), ("pictures", "Pictures"),
@@ -79,7 +79,7 @@ SECTIONS = [
         ("wayland", "Wayland", "Lets the app open a window. Turn off only for an app that should have no display, or one that runs on X11 alone."),
         ("wayland_strict", "Wayland only if restricted",
          "No Wayland at all when your desktop can't limit what the app may do (screen capture, input injection)."),
-        ("x11", "X11 compatibility", "Only for apps that won't start otherwise. Weaker isolation."),
+        ("x11", "X11 compatibility", "Only for apps that won't start otherwise. Weaker isolation: the app can read your clipboard at any time."),
         ("printing", "Printing", "Talk to the print service (CUPS)"),
         ("ssh_agent", "SSH agent", "Use your SSH keys without seeing them. The app can sign as you.")]),
     ("Devices", None, [

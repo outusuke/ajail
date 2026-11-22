@@ -758,8 +758,8 @@ class Win(Adw.ApplicationWindow):
                 on = bool(eff("portals"))
                 psw.set_sensitive(on or pname in R["portal"] or "-" + pname in R["portal"])
                 psw.set_tooltip_text(None if on else "Turn on \u201cDesktop portals\u201d first.")
-                if pname == "Clipboard":      # the portal does nothing without remote control, so the row only shows next to it
-                    psw.set_visible(portal_on("RemoteDesktop") or portal_on("InputCapture") or pname in R["portal"] or "-" + pname in R["portal"])
+                if pname == "Clipboard":      # the portal does nothing without remote control, so the row only shows with it
+                    psw.set_visible(portal_on("RemoteDesktop") or portal_on("InputCapture"))
             marks.append(usable); usable()
             return psw
 
