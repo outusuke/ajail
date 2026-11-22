@@ -727,23 +727,25 @@ class Win(Adw.ApplicationWindow):
                 marks.append(usable); usable()      # marks run after every change, so turning Wayland off greys this row at once
             g.add(sw)
 
-        # One switch per opt-in portal, in the "More desktop portals" row. A portal enabled in the default settings shows as on on an
-        # app's page; turning it off there stores "portal=-NAME" in that app's settings, which undoes the default for this app only.
+        # A row stores portal=NAME or portal=-NAME only when it differs from the default (built-in list, then default.conf on an app's page).
+        def portal_state(lst, on, pname):
+            for p in lst:
+                if p == pname: on = True
+                elif p == "-" + pname: on = False
+            return on
+
         def portal_row(pname):
             ptitle, psub = PORTAL_INFO[pname]
-            inherited = bool(scope) and pname in G["portal"]
+            inherited = portal_state(G["portal"] if scope else [], pname in DEFAULT_PORTALS, pname)
             psw = Adw.SwitchRow(
                 title=ptitle,
-                subtitle=psub + ("\nOn in the default settings. Turn it off here for this app only." if inherited else ""),
-                active=pname in R["portal"] or (inherited and "-" + pname not in R["portal"]))
+                subtitle=psub + ("\nOn in the default settings. Turn it off here for this app only." if inherited and scope else ""),
+                active=portal_state(R["portal"], inherited, pname))
 
             def on_portal(row, _p, pname=pname, inherited=inherited):
                 R["portal"] = [x for x in R["portal"] if x not in (pname, "-" + pname)]
-                if row.get_active():
-                    if not inherited:
-                        R["portal"].append(pname)
-                elif inherited:
-                    R["portal"].append("-" + pname)
+                if row.get_active() != inherited:
+                    R["portal"].append(pname if row.get_active() else "-" + pname)
                 commit()
 
             psw.connect("notify::active", on_portal)
@@ -781,7 +783,7 @@ class Win(Adw.ApplicationWindow):
                     add_switch(g, key, t, sub)
             for box, titles in names.items():
                 boxes[box].set_subtitle(", ".join(titles))      # built from the rows, so it can't go stale
-            if more is not None:      # the opt-in portals (off by default) share the collapsed row
+            if more is not None:
                 for pname in EXTRA_PORTALS:
                     more.add_row(portal_row(pname))
             page.add(g)

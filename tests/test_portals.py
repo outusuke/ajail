@@ -15,6 +15,7 @@ def load_ajail():
 
 A = load_ajail()
 ALL = A["EXTRA_PORTALS"]
+DEF = list(A["DEFAULT_PORTALS"])
 
 def cfg(**kw):
     c = {**A["DEFAULTS"], **A["NUM"], "allow": [], "allow_ro": [], "env": [], "talk": [], "portal": [], "xdg": []}
@@ -30,7 +31,7 @@ def calls(rules):
     return out
 
 class Rules(unittest.TestCase):
-    def test_default_has_no_extra_portal(self):
+    def test_empty_portal_list_has_no_extra_portal(self):
         got = calls(A["portal_rules"](cfg()))
         for p in ALL: self.assertNotIn(p, got)
 
@@ -79,7 +80,7 @@ class Rules(unittest.TestCase):
         self.assertNotIn("Background", calls(A["portal_rules"](cfg(portal=["Secret"]))))
         self.assertIn("Background", calls(A["portal_rules"](cfg(portal=["Background"]))))
 
-    def test_usb_and_clipboard_portals_are_opt_in(self):
+    def test_usb_and_clipboard_portals_are_separate_rules(self):
         for p in ("Usb", "Clipboard"):
             self.assertIn(p, ALL)
             self.assertNotIn(p, A["PORTAL_BASIC"])
@@ -87,7 +88,7 @@ class Rules(unittest.TestCase):
             self.assertIn(p, calls(A["portal_rules"](cfg(portal=[p]))))
         self.assertNotIn("Clipboard", calls(A["portal_rules"](cfg(portal=["Usb"]))))
 
-    def test_file_transfer_portal_is_opt_in_and_narrow(self):
+    def test_file_transfer_portal_is_narrow(self):
         self.assertIn("FileTransfer", ALL)
         self.assertFalse(any("portal.Documents" in x for x in A["portal_rules"](cfg())))
         on = A["portal_rules"](cfg(portal=["FileTransfer"]))
@@ -95,6 +96,14 @@ class Rules(unittest.TestCase):
         self.assertIn("--call=org.freedesktop.portal.Documents=org.freedesktop.portal.FileTransfer.*@/org/freedesktop/portal/documents", on)
         self.assertEqual(len([x for x in on if "portal.Documents" in x]), 2)
         self.assertFalse(any("portal.Desktop=org.freedesktop.portal.FileTransfer" in x for x in on))
+
+    def test_default_portals_are_on_without_any_setting_and_the_others_are_not(self):
+        self.assertEqual(DEF, ["FileTransfer", "Usb", "Clipboard", "Location", "GlobalShortcuts", "Wallpaper"])
+        self.assertTrue(set(DEF) <= set(ALL))
+        got = calls(A["portal_rules"](A["load_cfg"]("Foo")))
+        self.assertTrue(set(DEF) <= got)
+        for p in set(ALL) - set(DEF): self.assertNotIn(p, got, p)
+        for p in ("RemoteDesktop", "InputCapture", "Background", "DynamicLauncher", "Secret"): self.assertNotIn(p, DEF)
 
     def test_account_portal_is_dropped_with_privacy(self):
         self.assertIn("Account", calls(A["portal_rules"](cfg(privacy=0))))
@@ -185,27 +194,38 @@ class Config(unittest.TestCase):
     def test_empty_cfg_has_portal(self):
         self.assertEqual(A["empty_cfg"]()["portal"], [])
 
+    def test_load_starts_from_the_default_portals(self):
+        self.assertEqual(A["load_cfg"]("Foo")["portal"], DEF)
+
     def test_load_merges_default_and_app(self):
-        self.put("default.conf", "portal=Location\n")
-        self.put("apps/Foo.conf", "portal=Secret\nportal=Location\n")
-        self.assertEqual(A["load_cfg"]("Foo")["portal"], ["Location", "Secret"])
-        self.assertEqual(A["load_cfg"]("Other")["portal"], ["Location"])
+        self.put("default.conf", "portal=Secret\n")
+        self.put("apps/Foo.conf", "portal=Background\nportal=Secret\n")
+        self.assertEqual(A["load_cfg"]("Foo")["portal"], DEF + ["Secret", "Background"])
+        self.assertEqual(A["load_cfg"]("Other")["portal"], DEF + ["Secret"])
 
     def test_app_can_opt_out_of_default_portal(self):
-        self.put("default.conf", "portal=Location\nportal=Secret\n")
-        self.put("apps/Foo.conf", "portal=-Location\n")
-        self.assertEqual(A["load_cfg"]("Foo")["portal"], ["Secret"])
-        self.assertEqual(A["load_cfg"]("Other")["portal"], ["Location", "Secret"])
+        self.put("default.conf", "portal=Secret\nportal=Background\n")
+        self.put("apps/Foo.conf", "portal=-Secret\nportal=-Location\n")
+        self.assertEqual(A["load_cfg"]("Foo")["portal"], [p for p in DEF if p != "Location"] + ["Background"])
+        self.assertEqual(A["load_cfg"]("Other")["portal"], DEF + ["Secret", "Background"])
+
+    def test_default_conf_can_switch_a_default_portal_off_and_an_app_back_on(self):
+        self.put("default.conf", "portal=-FileTransfer\nportal=-Usb\n")
+        self.put("apps/Foo.conf", "portal=Usb\n")
+        self.assertEqual(A["load_cfg"]("Other")["portal"], [p for p in DEF if p not in ("FileTransfer", "Usb")])
+        self.assertEqual(A["load_cfg"]("Foo")["portal"], [p for p in DEF if p not in ("FileTransfer", "Usb")] + ["Usb"])
+        self.assertNotIn("FileTransfer", calls(A["portal_rules"](A["load_cfg"]("Other"))))
+        self.assertFalse(any("portal.Documents" in x for x in A["portal_rules"](A["load_cfg"]("Other"))))
 
     def test_optout_order_and_edge_cases(self):
-        self.put("default.conf", "portal=Location\nportal=-Secret\n")
-        self.put("apps/A.conf", "portal=-Location\nportal=Location\n")      # later line wins
-        self.put("apps/B.conf", "portal=-Bogus\nportal=--Location\nportal=-Wallpaper\n")
+        self.put("default.conf", "portal=Secret\nportal=-Background\n")
+        self.put("apps/A.conf", "portal=-Secret\nportal=Secret\n")      # later line wins
+        self.put("apps/B.conf", "portal=-Bogus\nportal=--Secret\nportal=-Background\n")
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            self.assertEqual(A["load_cfg"]("A")["portal"], ["Location"])
-            self.assertEqual(A["load_cfg"]("B")["portal"], ["Location"])    # opting out of an off portal is harmless
-        self.assertIn("-Bogus", err.getvalue()); self.assertIn("--Location", err.getvalue())
+            self.assertEqual(A["load_cfg"]("A")["portal"], DEF + ["Secret"])
+            self.assertEqual(A["load_cfg"]("B")["portal"], DEF + ["Secret"])    # opting out of an off portal is harmless
+        self.assertIn("-Bogus", err.getvalue()); self.assertIn("--Secret", err.getvalue())
 
     def test_optout_removes_rules(self):
         self.put("default.conf", "portal=Location\n")
@@ -261,6 +281,7 @@ class Sync(unittest.TestCase):
     def test_lists_defaults_portals_in_sync(self):
         self.assertEqual(tuple(self.gui_const("LISTS")), A["LISTS"])
         self.assertEqual(tuple(self.gui_const("EXTRA_PORTALS")), A["EXTRA_PORTALS"])
+        self.assertEqual(tuple(self.gui_const("DEFAULT_PORTALS")), A["DEFAULT_PORTALS"])
         self.assertEqual(self.gui_const("DEFAULTS"), A["DEFAULTS"])
         self.assertEqual(self.gui_const("NUM"), A["NUM"])
 
@@ -275,6 +296,7 @@ class Sync(unittest.TestCase):
         with open(f"{HERE}/ajail-gui") as f: s = f.read()
         self.assertNotIn('title="Extra portals"', s)      # the switches live in the "More desktop portals" row
         self.assertIn('for pname in EXTRA_PORTALS:', s)
+        self.assertIn('pname in DEFAULT_PORTALS', s)
         self.assertIn('more.add_row(portal_row(pname))', s)
         self.assertNotIn('"portal", ["Portal name', s)      # no free-text entry any more
 

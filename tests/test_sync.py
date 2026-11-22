@@ -5,7 +5,7 @@
 import ast, os, unittest
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SHARED = ("DEFAULTS", "NUM", "LISTS", "EXTRA_PORTALS", "OUTSIDE", "SELF")      # must be identical in both files
+SHARED = ("DEFAULTS", "NUM", "LISTS", "EXTRA_PORTALS", "DEFAULT_PORTALS", "OUTSIDE", "SELF")      # must be identical in both files
 
 def assigned(path):
     out = {}

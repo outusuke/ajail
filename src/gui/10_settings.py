@@ -62,6 +62,7 @@ def summary(G, A):
         if p.startswith("-"):
             if p[1:] in extra: extra.remove(p[1:])
         elif p not in extra: extra.append(p)
+    extra = [p for p in extra if p not in DEFAULT_PORTALS]
     folders = set(G["allow"] + G["allow_ro"] + (A["allow"] + A["allow_ro"] if A else []))
     n = len(folders) + sum(1 for m in x.values() if m != "none")
     parts = [t for k, t in LABEL.items() if e[k]]

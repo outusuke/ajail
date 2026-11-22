@@ -84,7 +84,7 @@ allow_ro=/media/me/usb/photos    # read-only
 xdg=download                     # also documents, pictures, music, videos, desktop; :ro or :none
 env=MY_VAR=value
 talk=org.example.Service         # extra D-Bus name
-portal=Location                  # opt-in portal; portal=-Location turns it off in an app file
+portal=Secret                    # turn on a portal that is off by default; portal=-Location turns one off
 ```
 
 Back up or move settings with `ajail export -o FILE` and `ajail import FILE` (`--force` replaces settings that differ); `ajail-gui` has the same buttons. The export holds the permission files and the choices `ajail-gui` remembers (Ask before opening, Use less disk space, what to do with the AppImage after installing); it leaves out app data, installed apps, Sandbox every AppImage and the app menu entry.
@@ -116,9 +116,9 @@ With `compat_env` set to 1 (or `--compat-env` for one run) ajail copies these va
 
 Nothing else is passed: not `PATH`, tokens, keys, `SSH_AUTH_SOCK` or `DBUS_*`. `ajail preview` shows what is passed.
 
-### Opt-in portals
+### Extra portals
 
-`Location`, `GlobalShortcuts`, `RemoteDesktop`, `InputCapture`, `Wallpaper`, `DynamicLauncher`, `Secret`, `Background`, `Usb`, `Clipboard` and `FileTransfer` are blocked unless enabled with `portal=NAME` (needs `portals=1`). `Usb` lets an app ask for a USB device; `Clipboard` only works together with `RemoteDesktop` or `InputCapture`; `FileTransfer` lets an app receive files you drag in from other programs, and opens only that one interface of the Documents portal. `RemoteDesktop` and `InputCapture` can control or capture your keyboard and mouse; `Secret` can read the desktop's stored secrets; `Background` can register an autostart that runs outside the sandbox.
+With `portals=1`, `Location`, `GlobalShortcuts`, `Usb`, `Clipboard`, `FileTransfer` and `Wallpaper` are on, because the desktop shows its own prompt and each rule opens only that portal's interface (`Wallpaper` can only change the wallpaper); `portal=-NAME` turns one off (in `default.conf` or an app file). The far-reaching ones, `RemoteDesktop`, `InputCapture`, `DynamicLauncher`, `Secret` and `Background`, stay blocked unless enabled with `portal=NAME`. `Usb` lets an app ask for a USB device; `Clipboard` only works together with `RemoteDesktop` or `InputCapture`; `FileTransfer` lets an app receive files you drag in from other programs, and opens only that one interface of the Documents portal. `RemoteDesktop` and `InputCapture` can control or capture your keyboard and mouse; `Secret` can read the desktop's stored secrets; `Background` can register an autostart that runs outside the sandbox.
 
 ## Self-test
 

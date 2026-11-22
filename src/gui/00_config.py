@@ -36,8 +36,9 @@ DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None
             "portal_notification": 1, "portal_openuri": 1, "portal_print": 1, "portal_trash": 1, "portal_email": 1, "portal_inhibit": 1, "portal_network": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
 NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}      # 0 = no limit
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
-# Opt-in desktop portals. Keep in sync with EXTRA_PORTALS in ajail.
+# DEFAULT_PORTALS start on, the rest off. Keep in sync with ajail.
 EXTRA_PORTALS = ("Location", "GlobalShortcuts", "RemoteDesktop", "InputCapture", "Wallpaper", "DynamicLauncher", "Secret", "Background", "Usb", "Clipboard", "FileTransfer")
+DEFAULT_PORTALS = ("FileTransfer", "Usb", "Clipboard", "Location", "GlobalShortcuts", "Wallpaper")
 PORTAL_INFO = {      # name -> (switch title, description); must have exactly the EXTRA_PORTALS keys
     "Location": ("Location", "Let the app ask the desktop where you are."),
     "GlobalShortcuts": ("Global shortcuts", "Let the app register keyboard shortcuts that work in any window."),

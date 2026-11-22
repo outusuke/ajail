@@ -43,9 +43,9 @@ NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}
 # where the host's cursor size is 0, the one case known to make GTK crash; 1 and 0 force it on or off (see settle_gtk_portal).
 CHOICES = {"gtk_portal": ("auto", "1", "0")}
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
-# Opt-in desktop portals, enabled one at a time with portal=NAME. Anything not listed here is rejected.
-# Keep in sync with EXTRA_PORTALS in ajail-gui.
+# portal=NAME / portal=-NAME switch these; DEFAULT_PORTALS start on, the rest off. Keep in sync with ajail-gui.
 EXTRA_PORTALS = ("Location", "GlobalShortcuts", "RemoteDesktop", "InputCapture", "Wallpaper", "DynamicLauncher", "Secret", "Background", "Usb", "Clipboard", "FileTransfer")
+DEFAULT_PORTALS = ("FileTransfer", "Usb", "Clipboard", "Location", "GlobalShortcuts", "Wallpaper")
 XDG_DEFAULT = {"download": "Downloads", "documents": "Documents", "pictures": "Pictures",
                "music": "Music", "videos": "Videos", "desktop": "Desktop"}
 THEME = [".local/share/fonts", ".fonts", ".local/share/icons", ".icons", ".local/share/themes", ".themes",

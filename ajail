@@ -43,9 +43,9 @@ NUM = {"mem_max": 0, "cpu_max": 0, "tasks_max": 0}
 # where the host's cursor size is 0, the one case known to make GTK crash; 1 and 0 force it on or off (see settle_gtk_portal).
 CHOICES = {"gtk_portal": ("auto", "1", "0")}
 LISTS = ("allow", "allow_ro", "xdg", "env", "talk", "portal")
-# Opt-in desktop portals, enabled one at a time with portal=NAME. Anything not listed here is rejected.
-# Keep in sync with EXTRA_PORTALS in ajail-gui.
+# portal=NAME / portal=-NAME switch these; DEFAULT_PORTALS start on, the rest off. Keep in sync with ajail-gui.
 EXTRA_PORTALS = ("Location", "GlobalShortcuts", "RemoteDesktop", "InputCapture", "Wallpaper", "DynamicLauncher", "Secret", "Background", "Usb", "Clipboard", "FileTransfer")
+DEFAULT_PORTALS = ("FileTransfer", "Usb", "Clipboard", "Location", "GlobalShortcuts", "Wallpaper")
 XDG_DEFAULT = {"download": "Downloads", "documents": "Documents", "pictures": "Pictures",
                "music": "Music", "videos": "Videos", "desktop": "Desktop"}
 THEME = [".local/share/fonts", ".fonts", ".local/share/icons", ".icons", ".local/share/themes", ".themes",
@@ -342,7 +342,6 @@ def parse_cfg(path):
             bad("expected key=value"); continue
         k, _, v = (x.strip() for x in ln.partition("="))
         if k == "portal":
-            # "portal=NAME" turns a portal on; "portal=-NAME" (in an app's file) turns off one the defaults turned on
             if v and v.lstrip("-") in EXTRA_PORTALS and v.count("-") <= 1: d[k].append(v)
             else: bad(f"unknown portal '{v}'")
         elif k in LISTS:
@@ -375,7 +374,7 @@ def load_cfg(name):
     cfg = {**DEFAULTS, **NUM, **{k: v[0] for k, v in CHOICES.items()}, **g["s"], **a["s"]}
     for k in ("allow", "allow_ro", "env", "talk"):
         cfg[k] = list(dict.fromkeys(g[k] + a[k]))
-    on = []
+    on = list(DEFAULT_PORTALS)
     for p in g["portal"] + a["portal"]:          # in order, so an app's "-NAME" undoes the default's NAME
         if p.startswith("-"):
             if p[1:] in on: on.remove(p[1:])
@@ -454,9 +453,8 @@ def want_bus(cfg):
 
 # Desktop portals an app may call when "Notifications and portals" is on. xdg-dbus-proxy runs on the host, so the
 # desktop sees the app as an ordinary unsandboxed program: a portal that is not listed here is simply unreachable.
-# Off unless asked for with portal=NAME (EXTRA_PORTALS): Location, GlobalShortcuts, RemoteDesktop (input injection),
-# InputCapture, Wallpaper, DynamicLauncher, Secret, Background (RequestBackground can register an autostart that runs
-# outside the sandbox), Usb, Clipboard (only with RemoteDesktop or InputCapture) and FileTransfer (drag and drop, served by the Documents portal).
+# DEFAULT_PORTALS are on unless portal=-NAME; the other EXTRA_PORTALS are off unless portal=NAME.
+# Clipboard only works with RemoteDesktop or InputCapture; Background can register an autostart that runs outside the sandbox.
 # Never reachable: the rest of the Documents portal and anything else not listed; with portals on, the app
 # sees only its own folder of picked files (doc/by-app/ID), see portal_app_id.
 # Camera follows the Camera permission; Screenshot and ScreenCast (both show the user a prompt) have their own switches.
@@ -468,7 +466,7 @@ PORTAL_BASIC = ("Settings", "OpenURI", "FileChooser", "Notification", "Print", "
                 "PowerProfileMonitor", "Realtime")
 
 def extra_portals(cfg):
-    """The opt-in portals enabled for this app: allowlisted names only, no duplicates."""
+    """The extra portals enabled for this app: allowlisted names only, no duplicates."""
     return [p for p in dict.fromkeys(cfg["portal"]) if p in EXTRA_PORTALS]
 
 # Basic portals that can be switched off one by one (portal_NAME=0): setting -> portal interfaces. The file chooser and Settings stay in the base.
