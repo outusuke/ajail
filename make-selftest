@@ -258,8 +258,7 @@ if bus and shutil.which("gdbus"):
             row("ALLOWED" if ok else "INFO", f"  Portal: {label}", v if ok else "not offered by this desktop")
         # Portals ajail gates. Reading a version is always allowed, so call a method with no arguments instead:
         # the proxy answers AccessDenied if the portal is blocked, and the desktop answers InvalidArgs (without
-        # opening any dialog) if it is reachable. The opt-in portals (portal=NAME in the settings) must be blocked
-        # unless enabled; ajail tells us which ones are enabled in AJAIL_PORTALS. Reachable but not enabled is EXPOSED.
+        # opening any dialog) if it is reachable. A portal that is not enabled must be blocked; ajail tells us which ones are enabled in AJAIL_PORTALS. Reachable but not enabled is EXPOSED.
         enabled = {p for p in os.environ.get("AJAIL_PORTALS", "").split(",") if p}
         for iface, method, label, opt_in in (
                 ("Screenshot", "Screenshot", "screenshots", False), ("ScreenCast", "CreateSession", "screen sharing", False),
@@ -282,6 +281,30 @@ if bus and shutil.which("gdbus"):
                 row("EXPOSED", f"  Portal: {label}", "reachable (should be blocked)")
             else:
                 row("ALLOWED", f"  Portal: {label}", "reachable (enabled)" if on else "reachable")
+        # Real calls that open no dialog: each starts a session or a transfer and closes it again, so a portal that is on is shown to work.
+        # Clipboard has no call here: it needs a remote-desktop session, which stays off unless enabled.
+        def tried(iface, method, label, *args, dest="org.freedesktop.portal.Desktop", path="/org/freedesktop/portal/desktop", close=None):
+            on = iface in enabled
+            rc, o = portal(f"org.freedesktop.portal.{iface}.{method}", *args, dest=dest, path=path)
+            if rc == 0:
+                row("ALLOWED" if on else "EXPOSED", f"  Try: {label}", "worked" if on else "worked, but it should be blocked")
+                if close: close(o)
+            elif "AccessDenied" in o or "not allowed" in o:
+                row("blocked", f"  Try: {label}", "enabled in settings but blocked by the proxy" if on else "blocked by the proxy")
+            else:
+                row("INFO", f"  Try: {label}", "not offered by this desktop" if "Unknown" in o else o[:60])
+        docs = {"dest": "org.freedesktop.portal.Documents", "path": "/org/freedesktop/portal/documents"}
+        def end_session(o):
+            m = re.search(r"'(/org/freedesktop/portal/desktop/session/[^']+)'", o)
+            if m: portal("org.freedesktop.portal.Session.Close", path=m.group(1))
+        def end_transfer(o):
+            m = re.search(r"'([^']+)'", o)
+            if m: portal("org.freedesktop.portal.FileTransfer.StopTransfer", m.group(1), **docs)
+        token = "{'session_handle_token': <'ajail_selftest'>}"
+        tried("FileTransfer", "StartTransfer", "drag and drop", "{'writable': <false>, 'autostop': <true>}", close=end_transfer, **docs)
+        tried("Location", "CreateSession", "location", token, close=end_session)
+        tried("Usb", "CreateSession", "USB devices", token, close=end_session)
+        tried("GlobalShortcuts", "CreateSession", "global shortcuts", "{'handle_token': <'ajail_selftest'>, 'session_handle_token': <'ajail_selftest'>}")
         args = ("org.freedesktop.appearance", "color-scheme")
         rc, o = portal("org.freedesktop.portal.Settings.Read", *args)
         if rc != 0:

@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Unit tests for the extra-portals feature. Run from the folder holding ajail, ajail-gui and make-selftest.
-import ast, os, re, tempfile, types, unittest, unittest.mock, io, contextlib
+import ast, os, re, shutil, subprocess, tempfile, types, unittest, unittest.mock, io, contextlib
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -307,6 +307,45 @@ class Sync(unittest.TestCase):
         compile(m.group(1), "AppRun", "exec")
         for p in A["EXTRA_PORTALS"]:
             self.assertIn(f'("{p}", "', m.group(1), p)
+
+    def run_selftest(self, enabled):
+        src = open(f"{HERE}/make-selftest").read()
+        app = re.search(r"APPRUN = r'''(.*?)'''", src, re.S).group(1)
+        d = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, d, True)
+        os.makedirs(f"{d}/bin"); os.makedirs(f"{d}/home")
+        open(f"{d}/apprun", "w").write(app)
+        open(f"{d}/bin/gdbus", "w").write(f'''#!/usr/bin/python3
+import sys
+a = sys.argv[1:]; m = a[a.index("--method") + 1]
+open("{d}/calls", "a").write(m + " " + " ".join(a[a.index("--method") + 2:]) + "\\n")
+def fail(e): print("Error: GDBus.Error:org.freedesktop.DBus.Error." + e + ": x", file=sys.stderr); sys.exit(1)
+if m == "org.freedesktop.DBus.Properties.Get": print("(<uint32 1>,)")
+elif m.endswith("FileTransfer.StartTransfer"): print("(\\'KEY1\\',)")
+elif m.endswith("Location.CreateSession"): print("(objectpath \\'/org/freedesktop/portal/desktop/session/1_2/ajail_selftest\\',)")
+elif m.endswith("Usb.CreateSession"): fail("AccessDenied")
+elif m.endswith("GlobalShortcuts.CreateSession"): fail("UnknownMethod")
+elif m.endswith("Session.Close") or m.endswith("StopTransfer"): print("()")
+else: fail("InvalidArgs")
+''')
+        os.chmod(f"{d}/bin/gdbus", 0o755)
+        env = {"HOME": f"{d}/home", "PATH": f"{d}/bin:/usr/bin:/bin", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent",
+               "AJAIL_PORTALS": enabled}
+        r = subprocess.run(["python3", f"{d}/apprun"], env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+        return r.stdout + r.stderr, open(f"{d}/calls").read()
+
+    def test_selftest_really_tries_the_default_on_portals(self):
+        out, calls_ = self.run_selftest("FileTransfer,Location,Usb")
+        line = lambda label: next(l for l in out.splitlines() if f"Try: {label}" in l)
+        self.assertTrue(line("drag and drop").startswith("ALLOWED") and "worked" in line("drag and drop"))
+        self.assertTrue(line("location").startswith("ALLOWED"))
+        self.assertTrue(line("USB devices").startswith("blocked") and "enabled in settings but blocked" in line("USB devices"))
+        self.assertTrue(line("global shortcuts").startswith("INFO") and "not offered" in line("global shortcuts"))
+        self.assertIn("org.freedesktop.portal.FileTransfer.StopTransfer KEY1", calls_)
+        self.assertIn("org.freedesktop.portal.Session.Close", calls_)
+
+    def test_selftest_flags_a_portal_that_works_but_is_not_enabled(self):
+        out, _ = self.run_selftest("")
+        self.assertTrue(next(l for l in out.splitlines() if "Try: location" in l).startswith("EXPOSED"))
 
     def test_selftest_covers_every_allowed_portal_and_tray(self):
         s = open(f"{HERE}/make-selftest").read()
