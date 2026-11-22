@@ -121,7 +121,7 @@ Nothing else is passed: not `PATH`, tokens, keys, `SSH_AUTH_SOCK` or `DBUS_*`. `
 
 ### Extra portals
 
-With `portals=1`, `Location`, `GlobalShortcuts`, `Usb`, `Clipboard`, `FileTransfer` and `Wallpaper` are on, because the desktop shows its own prompt and each rule opens only that portal's interface (`Wallpaper` can only change the wallpaper); `portal=-NAME` turns one off (in `default.conf` or an app file). The far-reaching ones, `RemoteDesktop`, `InputCapture`, `DynamicLauncher`, `Secret` and `Background`, stay blocked unless enabled with `portal=NAME`. `Usb` lets an app ask for a USB device; `Clipboard` only works together with `RemoteDesktop` or `InputCapture`; `FileTransfer` lets an app receive files you drag in from other programs, and opens only that one interface of the Documents portal. `RemoteDesktop` and `InputCapture` can control or capture your keyboard and mouse; `Secret` can read the desktop's stored secrets; `Background` can register an autostart that runs outside the sandbox.
+With `portals=1`, `Location`, `GlobalShortcuts`, `Usb`, `Clipboard`, `FileTransfer` and `Wallpaper` are on, because the desktop shows its own prompt and each rule opens only that portal's interface (`Wallpaper` can only change the wallpaper); `portal=-NAME` turns one off (in `default.conf` or an app file). The far-reaching ones, `RemoteDesktop`, `InputCapture`, `DynamicLauncher` and `Background`, stay blocked unless enabled with `portal=NAME`. `Usb` lets an app ask for a USB device; `Clipboard` only works together with `RemoteDesktop` or `InputCapture`; `FileTransfer` lets an app receive files you drag in from other programs, and opens only that one interface of the Documents portal. `RemoteDesktop` and `InputCapture` can control or capture your keyboard and mouse; `Secret` gives the app one secret of its own, unique to it and not your keyring, which Chrome and Electron need to keep their saved logins; `Background` can register an autostart that runs outside the sandbox.
 
 ## Self-test
 
@@ -158,7 +158,7 @@ ajail is a convenience layer over bubblewrap, not a security guarantee.
 
 - `net` gives the app your network. `net_private` hides this computer's services, not your LAN or the internet.
 - Without compositor support for security contexts (GNOME today) an app on Wayland gets the full socket. Set `wayland_strict=1` to give it none, or run the self-test (see above) to see what your compositor exposes.
-- `x11`, `ssh_agent`, `input`, broad folder shares and the `RemoteDesktop`, `InputCapture`, `Secret` and `Background` portals weaken isolation.
+- `x11`, `ssh_agent`, `input`, broad folder shares and the `RemoteDesktop`, `InputCapture` and `Background` portals weaken isolation.
 - Compressed installs read the image outside the sandbox.
 - Resource limits protect your session, not your privacy.
 

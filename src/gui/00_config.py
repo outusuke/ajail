@@ -47,7 +47,7 @@ PORTAL_INFO = {      # name -> (switch title, description); must have exactly th
     "InputCapture": ("Input capture", "Let the app ask to capture your keyboard and mouse input. Far-reaching access."),
     "Wallpaper": ("Wallpaper", "Let the app ask to change your desktop wallpaper."),
     "DynamicLauncher": ("Create launchers", "Let the app ask to add its own entries to your app menu."),
-    "Secret": ("Secrets", "Let the app ask the desktop for its stored secrets (keyring). Far-reaching access."),
+    "Secret": ("App secret", "Let the app keep one secret of its own, such as the key that encrypts its saved logins (Chrome and Electron use it). It can't read your keyring or other apps' secrets."),
     "Background": ("Run in the background",
                    "Let the app ask to keep running when closed or to start at login. The autostart it registers runs outside the sandbox."),
     "Usb": ("USB devices", "Let the app ask to use a USB device. The desktop shows its own prompt."),
