@@ -752,11 +752,23 @@ class Win(Adw.ApplicationWindow):
                     R["portal"].append(pname if row.get_active() else "-" + pname)
                 commit()
 
+            rb = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER,
+                            tooltip_text="Use the default" if scope else "Use the built-in default")
+            rb.add_css_class("flat")
+            psw.add_suffix(rb)
+
+            def on_reset(_b):
+                R["portal"] = [x for x in R["portal"] if x not in (pname, "-" + pname)]
+                psw.set_active(inherited)
+                commit()
+
             psw.connect("notify::active", on_portal)
+            rb.connect("clicked", on_reset)
 
             def usable():      # greyed while \u201cDesktop portals\u201d is off, unless the row holds a setting that must stay undoable
                 on = bool(eff("portals"))
                 psw.set_sensitive(on or pname in R["portal"] or "-" + pname in R["portal"])
+                rb.set_visible(pname in R["portal"] or "-" + pname in R["portal"])
                 psw.set_tooltip_text(None if on else "Turn on \u201cDesktop portals\u201d first.")
                 if pname == "Clipboard":      # the portal does nothing without remote control, so the row only shows with it
                     psw.set_visible(portal_on("RemoteDesktop") or portal_on("InputCapture"))
