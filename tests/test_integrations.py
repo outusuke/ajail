@@ -121,6 +121,81 @@ class A11y(unittest.TestCase):
             os.makedirs(f"{d}/ajail"); p = f"{d}/ajail/4194300.a11y"; open(p, "w").close()
             A["sweep_runtime"](); self.assertFalse(os.path.exists(p))
 
+class SystemBus(unittest.TestCase):
+    def test_each_switch_opens_one_fixed_name(self):
+        self.assertEqual(A["SYSTEM_BUS_NAMES"], {"bluetooth": "org.bluez", "battery": "org.freedesktop.UPower", "avahi": "org.freedesktop.Avahi"})
+        for k, n in A["SYSTEM_BUS_NAMES"].items():
+            self.assertEqual(A["DEFAULTS"][k], 0, k)
+            self.assertEqual(A["system_bus_rules"](cfg(**{k: 1})), [f"--talk={n}"], k)
+        self.assertEqual(A["system_bus_rules"](cfg()), [])
+        self.assertEqual(A["system_bus_rules"](cfg(bluetooth=1, avahi=1)), ["--talk=org.bluez", "--talk=org.freedesktop.Avahi"])
+
+    def test_the_switches_are_read_from_the_settings_file_and_need_no_session_bus(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = f"{d}/a.conf"; open(p, "w").write("bluetooth=1\navahi=maybe\n")
+            with unittest.mock.patch.dict(A, {"warn": lambda *a: None}): c = A["parse_cfg"](p)
+        self.assertEqual(c["s"], {"bluetooth": 1})
+        self.assertFalse(A["want_bus"](cfg(portals=0, bluetooth=1, battery=1, avahi=1)))
+
+    def test_address_comes_from_the_environment_then_the_standard_socket(self):
+        with unittest.mock.patch.dict(os.environ, {"DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/x/sys"}):
+            self.assertEqual(A["system_bus_address"](), "unix:path=/x/sys")
+        with unittest.mock.patch.dict(os.environ, {"DBUS_SYSTEM_BUS_ADDRESS": "tcp:host=x"}):
+            with unittest.mock.patch.object(os.path, "exists", lambda p: True):
+                self.assertEqual(A["system_bus_address"](), "unix:path=/run/dbus/system_bus_socket")
+            with unittest.mock.patch.object(os.path, "exists", lambda p: False):
+                self.assertIsNone(A["system_bus_address"]())
+
+    def test_start_system_filters_to_the_switches_that_are_on(self):
+        cmds = []
+        class P:
+            def __init__(s, cmd, **k): cmds.append(cmd)
+            def terminate(s): pass
+            def wait(s, t=None): pass
+        fake = {"shutil": types.SimpleNamespace(which=lambda n: "/x/" + n), "warn": lambda *a: None,
+                "subprocess": types.SimpleNamespace(Popen=P, DEVNULL=-3, SubprocessError=Exception, TimeoutExpired=Exception),
+                "select": types.SimpleNamespace(select=lambda *a: ([a[0][0]], [], []))}
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": d, "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/x/sys"}), \
+                unittest.mock.patch.dict(A, fake), unittest.mock.patch.object(os, "read", lambda fd, n: b"x"):
+            b = A["start_system"](cfg(battery=1, avahi=1), "Foo")
+            self.assertTrue(b[2].endswith(f"/ajail/{os.getpid()}.sys"))
+            self.assertEqual(cmds[0][2:5], ["unix:path=/x/sys", b[2], "--filter"])
+            self.assertEqual(cmds[0][5:], ["--talk=org.freedesktop.UPower", "--talk=org.freedesktop.Avahi"])
+            A["stop_bus"](b)
+
+    def test_start_system_says_why_it_cannot_start(self):
+        warned = []
+        base = {"warn": lambda m, *a: warned.append(m)}
+        with unittest.mock.patch.dict(A, {**base, "shutil": types.SimpleNamespace(which=lambda n: None)}):
+            self.assertIsNone(A["start_system"](cfg(battery=1), "Foo"))
+        with unittest.mock.patch.dict(A, {**base, "shutil": types.SimpleNamespace(which=lambda n: "/x/" + n)}), \
+                unittest.mock.patch.object(A["os"].path, "exists", lambda p: False), unittest.mock.patch.dict(os.environ, {"DBUS_SYSTEM_BUS_ADDRESS": ""}):
+            self.assertIsNone(A["start_system"](cfg(battery=1), "Foo"))
+        self.assertEqual(len(warned), 2)
+
+    def args(self, **kw):
+        return A["bwrap_args"]("Foo", "/x", cfg(**kw), ["/app/AppRun"], system="/run/user/1/ajail/9.sys")
+
+    def test_bwrap_binds_the_filtered_socket_where_apps_look_for_the_system_bus(self):
+        a = self.args(bluetooth=1)
+        i = a.index("/run/user/1/ajail/9.sys"); self.assertEqual((a[i - 1], a[i + 1]), ("--ro-bind", "/run/dbus/system_bus_socket"))
+        j = a.index("DBUS_SYSTEM_BUS_ADDRESS"); self.assertEqual(a[j + 1], "unix:path=/run/dbus/system_bus_socket")
+        self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", a)
+
+    def test_nothing_is_bound_without_a_switch_or_the_socket(self):
+        self.assertNotIn("DBUS_SYSTEM_BUS_ADDRESS", self.args())
+        self.assertNotIn("DBUS_SYSTEM_BUS_ADDRESS", A["bwrap_args"]("Foo", "/x", cfg(bluetooth=1), ["/app/AppRun"]))
+
+    def test_stale_system_sockets_are_swept(self):
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": d}):
+            os.makedirs(f"{d}/ajail"); p = f"{d}/ajail/4194300.sys"; open(p, "w").close()
+            A["sweep_runtime"](); self.assertFalse(os.path.exists(p))
+
+    def test_every_switch_has_a_row_and_a_label_in_the_window(self):
+        rows = [k for _g, _d, items in G["SECTIONS"] for k, _t, _s in items]
+        for k in A["SYSTEM_BUS_NAMES"]:
+            self.assertIn(k, rows, k); self.assertIn(k, G["DEFAULTS"], k)
+
 class DesktopRows(unittest.TestCase):
     def test_hidden_on_the_other_desktop_only(self):
         h = G["desktop_hidden"]

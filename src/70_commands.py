@@ -224,7 +224,7 @@ def cmd_check():
             "compositor has no wp_security_context_v1: apps get the full Wayland socket ('Wayland only if restricted' would turn Wayland off)")
     yes(os.path.exists("/dev/dri"), "GPU devices (/dev/dri) present", "no /dev/dri")
     if glob.glob("/dev/nvidia*"): line("OK", "NVIDIA devices will be shared when Graphics is on")
-    yes(shutil.which("xdg-dbus-proxy"), "xdg-dbus-proxy installed (notifications, portals, tray, screen reader, GNOME Shell, KDE)",
+    yes(shutil.which("xdg-dbus-proxy"), "xdg-dbus-proxy installed (notifications, portals, tray, screen reader, GNOME Shell, KDE, Bluetooth, battery, Avahi)",
         "xdg-dbus-proxy missing: " + install_hint("xdg-dbus-proxy"))
     yes(seccomp_file(), "seccomp filter available", "seccomp filter not available on this CPU architecture")
     yes(bwrap_has("--disable-userns"), "bubblewrap supports disabling nested sandboxes",
@@ -264,8 +264,9 @@ def cmd_preview(n):
     wp = wayland_path() if cfg["wayland"] else None
     wl = f"{runtime_dir()}/ajail/PID.wl" if wp and wl_supported(wp) else None
     info = f"{runtime_dir()}/.flatpak/PID/bwrapinfo.json" if bus and cfg["portals"] else None
+    system = f"{runtime_dir()}/ajail/PID.sys" if any(cfg[k] for k in SYSTEM_BUS_NAMES) else None
     cmd = bwrap_args(name, root, cfg, ["/app/AppRun"], bus, SEC_FD if priv else None, (), preview_files(cfg), gset, wl,
-                     (INFO_FD if priv else "FD") if info else None)
+                     (INFO_FD if priv else "FD") if info else None, None, system)
     if priv: cmd = net_wrap(cmd, f"{runtime_dir()}/ajail/PID.d/seccomp.bpf", info)
     props = limit_props(cfg)
     if props: cmd = ["systemd-run", "--user", "--scope", "--quiet"] + props + ["--"] + cmd

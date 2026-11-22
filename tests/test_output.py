@@ -101,7 +101,7 @@ class LaunchOutput(unittest.TestCase):
         A.update(wayland_path=lambda: "/rt/wayland-0", bwrap_args=lambda *a: seen.update(bw=a) or [], wl_supported=lambda p: True,
                  wayland_context=lambda wp, sock, name, inst: seen.update(ctx=(wp, sock.endswith(f"/ajail/{os.getpid()}.wl"), name)) or Ctx())
         self.run_launch(False)
-        self.assertEqual(seen["bw"][-3], "/rt/ajail/1.wl")      # then the portal info descriptor and the a11y socket, None here
+        self.assertEqual(seen["bw"][-4], "/rt/ajail/1.wl")      # then the portal info descriptor, the a11y socket and the system bus socket, None here
         self.assertEqual(seen["ctx"], ("/rt/wayland-0", True, "ajail-Foo"))      # the launcher's id, not the bare name
         self.assertTrue(seen["closed"])
 

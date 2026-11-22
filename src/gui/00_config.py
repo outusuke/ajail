@@ -29,7 +29,7 @@ OUTSIDE = ("/mnt/", "/media/", f"/run/media/{USER}/")
 os.makedirs(APPS, exist_ok=True)
 
 # Keep in sync with DEFAULTS in ajail.
-DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "a11y": 0, "gnome_shell": 0, "gnome_shell_manage": 0, "kde": 0, "camera": 0,
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "a11y": 0, "gnome_shell": 0, "gnome_shell_manage": 0, "kde": 0, "bluetooth": 0, "battery": 0, "avahi": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0, "single_instance": 0,
             "portal_screenshot": 1, "portal_screencast": 1,
@@ -59,7 +59,8 @@ XDG =[("download", "Downloads"), ("documents", "Documents"), ("pictures", "Pictu
 MODES = ["No access", "Read-only", "Read & write"]
 LABEL = {"net": "Internet", "sound": "Audio", "gpu": "Graphics", "camera": "Camera",
          "input": "Input devices", "x11": "X11", "ssh_agent": "SSH agent", "printing": "Printing",
-         "compat_env": "Graphics variables", "a11y": "Screen reader", "gnome_shell": "GNOME Shell extensions", "kde": "KDE Plasma integration"}
+         "compat_env": "Graphics variables", "a11y": "Screen reader", "gnome_shell": "GNOME Shell extensions", "kde": "KDE Plasma integration",
+         "bluetooth": "Bluetooth", "battery": "Battery state", "avahi": "Network discovery"}
 # Basic portals that stay in one collapsed row, "More desktop portals" (they are on by default and seldom need a change).
 # Switches that only make sense on one desktop: switch -> the desktop it is for (as XDG_CURRENT_DESKTOP names it). They are hidden on the other
 # desktop (see desktop_hidden). A desktop with many rows gets a collapsed row of its own, named by DESKTOP_NAMES (see folded_desktops).
@@ -89,6 +90,12 @@ SECTIONS = [
          "turn it off if graphics break. Needs Graphics acceleration."),
         ("camera", "Camera", "Webcams (/dev/video*)"),
         ("input", "Game controllers and input devices", "Raw access to /dev/input"),
+        ("bluetooth", "Bluetooth",
+         "Let the app scan for and talk to Bluetooth devices (Web Bluetooth), through the system bus. Reaches nearby devices even without Internet (needs xdg-dbus-proxy)."),
+        ("battery", "Battery and power state",
+         "Let the app read the battery level and power source (the browser's battery API), through the system bus (needs xdg-dbus-proxy)."),
+        ("avahi", "Network discovery (Avahi)",
+         "Let the app find printers, Cast devices and other services on your local network by name, through the system bus (needs xdg-dbus-proxy)."),
         ("compat_env", "Pass graphics and toolkit settings",
          "For apps that draw wrongly or won't start. Copies a short list of your session's graphics, toolkit and "
          "audio back-end variables (WGPU_*, MESA_*, SDL_VIDEODRIVER, QT_QPA_PLATFORM, GDK_BACKEND and similar) into the "

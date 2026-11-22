@@ -28,7 +28,7 @@ sudo install -Dm644 completions/ajail.fish /usr/local/share/fish/vendor_completi
 ```
 
 **Required:** Linux, Wayland (X11 is a per-app option, and Wayland can be turned off per app), Python 3, `bubblewrap`, `squashfs-tools`.
-**Optional:** `xdg-dbus-proxy` (notifications, portals, tray, `a11y`, `gnome_shell`, `kde`), `passt` (`net_private`), `squashfuse` + `fuse3` (compressed installs), `systemd --user` (resource limits), `notify-send` (failure popups).
+**Optional:** `xdg-dbus-proxy` (notifications, portals, tray, `a11y`, `gnome_shell`, `kde`, `bluetooth`, `battery`, `avahi`), `passt` (`net_private`), `squashfuse` + `fuse3` (compressed installs), `systemd --user` (resource limits), `notify-send` (failure popups).
 
 ## Usage
 
@@ -76,6 +76,9 @@ Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.confi
 | `gnome_shell` | The browser's GNOME Shell connector can list and install extensions, through the filtered session bus (needs `xdg-dbus-proxy`). Only `org.gnome.Shell.Extensions` at `/org/gnome/Shell` is reachable (the Shell asks you before installing); `Eval` stays closed. Works without `portals`. |
 | `gnome_shell_manage` | With `gnome_shell`: also enable, disable and uninstall extensions. |
 | `kde` | The browser's Plasma integration works: downloads show as Plasma jobs, KRunner finds tabs and history, media controls, keep awake while downloading, through the filtered session bus (needs `xdg-dbus-proxy`). Per-method rules only; KDE Connect stays closed. Works without `portals`. |
+| `bluetooth` | The app can use Bluetooth (Web Bluetooth in Chrome), through a filtered copy of the system bus that lets through only `org.bluez` (needs `xdg-dbus-proxy`). It reaches nearby devices even with `net=0`. |
+| `battery` | The app can read the battery level and power state (the browser's battery API): only `org.freedesktop.UPower` on the filtered system bus (needs `xdg-dbus-proxy`). |
+| `avahi` | The app can find services on your local network by name (printers, Cast devices): only `org.freedesktop.Avahi` on the filtered system bus (needs `xdg-dbus-proxy`). It lists what is on your network. |
 | `privacy` | Minimal `/etc/passwd`, `/etc/group`, `/etc/hosts`; hostname `ajail`; the `Account` portal (your real name) is blocked. |
 
 ```ini

@@ -31,7 +31,7 @@ ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch
 
 # Permission defaults. Keep in sync with DEFAULTS in ajail-gui. None means automatic: wayland_strict is on where the
 # compositor can make a restricted socket, off where it can't (launch decides).
-DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "a11y": 0, "gnome_shell": 0, "gnome_shell_manage": 0, "kde": 0, "camera": 0,
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "a11y": 0, "gnome_shell": 0, "gnome_shell_manage": 0, "kde": 0, "bluetooth": 0, "battery": 0, "avahi": 0, "camera": 0,
             "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 1,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0, "single_instance": 0,
             "portal_screenshot": 1, "portal_screencast": 1,
@@ -574,6 +574,18 @@ def a11y_rules():
             f"--broadcast={r}=org.a11y.atspi.Registry.EventListenerRegistered@{A11Y_REG_PATH}",      # so the app emits only what a reader asked for
             f"--broadcast={r}=org.a11y.atspi.Registry.EventListenerDeregistered@{A11Y_REG_PATH}"]
 
+# System-bus services that run for the whole computer. Each switch opens one fixed name, with no free-form list.
+SYSTEM_BUS_SOCKET = "/run/dbus/system_bus_socket"
+SYSTEM_BUS_NAMES = {"bluetooth": "org.bluez", "battery": "org.freedesktop.UPower", "avahi": "org.freedesktop.Avahi"}
+
+def system_bus_rules(cfg):
+    return [f"--talk={n}" for k, n in SYSTEM_BUS_NAMES.items() if cfg.get(k)]
+
+def system_bus_address():
+    addr = os.environ.get("DBUS_SYSTEM_BUS_ADDRESS", "")
+    if addr.startswith("unix:"): return addr
+    return f"unix:path={SYSTEM_BUS_SOCKET}" if os.path.exists(SYSTEM_BUS_SOCKET) else None
+
 def a11y_bus_address():
     """Where your accessibility bus is: $AT_SPI_BUS_ADDRESS if it is set, else what org.a11y.Bus says (asking also starts the bus, which a
     session only starts when something needs it), else the socket in your runtime folder. None when there is none."""
@@ -714,6 +726,38 @@ def start_a11y(name):
     warn("could not start xdg-dbus-proxy on the accessibility bus; running without a11y", name)
     return None
 
+def start_system(cfg, name):
+    """Start xdg-dbus-proxy on the system bus with one --talk for each switch that is on. Returns (process, pipe, socket) like start_bus, or None (a warning says why)."""
+    px = shutil.which("xdg-dbus-proxy")
+    if not px:
+        warn("xdg-dbus-proxy missing, so Bluetooth, battery and network discovery are off. Install: " + install_hint("xdg-dbus-proxy"), name)
+        return None
+    addr = system_bus_address()
+    if not addr:
+        warn("a system bus switch is on, but the system bus was not found; running without it", name)
+        return None
+    d = f"{runtime_dir()}/ajail"
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    sock = f"{d}/{os.getpid()}.sys"
+    r, w = os.pipe()
+    try:
+        proc = subprocess.Popen([px, f"--fd={w}", addr, sock, "--filter"] + system_bus_rules(cfg), pass_fds=[w],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e:
+        os.close(r); os.close(w)
+        _unlink_all(sock)
+        warn(f"could not start xdg-dbus-proxy ({e}); running without the system bus", name)
+        return None
+    os.close(w)
+    ok = False
+    try: ok = bool(select.select([r], [], [], 3)[0]) and bool(os.read(r, 1))
+    except OSError: pass
+    b = (proc, r, sock)
+    if ok: return b
+    stop_bus(b)
+    warn("could not start xdg-dbus-proxy on the system bus; running without it", name)
+    return None
+
 def _unlink_all(*paths):
     for p in paths:
         try: os.unlink(p)
@@ -832,11 +876,12 @@ def scoped_xauth(src, disp):
         return None
     return dst
 
-def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, gset=None, wl=None, info=None, a11y=None):
+def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, gset=None, wl=None, info=None, a11y=None, system=None):
     """wl: a socket the compositor made for this app with a Wayland security context (see 25_wayland). With it the app gets
     that restricted socket in place of the real one. 'Wayland only if restricted' (wayland_strict) without it: no Wayland.
     info: the descriptor bwrap writes its bwrapinfo.json to, which the portals need to find the app (see launch).
-    a11y: the socket of the filtered accessibility bus (see start_a11y), for a screen reader."""
+    a11y: the socket of the filtered accessibility bus (see start_a11y), for a screen reader.
+    system: the socket of the filtered system bus (see start_system), for bluetooth, battery and avahi."""
     rt = runtime_dir()
     wp = wayland_path() if cfg["wayland"] else None
     if wp and cfg["wayland_strict"] and not wl: wp = None
@@ -925,6 +970,9 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         a += ["--ro-bind", a11y, f"{rt}/at-spi/bus"]
         env["AT_SPI_BUS_ADDRESS"] = f"unix:path={rt}/at-spi/bus"
         env.update(A11Y_ENV)
+    if system and any(cfg[k] for k in SYSTEM_BUS_NAMES):
+        a += ["--ro-bind", system, SYSTEM_BUS_SOCKET]
+        env["DBUS_SYSTEM_BUS_ADDRESS"] = f"unix:path={SYSTEM_BUS_SOCKET}"
     if cfg["portals"]:      # the files you pick in a chooser appear here, only this app's own (bind-try: nothing when there is no document portal)
         a += ["--bind-try", f"{rt}/doc/by-app/{portal_app_id(name)}", f"{rt}/doc"]
     if cfg["app_writable"]:
@@ -1362,7 +1410,7 @@ def sweep_runtime():
         if not pid.isdigit() or os.path.exists(f"/proc/{pid}"): continue
         p = f"{d}/{e}"
         if os.path.isdir(p) and not os.path.islink(p): shutil.rmtree(p, ignore_errors=True)
-        elif e.endswith((".bus", ".a11y", ".wl")):
+        elif e.endswith((".bus", ".a11y", ".sys", ".wl")):
             try: os.unlink(p)
             except OSError: pass
 
@@ -1618,11 +1666,12 @@ def launch(name, root, cfg, extra, source=None, once=False):
     sweep_runtime()
     bus = start_bus(cfg, name)
     a11y = start_a11y(name) if cfg["a11y"] else None      # a screen reader reads the app over its own bus; works without portals
+    system = start_system(cfg, name) if any(cfg[k] for k in SYSTEM_BUS_NAMES) else None
     sec = seccomp_file(cfg["harden"])
     if sec is None and platform.machine() not in ("x86_64", "aarch64"):
         warn(f"no system-call filter for the {platform.machine()} architecture; running without it", name)
     elif sec is None:                             # a filter exists for this CPU but could not be made: never run without it silently
-        stop_bus(bus); stop_bus(a11y)
+        stop_bus(bus); stop_bus(a11y); stop_bus(system)
         die("could not create the system-call filter (see the log); not starting the app without it")
     secpath, gset = None, None
     wd = work_dir(); gen = make_files(cfg, wd, name)
@@ -1657,7 +1706,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
     infofd = (INFO_FD if priv else infof.fileno()) if infof else None
     inner = bwrap_args(name, root, cfg, ["/app/AppRun"] + extra, bus[2] if bus else None,
                        secfd, forward_files(extra), gen, gset, wl.path if wl else None, infofd,
-                       a11y[2] if a11y else None)
+                       a11y[2] if a11y else None, system[2] if system else None)
     cmd = limit_prefix(cfg, name) + (net_wrap(inner, secpath, infopath if infof else None) if priv else inner)
     if infof and priv: infof.close()
     on = ",".join(k for k in DEFAULTS if cfg[k])
@@ -1721,7 +1770,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
     if t2: t2.start()
     rc = p.wait(); t.join(2)
     if t2: t2.join(2)
-    stop_bus(bus); stop_bus(a11y)
+    stop_bus(bus); stop_bus(a11y); stop_bus(system)
     if infof and not infof.closed: infof.close()
     if inst: shutil.rmtree(inst, ignore_errors=True)
     if wl: wl.close()
@@ -2062,7 +2111,7 @@ def cmd_check():
             "compositor has no wp_security_context_v1: apps get the full Wayland socket ('Wayland only if restricted' would turn Wayland off)")
     yes(os.path.exists("/dev/dri"), "GPU devices (/dev/dri) present", "no /dev/dri")
     if glob.glob("/dev/nvidia*"): line("OK", "NVIDIA devices will be shared when Graphics is on")
-    yes(shutil.which("xdg-dbus-proxy"), "xdg-dbus-proxy installed (notifications, portals, tray, screen reader, GNOME Shell, KDE)",
+    yes(shutil.which("xdg-dbus-proxy"), "xdg-dbus-proxy installed (notifications, portals, tray, screen reader, GNOME Shell, KDE, Bluetooth, battery, Avahi)",
         "xdg-dbus-proxy missing: " + install_hint("xdg-dbus-proxy"))
     yes(seccomp_file(), "seccomp filter available", "seccomp filter not available on this CPU architecture")
     yes(bwrap_has("--disable-userns"), "bubblewrap supports disabling nested sandboxes",
@@ -2102,8 +2151,9 @@ def cmd_preview(n):
     wp = wayland_path() if cfg["wayland"] else None
     wl = f"{runtime_dir()}/ajail/PID.wl" if wp and wl_supported(wp) else None
     info = f"{runtime_dir()}/.flatpak/PID/bwrapinfo.json" if bus and cfg["portals"] else None
+    system = f"{runtime_dir()}/ajail/PID.sys" if any(cfg[k] for k in SYSTEM_BUS_NAMES) else None
     cmd = bwrap_args(name, root, cfg, ["/app/AppRun"], bus, SEC_FD if priv else None, (), preview_files(cfg), gset, wl,
-                     (INFO_FD if priv else "FD") if info else None)
+                     (INFO_FD if priv else "FD") if info else None, None, system)
     if priv: cmd = net_wrap(cmd, f"{runtime_dir()}/ajail/PID.d/seccomp.bpf", info)
     props = limit_props(cfg)
     if props: cmd = ["systemd-run", "--user", "--scope", "--quiet"] + props + ["--"] + cmd

@@ -283,6 +283,18 @@ def a11y_rules():
             f"--broadcast={r}=org.a11y.atspi.Registry.EventListenerRegistered@{A11Y_REG_PATH}",      # so the app emits only what a reader asked for
             f"--broadcast={r}=org.a11y.atspi.Registry.EventListenerDeregistered@{A11Y_REG_PATH}"]
 
+# System-bus services that run for the whole computer. Each switch opens one fixed name, with no free-form list.
+SYSTEM_BUS_SOCKET = "/run/dbus/system_bus_socket"
+SYSTEM_BUS_NAMES = {"bluetooth": "org.bluez", "battery": "org.freedesktop.UPower", "avahi": "org.freedesktop.Avahi"}
+
+def system_bus_rules(cfg):
+    return [f"--talk={n}" for k, n in SYSTEM_BUS_NAMES.items() if cfg.get(k)]
+
+def system_bus_address():
+    addr = os.environ.get("DBUS_SYSTEM_BUS_ADDRESS", "")
+    if addr.startswith("unix:"): return addr
+    return f"unix:path={SYSTEM_BUS_SOCKET}" if os.path.exists(SYSTEM_BUS_SOCKET) else None
+
 def a11y_bus_address():
     """Where your accessibility bus is: $AT_SPI_BUS_ADDRESS if it is set, else what org.a11y.Bus says (asking also starts the bus, which a
     session only starts when something needs it), else the socket in your runtime folder. None when there is none."""
@@ -423,6 +435,38 @@ def start_a11y(name):
     warn("could not start xdg-dbus-proxy on the accessibility bus; running without a11y", name)
     return None
 
+def start_system(cfg, name):
+    """Start xdg-dbus-proxy on the system bus with one --talk for each switch that is on. Returns (process, pipe, socket) like start_bus, or None (a warning says why)."""
+    px = shutil.which("xdg-dbus-proxy")
+    if not px:
+        warn("xdg-dbus-proxy missing, so Bluetooth, battery and network discovery are off. Install: " + install_hint("xdg-dbus-proxy"), name)
+        return None
+    addr = system_bus_address()
+    if not addr:
+        warn("a system bus switch is on, but the system bus was not found; running without it", name)
+        return None
+    d = f"{runtime_dir()}/ajail"
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    sock = f"{d}/{os.getpid()}.sys"
+    r, w = os.pipe()
+    try:
+        proc = subprocess.Popen([px, f"--fd={w}", addr, sock, "--filter"] + system_bus_rules(cfg), pass_fds=[w],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e:
+        os.close(r); os.close(w)
+        _unlink_all(sock)
+        warn(f"could not start xdg-dbus-proxy ({e}); running without the system bus", name)
+        return None
+    os.close(w)
+    ok = False
+    try: ok = bool(select.select([r], [], [], 3)[0]) and bool(os.read(r, 1))
+    except OSError: pass
+    b = (proc, r, sock)
+    if ok: return b
+    stop_bus(b)
+    warn("could not start xdg-dbus-proxy on the system bus; running without it", name)
+    return None
+
 def _unlink_all(*paths):
     for p in paths:
         try: os.unlink(p)
@@ -541,11 +585,12 @@ def scoped_xauth(src, disp):
         return None
     return dst
 
-def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, gset=None, wl=None, info=None, a11y=None):
+def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, gset=None, wl=None, info=None, a11y=None, system=None):
     """wl: a socket the compositor made for this app with a Wayland security context (see 25_wayland). With it the app gets
     that restricted socket in place of the real one. 'Wayland only if restricted' (wayland_strict) without it: no Wayland.
     info: the descriptor bwrap writes its bwrapinfo.json to, which the portals need to find the app (see launch).
-    a11y: the socket of the filtered accessibility bus (see start_a11y), for a screen reader."""
+    a11y: the socket of the filtered accessibility bus (see start_a11y), for a screen reader.
+    system: the socket of the filtered system bus (see start_system), for bluetooth, battery and avahi."""
     rt = runtime_dir()
     wp = wayland_path() if cfg["wayland"] else None
     if wp and cfg["wayland_strict"] and not wl: wp = None
@@ -634,6 +679,9 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         a += ["--ro-bind", a11y, f"{rt}/at-spi/bus"]
         env["AT_SPI_BUS_ADDRESS"] = f"unix:path={rt}/at-spi/bus"
         env.update(A11Y_ENV)
+    if system and any(cfg[k] for k in SYSTEM_BUS_NAMES):
+        a += ["--ro-bind", system, SYSTEM_BUS_SOCKET]
+        env["DBUS_SYSTEM_BUS_ADDRESS"] = f"unix:path={SYSTEM_BUS_SOCKET}"
     if cfg["portals"]:      # the files you pick in a chooser appear here, only this app's own (bind-try: nothing when there is no document portal)
         a += ["--bind-try", f"{rt}/doc/by-app/{portal_app_id(name)}", f"{rt}/doc"]
     if cfg["app_writable"]:

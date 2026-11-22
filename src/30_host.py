@@ -162,6 +162,6 @@ def sweep_runtime():
         if not pid.isdigit() or os.path.exists(f"/proc/{pid}"): continue
         p = f"{d}/{e}"
         if os.path.isdir(p) and not os.path.islink(p): shutil.rmtree(p, ignore_errors=True)
-        elif e.endswith((".bus", ".a11y", ".wl")):
+        elif e.endswith((".bus", ".a11y", ".sys", ".wl")):
             try: os.unlink(p)
             except OSError: pass
