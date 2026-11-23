@@ -810,8 +810,10 @@ def machine_id(name):
     v = uuid.uuid4().hex
     try:
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        tmp = f"{p}.{os.getpid()}"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "w") as f: f.write(v + "\n")
+        os.replace(tmp, p)      # O_EXCL on p itself kept a bad file, so every launch got a new id
     except OSError: pass
     return v + "\n"
 

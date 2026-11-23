@@ -198,6 +198,16 @@ class PrivateNetwork(unittest.TestCase):
             A["machine_id"]("Bar")
             self.assertFalse(os.path.exists(target))
 
+    def test_a_broken_machine_id_is_replaced_and_then_stable(self):
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(A, {"CONF": d}):
+            os.makedirs(f"{d}/apps")
+            for bad in ("", "short\n"):
+                with open(f"{d}/apps/Foo.machine-id", "w") as f: f.write(bad)
+                first = A["machine_id"]("Foo")
+                self.assertEqual(len(first.strip()), 32)
+                self.assertEqual(A["machine_id"]("Foo"), first)
+            self.assertEqual(os.listdir(f"{d}/apps"), ["Foo.machine-id"])
+
     def test_resolv_conf_points_at_the_forwarder_only_with_private_net(self):
         with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(A, {"machine_id": lambda n: "0" * 32 + "\n"}):
             gen = A["make_files"](cfg(net=1, net_private=1), d)
