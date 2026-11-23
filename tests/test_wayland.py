@@ -109,7 +109,7 @@ class Client(unittest.TestCase):
         self.assertTrue(A["wl_supported"](sock))
         ctx = A["wayland_context"](sock, f"{self.tmp}/run/app.wl", "firefox", "firefox-42")
         self.assertIsNotNone(ctx, self.warned)
-        self.assertEqual((comp.engine, comp.app_id, comp.instance, comp.committed), ("org.ajail", "firefox", "firefox-42", True))
+        self.assertEqual((comp.engine, comp.app_id, comp.instance, comp.committed), ("io.github.outusuke.ajail", "firefox", "firefox-42", True))
         self.assertEqual(comp.bound, ("wp_security_context_manager_v1", 1))
         self.assertEqual(ctx.path, f"{self.tmp}/run/app.wl")
         listen = comp.listen

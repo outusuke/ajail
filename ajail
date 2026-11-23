@@ -603,11 +603,11 @@ def a11y_bus_address():
     return f"unix:path={socks[0]}" if socks else None
 
 def portal_app_id(name):
-    """The application id the desktop portals know this app by: org.ajail.Run.NAME, with anything outside letters, digits and _
+    """The application id the desktop portals know this app by: io.github.outusuke.ajail.Run.NAME, with anything outside letters, digits and _
     turned into _ and a p put in front of a digit (an id part may not start with one). The Documents portal keeps the files you
     picked for it under doc/by-app/ID."""
     part = re.sub(r"[^A-Za-z0-9_]", "_", name) or "_"
-    return "org.ajail.Run." + ("p" + part if part[0].isdigit() else part)
+    return "io.github.outusuke.ajail.Run." + ("p" + part if part[0].isdigit() else part)
 
 PROXY_ROOT_SKIP = ("proc", "dev", "sys", "home", "root", "mnt", "media", "srv", "boot", "lost+found")
 
@@ -1226,7 +1226,7 @@ def wayland_context(display, sock_path, app_id, instance):
         pipe = os.pipe()
         ctx = c.new_id()
         c.send(mgr, 1, struct.pack("=I", ctx), fds=[srv.fileno(), pipe[0]])    # create_listener(id, listen_fd, close_fd)
-        c.send(ctx, 1, wl_string("org.ajail"))                                   # set_sandbox_engine
+        c.send(ctx, 1, wl_string("io.github.outusuke.ajail"))                                   # set_sandbox_engine
         c.send(ctx, 2, wl_string(app_id))                                      # set_app_id
         c.send(ctx, 3, wl_string(instance))                                    # set_instance_id
         c.send(ctx, 4)                                                         # commit
@@ -2397,7 +2397,7 @@ def cmd_desktop(args):
     apps = f"{HOME}/.local/share/applications"
     if args[0] == "--remove-menu":
         gone = False
-        for p in (f"{apps}/org.ajail.Gui.desktop", f"{HOME}/.local/share/icons/hicolor/scalable/apps/org.ajail.Gui.svg"):
+        for p in (f"{apps}/io.github.outusuke.ajail.Gui.desktop", f"{HOME}/.local/share/icons/hicolor/scalable/apps/io.github.outusuke.ajail.Gui.svg"):
             try:
                 os.unlink(p)
                 gone = True

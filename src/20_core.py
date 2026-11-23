@@ -312,11 +312,11 @@ def a11y_bus_address():
     return f"unix:path={socks[0]}" if socks else None
 
 def portal_app_id(name):
-    """The application id the desktop portals know this app by: org.ajail.Run.NAME, with anything outside letters, digits and _
+    """The application id the desktop portals know this app by: io.github.outusuke.ajail.Run.NAME, with anything outside letters, digits and _
     turned into _ and a p put in front of a digit (an id part may not start with one). The Documents portal keeps the files you
     picked for it under doc/by-app/ID."""
     part = re.sub(r"[^A-Za-z0-9_]", "_", name) or "_"
-    return "org.ajail.Run." + ("p" + part if part[0].isdigit() else part)
+    return "io.github.outusuke.ajail.Run." + ("p" + part if part[0].isdigit() else part)
 
 PROXY_ROOT_SKIP = ("proc", "dev", "sys", "home", "root", "mnt", "media", "srv", "boot", "lost+found")
 

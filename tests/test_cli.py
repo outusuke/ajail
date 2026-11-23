@@ -85,7 +85,7 @@ class DesktopMenu(unittest.TestCase):
         apps = f"{self.t}/.local/share/applications"; icons = f"{self.t}/.local/share/icons/hicolor/scalable/apps"
         self.assertIn("nothing to remove", self.call("--remove-menu")[1])
         os.makedirs(apps); os.makedirs(icons)
-        for f in (f"{apps}/org.ajail.Gui.desktop", f"{icons}/org.ajail.Gui.svg", f"{apps}/other.desktop"): open(f, "w").close()
+        for f in (f"{apps}/io.github.outusuke.ajail.Gui.desktop", f"{icons}/io.github.outusuke.ajail.Gui.svg", f"{apps}/other.desktop"): open(f, "w").close()
         with self.mock.patch.dict(os.environ, {"PATH": "/nonexistent"}):
             self.assertIn("removed", self.call("--remove-menu")[1])
         self.assertEqual(os.listdir(apps), ["other.desktop"]); self.assertEqual(os.listdir(icons), [])

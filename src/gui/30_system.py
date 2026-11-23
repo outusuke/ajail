@@ -1,7 +1,7 @@
 # ======== 30_system: System helpers: distro install hint, app-menu entry, sizes.
 
 def spawn(args, tag):
-    """Start a detached command. Its output goes to the journal under TAG, not under this window's name (org.ajail.Gui)."""
+    """Start a detached command. Its output goes to the journal under TAG, not under this window's name (io.github.outusuke.ajail.Gui)."""
     cat = shutil.which("systemd-cat")
     subprocess.Popen(([cat, "-t", tag] if cat else []) + args, start_new_session=True)
 
@@ -24,15 +24,15 @@ def mount_install_cmd():
             return cmd
     return None
 
-MENU_DESKTOP = HOME + "/.local/share/applications/org.ajail.Gui.desktop"
-MENU_ICON = HOME + "/.local/share/icons/hicolor/scalable/apps/org.ajail.Gui.svg"
+MENU_DESKTOP = HOME + "/.local/share/applications/io.github.outusuke.ajail.Gui.desktop"
+MENU_ICON = HOME + "/.local/share/icons/hicolor/scalable/apps/io.github.outusuke.ajail.Gui.svg"
 MENU_ENTRY = """[Desktop Entry]
 Type=Application
 Name=AppImage Jail
 GenericName=AppImage Sandbox Manager
 Comment=Install sandboxed AppImages and edit their permissions
 Exec=@EXEC@
-Icon=org.ajail.Gui
+Icon=io.github.outusuke.ajail.Gui
 Terminal=false
 StartupNotify=true
 Categories=System;Settings;Security;GTK;

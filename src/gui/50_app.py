@@ -3,7 +3,7 @@
 class App(Adw.Application):
     def __init__(self, log=None, install=None):
         kw = {"flags": Gio.ApplicationFlags.NON_UNIQUE} if (log is not None or install) else {}
-        super().__init__(application_id="org.ajail.Gui", **kw)
+        super().__init__(application_id="io.github.outusuke.ajail.Gui", **kw)
         self.log_scope = log
         self.install_path = install
 

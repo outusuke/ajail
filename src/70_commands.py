@@ -508,7 +508,7 @@ def cmd_desktop(args):
     apps = f"{HOME}/.local/share/applications"
     if args[0] == "--remove-menu":
         gone = False
-        for p in (f"{apps}/org.ajail.Gui.desktop", f"{HOME}/.local/share/icons/hicolor/scalable/apps/org.ajail.Gui.svg"):
+        for p in (f"{apps}/io.github.outusuke.ajail.Gui.desktop", f"{HOME}/.local/share/icons/hicolor/scalable/apps/io.github.outusuke.ajail.Gui.svg"):
             try:
                 os.unlink(p)
                 gone = True

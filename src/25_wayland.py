@@ -114,7 +114,7 @@ def wayland_context(display, sock_path, app_id, instance):
         pipe = os.pipe()
         ctx = c.new_id()
         c.send(mgr, 1, struct.pack("=I", ctx), fds=[srv.fileno(), pipe[0]])    # create_listener(id, listen_fd, close_fd)
-        c.send(ctx, 1, wl_string("org.ajail"))                                   # set_sandbox_engine
+        c.send(ctx, 1, wl_string("io.github.outusuke.ajail"))                                   # set_sandbox_engine
         c.send(ctx, 2, wl_string(app_id))                                      # set_app_id
         c.send(ctx, 3, wl_string(instance))                                    # set_instance_id
         c.send(ctx, 4)                                                         # commit

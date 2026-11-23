@@ -126,13 +126,13 @@ class Rules(unittest.TestCase):
 
     def test_portal_app_id(self):
         f = A["portal_app_id"]
-        self.assertEqual(f("Foo"), "org.ajail.Run.Foo")
-        self.assertEqual(f("my-app.v2"), "org.ajail.Run.my_app_v2")
-        self.assertEqual(f("7zip"), "org.ajail.Run.p7zip")
+        self.assertEqual(f("Foo"), "io.github.outusuke.ajail.Run.Foo")
+        self.assertEqual(f("my-app.v2"), "io.github.outusuke.ajail.Run.my_app_v2")
+        self.assertEqual(f("7zip"), "io.github.outusuke.ajail.Run.p7zip")
 
     def test_app_info_has_an_instance_group(self):
-        t = A["app_info_text"]("org.ajail.Run.Foo", 42)
-        self.assertIn("[Application]\nname=org.ajail.Run.Foo\n", t)
+        t = A["app_info_text"]("io.github.outusuke.ajail.Run.Foo", 42)
+        self.assertIn("[Application]\nname=io.github.outusuke.ajail.Run.Foo\n", t)
         self.assertIn("[Instance]\ninstance-id=42\n", t)
 
     def test_proxy_sandbox_hides_home_and_shows_the_app_info(self):

@@ -224,7 +224,7 @@ class PortalApp(unittest.TestCase):
         a = build(cfg(portals=1), bus="/run/b.sock", info=7)
         self.assertEqual(a[a.index("--info-fd") + 1], "7")
         i = a.index("--bind-try")
-        self.assertTrue(a[i + 1].endswith("/doc/by-app/org.ajail.Run.t"))
+        self.assertTrue(a[i + 1].endswith("/doc/by-app/io.github.outusuke.ajail.Run.t"))
         self.assertTrue(a[i + 2].endswith("/doc"))
         envs = setenv(a)
         self.assertEqual(envs["GTK_USE_PORTAL"], "1")
