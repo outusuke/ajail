@@ -42,12 +42,12 @@ class Hints(unittest.TestCase):
 
     def test_a_crash_with_no_reason_suggests_x11_as_a_guess_but_a_specific_message_wins(self):
         for l in (run("Aborted (core dumped)", code=None) + [exit_(134)], run(code=134)):
-            self.assertEqual(keys(l), [("x11", 1)], l)
-        self.assertEqual(keys(run(code=134), cur(x11=1)), [])                          # already on
+            self.assertEqual(keys(l, cur(userns=1)), [("x11", 1)], l)
+        self.assertEqual(keys(run(code=134), cur(x11=1, userns=1)), [])                          # already on
         self.assertEqual(keys(run(code=1)), [])                                        # an ordinary failure is no guess
         l = run("Error: cannot open display: :0", code=134)
-        self.assertEqual(len(G["log_hints"](l, cur())), 1)                             # the specific hint, not both
-        self.assertNotIn("a guess", G["log_hints"](l, cur())[0][2])
+        self.assertEqual(len(G["log_hints"](l, cur(userns=1))), 1)                             # the specific hint, not both
+        self.assertNotIn("a guess", G["log_hints"](l, cur(userns=1))[0][2])
         self.assertEqual(keys(run(code=134), cur()) and G["log_hints"](run(code=134), cur())[0][2][-9:], "(a guess)")
 
     WGPU = ["wgpu error: Validation Error", "Caused by:", "  In Device::create_shader_module, label = 'iced_wgpu.quad.solid.shader'",

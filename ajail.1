@@ -238,7 +238,7 @@ Switches (0 or 1, default in brackets):
 .BR printing " (0),"
 .BR theme " (1),"
 .BR app_writable " (0, for apps that fail with Read\-only file system under /app: what they write goes to a separate layer and the app's own files stay unchanged; needs bubblewrap 0.11+),"
-.BR userns " (1; 0 needs bubblewrap 0.8+),"
+.BR userns " (0; 1 lets Electron and Chromium apps make their own sandbox; 0 needs bubblewrap 0.8+),"
 .BR tmp_home " (0, private home erased on exit),"
 .BR privacy " (0, minimal /etc/passwd, /etc/group and /etc/hosts, the hostname ajail and no Account portal),"
 .BR single_instance " (0, one private folder per app from $XDG_RUNTIME_DIR is bound into every sandbox of it and TMPDIR points there, so a second launch can find the first, as Chrome does with its singleton socket; /tmp stays private)"
@@ -310,9 +310,9 @@ The app's own status, or 128 plus the signal number if a signal ended it. ajail 
 start the app (bad option, missing bubblewrap, no Wayland session, running as root).
 .SH LIMITS
 Only type 2 AppImages work. The private home is tied to the app's Name=, so a different app with the same file name
-is refused instead of inheriting the first one's data. Several defaults (net, sound, gpu, userns) favour apps that
+is refused instead of inheriting the first one's data. Several defaults (net, sound, gpu) favour apps that
 work out of the box; for an app you do not trust set
-.BR "userns=0 harden=1 net=0 sound=0" .
+.BR "harden=1 net=0 sound=0" .
 .SH SEE ALSO
 .BR bwrap (1),
 .BR xdg\-dbus\-proxy (1),

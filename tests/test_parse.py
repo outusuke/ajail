@@ -159,7 +159,7 @@ class Docs(unittest.TestCase):
         r = open(f"{HERE}/README.md").read()
         self.assertIn("Defaults that favor compatibility", r)
         self.assertIn("`userns`", r); self.assertIn("`harden`", r)
-        self.assertEqual(A["DEFAULTS"]["userns"], 1); self.assertEqual(A["DEFAULTS"]["harden"], 0)   # the README says so
+        self.assertEqual(A["DEFAULTS"]["userns"], 0); self.assertEqual(A["DEFAULTS"]["harden"], 0)   # the README says so
 
 class LogFile(unittest.TestCase):
     """The log holds what apps print: private to you, trimmed in place, and never left with half a line."""

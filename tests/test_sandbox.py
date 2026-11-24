@@ -375,10 +375,9 @@ class OldBubblewrapFailsClosed(unittest.TestCase):
         self.assertIsInstance(r, SystemExit); self.assertNotEqual(r.code, 0)
         self.assertIn("--hostname", err); self.assertIn("privacy=0", err)
 
-    def test_nothing_is_refused_that_was_not_asked_for(self):     # the defaults still run on an old bubblewrap
-        for missing in ("--disable-userns", "--hostname"):
-            r, err = self.build_without(missing, cfg())
-            self.assertIsInstance(r, list, missing); self.assertEqual(err, "")
+    def test_nothing_is_refused_that_was_not_asked_for(self):
+        r, err = self.build_without("--hostname", cfg())
+        self.assertIsInstance(r, list); self.assertEqual(err, "")
 
     def test_supported_options_are_used(self):
         a = build(cfg(userns=0, privacy=1))

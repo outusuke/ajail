@@ -96,15 +96,15 @@ Back up or move settings with `ajail export -o FILE` and `ajail import FILE` (`-
 
 | Key | Default | What you give up | Stricter |
 | --- | --- | --- | --- |
-| `userns` | 1 | The app can create user namespaces, a larger kernel attack surface. Electron and Chromium apps need this. | `userns=0` (bubblewrap 0.8+) |
 | `harden` | 0 | `io_uring_*`, `userfaultfd`, `process_vm_*`, `kcmp`, `pidfd_getfd` and the new mount calls (`fsopen`, `move_mount` and friends) stay available. | `harden=1`; may break apps, check the Log page |
+
+`userns` is off by default, which needs bubblewrap 0.8+. Electron and Chromium apps need `userns=1` to make their own sandbox.
 
 Also open on purpose: `net=1`, `sound=1` (includes the microphone), `gpu=1`, `portals=1` with screenshot and screencast (the desktop still asks), `theme=1`.
 
 For an app you don't trust:
 
 ```ini
-userns=0
 harden=1
 net=0
 sound=0

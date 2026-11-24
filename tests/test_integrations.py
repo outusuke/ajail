@@ -230,7 +230,7 @@ class LogPage(unittest.TestCase):
 
     def test_start_shows_only_differences(self):
         s = G["start_changes"]
-        self.assertEqual(s(["net", "sound", "gpu", "wayland", "portals", "theme", "userns", "portal_screenshot", "portal_screencast",
+        self.assertEqual(s(["net", "sound", "gpu", "wayland", "portals", "theme", "portal_screenshot", "portal_screencast",
                             "portal_notification", "portal_openuri", "portal_print", "portal_trash", "portal_email", "portal_inhibit", "portal_network"]), "(defaults)")
         t = s(["net", "x11"], "mem_max=512")
         self.assertIn("+X11", t); self.assertIn("-Audio", t); self.assertIn("limits mem_max=512", t); self.assertNotIn("+Internet", t)
