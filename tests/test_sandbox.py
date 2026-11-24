@@ -389,8 +389,21 @@ class SeccompList(unittest.TestCase):
         import struct
         f = A["seccomp_file"](harden); data = f.read(); f.close()
         ins = [struct.unpack("=HBBI", data[i:i + 8]) for i in range(0, len(data), 8)]
-        # skip the arch check and the x32 test; what is left are the listed numbers, then the allow and deny returns
-        return {k for code, jt, jf, k in ins[4:] if code == 0x15}
+        # skip the arch check, the x32 test and the socket block; what is left are the listed numbers, then the allow and deny returns
+        return {k for code, jt, jf, k in ins[5 + len(A["SOCKET_FAMILIES"]) + 3:] if code == 0x15}
+
+    @staticmethod
+    def run_bpf(data, nr, arch, arg0=0):
+        import struct
+        ins = [struct.unpack("=HBBI", data[i:i + 8]) for i in range(0, len(data), 8)]
+        pc, acc = 0, 0
+        while True:
+            code, jt, jf, k = ins[pc]
+            if code == 0x20: acc = {0: nr, 4: arch, 16: arg0 & 0xFFFFFFFF}[k]; pc += 1
+            elif code == 0x15: pc += 1 + (jt if acc == k else jf)
+            elif code == 0x35: pc += 1 + (jt if acc >= k else jf)
+            elif code == 0x06: return k
+            else: raise AssertionError(f"unexpected instruction {code:#x}")
 
     def test_the_default_filter_has_the_original_list_and_nothing_more(self):
         import platform
@@ -408,6 +421,26 @@ class SeccompList(unittest.TestCase):
             self.assertIn(nr, extra, nr)
         self.assertTrue(self.blocked(False) < self.blocked(True))      # harden only ever adds
         self.assertTrue(extra.isdisjoint(self.blocked(False)))
+
+    def test_socket_is_allowed_for_unix_inet_inet6_and_netlink_only(self):
+        allow, deny = 0x7FFF0000, 0x00050001
+        for machine, audit, other in (("x86_64", 0xC000003E, 0xC00000B7), ("aarch64", 0xC00000B7, 0xC000003E)):
+            for harden in (False, True):
+                with unittest.mock.patch.object(A["platform"], "machine", return_value=machine):
+                    f = A["seccomp_file"](harden); data = f.read(); f.close()
+                nr = A["SOCKET_NR"][machine]
+                for fam in (1, 2, 10, 16):
+                    self.assertEqual(self.run_bpf(data, nr, audit, fam), allow, f"{machine} family {fam}")
+                for fam in (0, 3, 17, 21, 30, 31, 38, 40, 44, 255):    # AF_PACKET, RDS, TIPC, BLUETOOTH, ALG, VSOCK, XDP...
+                    self.assertEqual(self.run_bpf(data, nr, audit, fam), deny, f"{machine} family {fam}")
+                self.assertEqual(self.run_bpf(data, nr, audit, (1 << 32) | 38), deny, "only the low half of the argument counts, as in the kernel")
+                self.assertEqual(self.run_bpf(data, nr, audit, (1 << 32) | 1), allow)
+                self.assertEqual(self.run_bpf(data, nr, other, 1), deny, "the other ABI (32-bit) is refused")
+                self.assertEqual(self.run_bpf(data, nr | 0x40000000, audit, 1), deny, "x32 is refused")
+                self.assertEqual(self.run_bpf(data, 0, audit, 38), allow, "other calls ignore the first argument")
+                base = {"x86_64": A["SYSCALLS_X86_64"], "aarch64": A["SYSCALLS_AARCH64"]}[machine]
+                for blocked in base + (A["SYSCALLS_EXTRA"][machine] if harden else []):
+                    self.assertEqual(self.run_bpf(data, blocked, audit, 1), deny, f"{machine} {blocked}")
 
     def test_the_two_lists_are_the_same_length_on_both_cpus_apart_from_the_cpu_specific_calls(self):
         e = A["SYSCALLS_EXTRA"]

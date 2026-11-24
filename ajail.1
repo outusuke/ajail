@@ -60,7 +60,9 @@ Unpacking happens in a separate sandbox with no network and no home. A seccomp f
 .BR bpf ,
 .BR perf_event_open ,
 .B kexec_load
-and similar calls. Notifications and portals go through
+and similar calls, and
+.BR socket (2)
+is limited to Unix, IPv4, IPv6 and netlink sockets. Notifications and portals go through
 .BR xdg\-dbus\-proxy (1),
 which allows only the calls the permissions name.
 .PP

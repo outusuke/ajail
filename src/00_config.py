@@ -62,6 +62,9 @@ SYSCALLS_AARCH64 = [104, 294, 241, 280, 116, 89, 60, 217, 219, 218, 239, 235, 23
 # The generic numbers (424 and up) are the same on both CPUs.
 SYSCALLS_EXTRA = {"x86_64": [425, 426, 427, 323, 310, 311, 312, 438, 428, 429, 430, 431, 432, 433, 442],
                   "aarch64": [425, 426, 427, 282, 270, 271, 272, 438, 428, 429, 430, 431, 432, 433, 442]}
+# socket() only for unix, inet, inet6 and netlink; any other family (AF_ALG, AF_VSOCK, AF_PACKET...) gets EPERM.
+SOCKET_NR = {"x86_64": 41, "aarch64": 198}
+SOCKET_FAMILIES = (1, 2, 10, 16)
 # Variables that "compat_env" copies from your session into the sandbox, only when they are set. Graphics, toolkit and
 # audio/video back-end switches, nothing else: no PATH, no tokens or keys, no SSH_AUTH_SOCK, no DBUS_*. Exact names
 # plus the prefixes below. Keep this list short; every entry is something the app can read.

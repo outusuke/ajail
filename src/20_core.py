@@ -143,10 +143,14 @@ def seccomp_file(harden=False):
            (0x15, 1, 0, audit),                # native arch? skip the next instruction
            (0x06, 0, 0, deny),                 # other ABI (32-bit/x32): deny
            (0x20, 0, 0, 0)]                    # load syscall number
-    n = len(nrs)
-    if n > 250: raise ValueError("too many blocked system calls: a BPF jump offset is 8 bits")
-    # x32 calls share the x86_64 audit arch and only differ by bit 30 of the number: deny them all (skips the list + allow)
-    ins += [(0x35, n + 1, 0, 0x40000000)]                       # number >= 0x40000000: jump to deny
+    n, fam = len(nrs), SOCKET_FAMILIES
+    if n + len(fam) > 245: raise ValueError("too many blocked system calls: a BPF jump offset is 8 bits")
+    b = len(fam) + 3                                            # length of the socket block below
+    # x32 calls share the x86_64 audit arch and only differ by bit 30 of the number: deny them all (skips the socket block, the list + allow)
+    ins += [(0x35, n + b + 1, 0, 0x40000000)]                   # number >= 0x40000000: jump to deny
+    ins += [(0x15, 0, b - 1, SOCKET_NR[platform.machine()]), (0x20, 0, 0, 16)]   # socket(): load the family (low half of arg 0)
+    ins += [(0x15, n + b - 3 - i, 0, f) for i, f in enumerate(fam)]              # listed family: jump to allow
+    ins += [(0x06, 0, 0, deny)]                                 # any other family: deny
     ins += [(0x15, n - i, 0, nr) for i, nr in enumerate(nrs)]   # listed syscall: jump to deny
     ins += [(0x06, 0, 0, 0x7FFF0000), (0x06, 0, 0, deny)]       # allow, deny
     try:
