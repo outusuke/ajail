@@ -441,14 +441,21 @@ class SeccompList(unittest.TestCase):
                 for blocked in base + (A["SYSCALLS_EXTRA"][machine] if harden else []):
                     self.assertEqual(self.run_bpf(data, blocked, audit, 1), deny, f"{machine} {blocked}")
 
-    def test_i386_is_filtered_like_the_native_abi_but_socketcall_is_blocked(self):
-        import platform
+    def test_i386_is_refused_unless_allow_32bit_is_on(self):
+        with unittest.mock.patch.object(A["platform"], "machine", return_value="x86_64"):
+            for args in ((False,), (True,), (False, False)):
+                f = A["seccomp_file"](*args); data = f.read(); f.close()
+                self.assertEqual(self.run_bpf(data, 0, A["I386_AUDIT"], 1), 0x00050001, args)
+
+    def test_i386_is_filtered_like_the_native_abi_and_socketcall_is_allowed(self):
         allow, deny, audit = 0x7FFF0000, 0x00050001, A["I386_AUDIT"]
         for harden in (False, True):
             with unittest.mock.patch.object(A["platform"], "machine", return_value="x86_64"):
-                f = A["seccomp_file"](harden); data = f.read(); f.close()
+                f = A["seccomp_file"](harden, True); data = f.read(); f.close()
             blocked = A["SYSCALLS_I386"] + (A["SYSCALLS_I386_EXTRA"] if harden else [])
-            for nr in blocked + [A["I386_SOCKETCALL_NR"]]: self.assertEqual(self.run_bpf(data, nr, audit, 1), deny, nr)
+            for nr in blocked: self.assertEqual(self.run_bpf(data, nr, audit, 1), deny, nr)
+            self.assertEqual(self.run_bpf(data, A["I386_SOCKETCALL_NR"], audit, 38), allow, "its arguments are in memory, so it is allowed whole")
+            self.assertEqual(self.run_bpf(data, 359, 0xC000003E, 38), allow, "x86_64 359 is not socket")
             for nr in (0, 1, 3, 4, 5, 192, 435, 0x40000000): self.assertEqual(self.run_bpf(data, nr, audit, 1), allow, nr)
             if not harden: self.assertEqual(self.run_bpf(data, A["SYSCALLS_I386_EXTRA"][0], audit, 1), allow)
             sock = A["I386_SOCKET_NR"]
@@ -457,7 +464,7 @@ class SeccompList(unittest.TestCase):
             self.assertEqual(self.run_bpf(data, sock, audit, (1 << 32) | 38), deny)
             self.assertEqual(self.run_bpf(data, 0, 0x40000001, 0), deny, "an unknown ABI is refused")
         with unittest.mock.patch.object(A["platform"], "machine", return_value="aarch64"):
-            f = A["seccomp_file"](False); data = f.read(); f.close()
+            f = A["seccomp_file"](False, True); data = f.read(); f.close()
         self.assertEqual(self.run_bpf(data, 0, audit, 0), deny, "aarch64 does not accept i386")
 
     def test_i386_numbers_match_the_kernel_headers(self):

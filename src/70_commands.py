@@ -536,16 +536,17 @@ ajail install FILE.AppImage      unpack it and add it to the app menu; the file 
                                  the Trash; --mount keeps it compressed and mounts it at launch, experimental; with
                                  --mount, --move moves the file into ajail's folder instead of copying it, and falls
                                  back to a copy on a removable or network drive)
-ajail run [--compat-env] NAME [args]
+ajail run [--compat-env] [--allow-32bit] NAME [args]
                                  run an installed app (--compat-env passes a short list of graphics and toolkit
                                  variables from your session into the sandbox for this run; the permission
-                                 compat_env=1 does it every time)
+                                 compat_env=1 does it every time; --allow-32bit lets a 32-bit x86 app run, which
+                                 weakens the socket filter for it)
 ajail uninstall NAME [--purge]   remove it from the app menu (--purge also moves its data to the Trash); refuses to
                                  delete an AppImage that was moved into ajail (use restore, or --discard-image)
 ajail restore NAME [--keep] [--to FOLDER]
                                  undo a compressed install that moved the file: put it back and uninstall
                                  (--keep puts a copy back and leaves the app installed; --to picks the folder)
-ajail run-file [--once] [--mount] [--compat-env] FILE
+ajail run-file [--once] [--mount] [--compat-env] [--allow-32bit] FILE
                                  run an AppImage without offering to install it (--once deletes its unpacked copy on exit;
                                  --mount mounts the file instead of unpacking it, experimental; ignored with --once)
 ajail export [NAME | --default | --all] [-o FILE] [--force]
@@ -577,14 +578,18 @@ def main():
     elif c == "uninstall": cmd_uninstall(a[1:])
     elif c == "restore": cmd_restore(a[1:])
     elif c == "desktop": cmd_desktop(a[1:])
-    elif c == "run" and len(a) > 1 and a[1] == "--compat-env" and len(a) > 2: run_installed(a[2], a[3:], True)
-    elif c == "run" and len(a) > 1: run_installed(a[1], a[2:])
+    elif c == "run" and len(a) > 1:
+        rest, flags = a[1:], set()
+        while rest and rest[0] in ("--compat-env", "--allow-32bit"):
+            flags.add(rest.pop(0))
+        if not rest: die("usage: ajail run [--compat-env] [--allow-32bit] NAME [args]")
+        run_installed(rest[0], rest[1:], "--compat-env" in flags, "--allow-32bit" in flags)
     elif c == "run-file":
         rest, flags = a[1:], set()
-        while rest and rest[0] in ("--once", "--mount", "--compat-env"):
+        while rest and rest[0] in ("--once", "--mount", "--compat-env", "--allow-32bit"):
             flags.add(rest.pop(0))
-        if not rest: die("usage: ajail run-file [--once] [--mount] [--compat-env] FILE [args]")
-        run_app(rest[0], rest[1:], "--once" in flags, "--mount" in flags and "--once" not in flags, "--compat-env" in flags)   # once never mounts
+        if not rest: die("usage: ajail run-file [--once] [--mount] [--compat-env] [--allow-32bit] FILE [args]")
+        run_app(rest[0], rest[1:], "--once" in flags, "--mount" in flags and "--once" not in flags, "--compat-env" in flags, "--allow-32bit" in flags)   # once never mounts
     else: open_file(c, a[1:])
 
 main()

@@ -60,7 +60,7 @@ class LaunchOutput(unittest.TestCase):
         self.keep = {k: A[k] for k in names + ("wayland_path", "wayland_context", "wl_supported")}
         A.update(wayland_path=lambda: None, wayland_context=lambda *a: None, wl_supported=lambda p: False)       # never talk to the real compositor from a test
         A.update(check_identity=lambda *a: None, private_net=lambda c: False, sweep_runtime=lambda: None,
-                 start_bus=lambda *a: None, seccomp_file=lambda h: tempfile.TemporaryFile(), work_dir=lambda: None, make_files=lambda *a: {},
+                 start_bus=lambda *a: None, seccomp_file=lambda h, a=False: tempfile.TemporaryFile(), work_dir=lambda: None, make_files=lambda *a: {},
                  bwrap_args=lambda *a: [], limit_prefix=lambda *a: [], forward_files=lambda e: [], stop_bus=lambda b: None,
                  running=lambda n: False, notify_failure=lambda n: None, log=lambda *a, **k: None,
                  HOMES=f"{self.d}/h", RUNNING=f"{self.d}/r", SOURCES=f"{self.d}/s", LOG=f"{self.d}/log")
@@ -156,7 +156,7 @@ class LaunchOutput(unittest.TestCase):
 
     def test_no_filter_on_a_supported_cpu_refuses_to_run(self):
         """If the system-call filter could not be created, the app must not run unfiltered."""
-        A["seccomp_file"] = lambda h: None
+        A["seccomp_file"] = lambda h, a=False: None
         A["platform"] = types.SimpleNamespace(machine=lambda: "x86_64")
         err = io.StringIO()
         cfg = dict(A["DEFAULTS"], **A["NUM"], theme=0)
@@ -276,7 +276,7 @@ class PidFiles(unittest.TestCase):
             def __getattr__(s, n): return getattr(subprocess, n)
             Popen = P
         A.update(check_identity=lambda *a: None, private_net=lambda c: False, sweep_runtime=lambda: None,
-                 start_bus=lambda *a: None, seccomp_file=lambda h: tempfile.TemporaryFile(), work_dir=lambda: None,
+                 start_bus=lambda *a: None, seccomp_file=lambda h, a=False: tempfile.TemporaryFile(), work_dir=lambda: None,
                  make_files=lambda *a: {}, bwrap_args=lambda *a: [], limit_prefix=lambda *a: [], forward_files=lambda e: [],
                  stop_bus=lambda b: None, running=lambda n: False, notify_failure=lambda n: None, log=lambda *a, **k: None,
                  HOMES=f"{d}/h", SOURCES=f"{d}/s", LOG=f"{d}/log", subprocess=FakeSub())

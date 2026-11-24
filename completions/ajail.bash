@@ -12,12 +12,13 @@ _ajail() {
     fi
     case $cmd in
         run)
-            if [[ $cur == -* ]] && (( COMP_CWORD == 2 )); then COMPREPLY=( $(compgen -W "--compat-env" -- "$cur") )
-            elif (( COMP_CWORD == 2 )) || { (( COMP_CWORD == 3 )) && [[ ${COMP_WORDS[2]} == --compat-env ]]; }; then
+            if [[ $cur == -* ]]; then COMPREPLY=( $(compgen -W "--compat-env --allow-32bit" -- "$cur") )
+            else
+                for (( i = 2; i < COMP_CWORD; i++ )); do [[ ${COMP_WORDS[i]} == --* ]] || return; done
                 COMPREPLY=( $(compgen -W "$(_ajail_apps)" -- "$cur") )
             fi ;;
         run-file)
-            if [[ $cur == -* ]]; then COMPREPLY=( $(compgen -W "--once --mount --compat-env" -- "$cur") )
+            if [[ $cur == -* ]]; then COMPREPLY=( $(compgen -W "--once --mount --compat-env --allow-32bit" -- "$cur") )
             else compopt -o filenames 2>/dev/null; COMPREPLY=( $(compgen -f -- "$cur") ); fi ;;
         install)
             if [[ $cur == -* ]]; then COMPREPLY=( $(compgen -W "--trash --mount --move" -- "$cur") )

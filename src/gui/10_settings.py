@@ -290,6 +290,9 @@ LOG_HINTS = [
     (r"wgpu error: validation error[\s\S]*iced_wgpu|iced_wgpu[\s\S]*wgpu error: validation error",
      "env", "ICED_BACKEND=tiny-skia", "If that does not help: draw on the processor (a guess)",
      "The app draws with iced, which can skip the graphics card entirely. Slower, but it needs nothing from the card.", {}),
+    (r"32-bit app and 'allow 32-bit apps' is off",
+     "allow_32bit", 1, "Allow 32-bit apps",
+     "The app is 32-bit, which is blocked while this is off. Turning it on weakens the network-socket filter for 32-bit apps, so use it only for this app.", {}),
     # A silent crash (segfault, abort, trap) while user namespaces are off: Chrome, Chromium and Electron die like this when
     # they cannot make their own sandbox, often with only a core dump and no message. Shown only while "userns" is off.
     (r"\] EXIT code=(13[2-6]|139|159)\b",

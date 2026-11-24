@@ -16,6 +16,7 @@ def load():
     return ns
 
 G = load()
+HINT_32BIT = [l for l in open(f"{HERE}/ajail").read().splitlines() if l.startswith("HINT_32BIT = ")][0].split(" = ", 1)[1].strip('"')
 START = "[2026-11-11 20:00:00] [app] START allow=[net,sound,gpu] limits=[] seccomp=on dbus=on\n"
 def exit_(code): return f"[2026-11-11 20:00:05] [app] EXIT code={code}\n"
 def run(*body, code=1): return [START] + [f"[app] {b}\n" for b in body] + ([exit_(code)] if code is not None else [])
@@ -138,6 +139,12 @@ class Hints(unittest.TestCase):
 
     def test_unrelated_errors_give_nothing(self):
         self.assertEqual(keys(run("Segmentation fault (core dumped)", "assertion failed in game.c"), cur(userns=0, gpu=0, net=0)), [])
+
+    def test_the_32bit_warning_from_ajail_suggests_the_toggle(self):
+        l = run("WARNING " + HINT_32BIT, code=139)
+        self.assertEqual(keys(l, cur(allow_32bit=0, userns=1)), [("allow_32bit", 1)])
+        self.assertEqual(keys(l, cur(allow_32bit=1, userns=1)), [])
+        self.assertIn("weakens", [h for h in G["LOG_HINTS"] if h[1] == "allow_32bit"][0][4])
 
     def test_every_hint_names_a_real_switch_and_a_real_value(self):
         for pat, key, want, title, why, needs in G["LOG_HINTS"]:

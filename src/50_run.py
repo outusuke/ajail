@@ -9,7 +9,7 @@ def check_display(cfg):
     if cfg["wayland"] and not cfg["x11"] and not wayland_path():
         die("no Wayland session found. Enable 'X11 compatibility' for this app in ajail-gui.")
 
-def run_app(arg, extra, once=False, mount=False, compat=False):
+def run_app(arg, extra, once=False, mount=False, compat=False, allow_32bit=False):
     guard()
     app = os.path.realpath(arg)
     if not os.path.isfile(app): die(f"not a file: {arg}")
@@ -18,6 +18,7 @@ def run_app(arg, extra, once=False, mount=False, compat=False):
     LOG_NAME[0] = name                            # from here on, errors are logged too
     cfg = load_cfg(name)
     if compat: cfg["compat_env"] = 1
+    if allow_32bit: cfg["allow_32bit"] = 1
     check_display(cfg)
     if mount:
         # Nothing is unpacked: the AppImage itself is mounted for this run (squashfuse, outside the sandbox).
@@ -29,7 +30,7 @@ def run_app(arg, extra, once=False, mount=False, compat=False):
         return
     launch(name, ensure_extracted(app, name, off), cfg, extra, source=app, once=once)
 
-def run_installed(name, extra, compat=False):
+def run_installed(name, extra, compat=False, allow_32bit=False):
     guard()
     name = clean(name)
     LOG_NAME[0] = name
@@ -37,6 +38,7 @@ def run_installed(name, extra, compat=False):
     if not kind: die(f"'{name}' is not installed")
     cfg = load_cfg(name)
     if compat: cfg["compat_env"] = 1
+    if allow_32bit: cfg["allow_32bit"] = 1
     check_display(cfg)
     if kind == "root":
         launch(name, f"{INSTALLED}/{name}/root", cfg, extra)
@@ -46,6 +48,11 @@ def run_installed(name, extra, compat=False):
         launch(name, mp, cfg, extra)
     finally:
         unmount_image(mp)
+
+def is_32bit_app(root, source=None):
+    """True if AppRun (when it is a program, not a script) or the AppImage file itself is a 32-bit x86 ELF."""
+    app = os.path.realpath(f"{root}/AppRun")
+    return (app.startswith(os.path.realpath(root) + "/") and is_i386_elf(app)) or bool(source and is_i386_elf(source))
 
 STOP_GRACE = 5      # seconds between SIGTERM and SIGKILL when ajail is told to stop
 
@@ -69,7 +76,10 @@ def launch(name, root, cfg, extra, source=None, once=False):
     bus = start_bus(cfg, name)
     a11y = start_a11y(name) if cfg["a11y"] else None      # a screen reader reads the app over its own bus; works without portals
     system = start_system(cfg, name) if any(cfg[k] for k in SYSTEM_BUS_NAMES) else None
-    sec = seccomp_file(cfg["harden"])
+    sec = seccomp_file(cfg["harden"], bool(cfg["allow_32bit"]))
+    if cfg["allow_32bit"]:
+        warn("allow_32bit=1: 32-bit apps may run. socketcall() hides its arguments from the filter, so for them the socket() family check does not apply (AF_ALG, AF_PACKET, AF_VSOCK...)"
+             if platform.machine() == "x86_64" else f"allow_32bit=1 has no effect on {platform.machine()}", name)
     if sec is None and platform.machine() not in ("x86_64", "aarch64"):
         warn(f"no system-call filter for the {platform.machine()} architecture; running without it", name)
     elif sec is None:                             # a filter exists for this CPU but could not be made: never run without it silently
@@ -182,8 +192,10 @@ def launch(name, root, cfg, extra, source=None, once=False):
     if once and not running(name): rm_tree(f"{EXTRACT}/{name}")
     code, sig = exit_code(rc), crash_signal(rc)
     log(f"EXIT code={code}" + (f" ({sig})" if sig else ""), name)
+    hint = HINT_32BIT if rc != 0 and not stopped[0] and not cfg["allow_32bit"] and platform.machine() == "x86_64" and is_32bit_app(root, source) else ""
+    if hint: warn(hint, name)
     if not stopped[0]:
-        if sig: notify_crash(name, sig)                                  # at any time, not only right after starting
-        elif rc != 0 and time.time() - start < 10: notify_failure(name)
-        elif rc != 0 and not sys.stderr.isatty(): notify_ended(name, code)      # no terminal to show the error, so say it
+        if sig: notify_crash(name, sig, hint)                            # at any time, not only right after starting
+        elif rc != 0 and time.time() - start < 10: notify_failure(name, hint)
+        elif rc != 0 and not sys.stderr.isatty(): notify_ended(name, code, hint)      # no terminal to show the error, so say it
     sys.exit(code)

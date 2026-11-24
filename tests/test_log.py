@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The launch log: how it is written (private, never through a link, trimmed in place, no injected control characters),
 what reaches it (errors, exit codes, an app's stderr) and when a failed-start popup is sent."""
-import contextlib, io, os, signal, socket, subprocess, sys, tempfile, threading, time, unittest
+import contextlib, io, os, signal, socket, struct, subprocess, sys, tempfile, threading, time, unittest, unittest.mock
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -65,6 +65,22 @@ class LogFile(unittest.TestCase):
             A["die"]("while previewing")
         self.assertFalse(os.path.exists(A["LOG"]))                        # preview never writes to the log
 
+    def test_is_i386_elf(self):
+        hdr = lambda cls, data, machine: b"\x7fELF" + bytes([cls, data, 1]) + b"\0" * 9 + struct.pack("<HH", 2, machine) + b"\0" * 32
+        for label, data, want in (("i386", hdr(1, 1, 3), True), ("x86_64", hdr(2, 1, 62), False), ("arm", hdr(1, 1, 40), False),
+                                  ("big-endian", hdr(1, 2, 3), False), ("script", b"#!/bin/sh\n" + b"\0" * 20, False), ("short", hdr(1, 1, 3)[:19], False)):
+            p = f"{self.d}/{label}"
+            with open(p, "wb") as f: f.write(data)
+            self.assertIs(A["is_i386_elf"](p), want, label)
+        self.assertFalse(A["is_i386_elf"](f"{self.d}/missing"))
+
+    def test_a_hint_rides_on_the_notification(self):
+        for call in (lambda: A["notify_crash"]("x", "SIGSEGV", "H"), lambda: A["notify_ended"]("x", 1, "H"), lambda: A["notify_failure"]("x", "H")):
+            with unittest.mock.patch("shutil.which", side_effect=lambda x: "/usr/bin/notify-send" if x == "notify-send" else None), \
+                 unittest.mock.patch("subprocess.run", return_value=type("R", (), {"stdout": "no actions"})()) as run:
+                call()
+            self.assertTrue(any(" H " in x for x in run.call_args_list[-1].args[0]))
+
     def test_exit_code_is_the_shells_128_plus_signal(self):
         self.assertEqual([A["exit_code"](x) for x in (0, 3, -9, -15)], [0, 3, 137, 143])
 
@@ -88,8 +104,9 @@ class Launch(unittest.TestCase):
             Popen = P
         A.update(check_identity=lambda *a: None, sweep_runtime=lambda: None, start_bus=lambda *a: None, work_dir=lambda: f"{self.d}/wd",
                  limit_prefix=lambda *a: [], forward_files=lambda e: [], stop_bus=lambda b: None, running=lambda n: False,
-                 notify_failure=self.popups.append, notify_crash=lambda n, sg: self.popups.append((n, sg)),
-                 notify_ended=lambda n, c: self.popups.append(("ended", n, c)), journal_tag=lambda n: None, HOMES=f"{self.d}/h", RUNNING=f"{self.d}/r",
+                 notify_failure=lambda n, hint="": self.popups.append(n if not hint else (n, hint)),
+                 notify_crash=lambda n, sg, hint="": self.popups.append((n, sg) if not hint else (n, sg, hint)),
+                 notify_ended=lambda n, c, hint="": self.popups.append(("ended", n, c) if not hint else ("ended", n, c, hint)), journal_tag=lambda n: None, HOMES=f"{self.d}/h", RUNNING=f"{self.d}/r",
                  SOURCES=f"{self.d}/s", LOG=f"{self.d}/state/ajail.log", STATE=f"{self.d}/state", subprocess=FakeSub())
         os.makedirs(f"{self.d}/root"); open(f"{self.d}/root/AppRun", "w").close()
     def tearDown(self):
@@ -97,8 +114,8 @@ class Launch(unittest.TestCase):
         for s, h in self.sigs.items(): signal.signal(s, h)
         A["LOG_NAME"][0] = None
 
-    def launch(self):
-        cfg = dict(A["DEFAULTS"]); cfg.update(A["NUM"]); cfg.update({k: [] for k in A["LISTS"]}); cfg.update(theme=0)
+    def launch(self, **over):
+        cfg = dict(A["DEFAULTS"]); cfg.update(A["NUM"]); cfg.update({k: [] for k in A["LISTS"]}); cfg.update(theme=0); cfg.update(over)
         err = io.StringIO()
         with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as r:
             A["launch"]("Foo", f"{self.d}/root", cfg, [])
@@ -125,6 +142,43 @@ class Launch(unittest.TestCase):
         self.child = "import sys; sys.exit(3)"
         code, _ = self.launch()
         self.assertEqual(code, 3); self.assertIn("] EXIT code=3\n", self.log()); self.assertEqual(self.popups, ["Foo"])
+
+    def apprun(self, cls=1, machine=3):
+        with open(f"{self.d}/root/AppRun", "wb") as f:
+            f.write(b"\x7fELF" + bytes([cls, 1, 1]) + b"\0" * 9 + struct.pack("<HH", 2, machine) + b"\0" * 32)
+
+    def launch_as(self, machine="x86_64", **cfg):
+        with unittest.mock.patch.object(A["platform"], "machine", return_value=machine):
+            return self.launch(**cfg)
+
+    def test_a_32bit_app_that_fails_with_the_toggle_off_gets_a_hint(self):
+        hint = A["HINT_32BIT"]
+        self.apprun()
+        self.child = "import sys; sys.exit(3)"
+        code, err = self.launch_as()
+        self.assertIn(hint, err); self.assertIn(f"WARNING {hint}", self.log()); self.assertEqual(self.popups, [("Foo", hint)])
+        del self.popups[:]
+        self.child = "import os, signal; os.kill(os.getpid(), signal.SIGSEGV)"
+        self.launch_as()
+        self.assertEqual(self.popups, [("Foo", "SIGSEGV", hint)])
+
+    def test_no_32bit_hint_when_it_does_not_apply(self):
+        hint = A["HINT_32BIT"]
+        for label, machine, cls, mach, child, cfg in (
+                ("exit 0", "x86_64", 1, 3, "pass", {}), ("toggle on", "x86_64", 1, 3, "import sys; sys.exit(3)", {"allow_32bit": 1}),
+                ("aarch64", "aarch64", 1, 3, "import sys; sys.exit(3)", {}), ("64-bit app", "x86_64", 2, 62, "import sys; sys.exit(3)", {})):
+            self.apprun(cls, mach); self.child = child
+            del self.popups[:]
+            _, err = self.launch_as(machine, **cfg)
+            self.assertNotIn(hint, err, label); self.assertNotIn(hint, self.log(), label)
+            self.assertTrue(all(not isinstance(x, tuple) or hint not in x for x in self.popups), label)
+
+    def test_allow_32bit_warns_and_is_logged_as_on(self):
+        self.apprun()
+        _, err = self.launch_as(allow_32bit=1)
+        self.assertIn("allow_32bit=1: 32-bit apps may run", err); self.assertIn("allow_32bit", self.log())
+        _, err = self.launch_as("aarch64", allow_32bit=1)
+        self.assertIn("has no effect on aarch64", err)
 
     def test_death_by_signal_is_logged_and_exits_like_a_shell(self):
         self.child = "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"

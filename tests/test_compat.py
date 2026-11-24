@@ -140,7 +140,19 @@ class Cli(unittest.TestCase):
             A["run_installed"]("t", [], True); self.assertEqual(seen["cfg"]["compat_env"], 1)
             A["run_installed"]("t", []); self.assertEqual(seen["cfg"]["compat_env"], 0)
 
+    def test_allow_32bit_flag_forces_the_setting_for_one_run(self):
+        seen = {}
+        def fake_launch(name, root, cfg, extra, **k): seen["cfg"] = cfg
+        with unittest.mock.patch.dict(A, {"launch": fake_launch, "guard": lambda: None, "check_display": lambda c: None,
+                                          "installed_kind": lambda n: "root", "load_cfg": lambda n: cfg()}):
+            A["run_installed"]("t", [], False, True); self.assertEqual(seen["cfg"]["allow_32bit"], 1); self.assertEqual(seen["cfg"]["compat_env"], 0)
+            A["run_installed"]("t", [], True, True); self.assertEqual((seen["cfg"]["allow_32bit"], seen["cfg"]["compat_env"]), (1, 1))
+            A["run_installed"]("t", []); self.assertEqual(seen["cfg"]["allow_32bit"], 0)
+
     def test_help_and_completions_mention_it(self):
+        self.assertIn("--allow-32bit", A["HELP"])
+        for f in ("ajail.bash", "_ajail", "ajail.fish"):
+            self.assertIn("allow-32bit", open(f"{HERE}/completions/{f}").read(), f)
         self.assertIn("--compat-env", A["HELP"])
         for f in ("ajail.bash", "_ajail", "ajail.fish"):
             self.assertIn("compat-env", open(f"{HERE}/completions/{f}").read(), f)

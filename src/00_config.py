@@ -32,7 +32,7 @@ ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch
 # Permission defaults. Keep in sync with DEFAULTS in ajail-gui. None means automatic: wayland_strict is on where the
 # compositor can make a restricted socket, off where it can't (launch decides).
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "a11y": 0, "gnome_shell": 0, "gnome_shell_manage": 0, "kde": 0, "bluetooth": 0, "battery": 0, "avahi": 0, "camera": 0,
-            "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 0,
+            "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 0, "allow_32bit": 0,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0, "single_instance": 0,
             "portal_screenshot": 1, "portal_screencast": 1,
             "portal_notification": 1, "portal_openuri": 1, "portal_print": 1, "portal_trash": 1, "portal_email": 1, "portal_inhibit": 1, "portal_network": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
@@ -65,8 +65,8 @@ SYSCALLS_EXTRA = {"x86_64": [425, 426, 427, 323, 310, 311, 312, 438, 428, 429, 4
 # socket() only for unix, inet, inet6 and netlink; any other family (AF_ALG, AF_VSOCK, AF_PACKET...) gets EPERM.
 SOCKET_NR = {"x86_64": 41, "aarch64": 198}
 SOCKET_FAMILIES = (1, 2, 10, 16)
-# 32-bit x86 programs on x86_64 (another number table; the same calls as above in the same order). socketcall stays blocked:
-# it hides the socket family behind a pointer the filter can't read.
+# 32-bit x86 programs on x86_64, only with allow_32bit (another number table; the same calls as above in the same order).
+# socketcall() is allowed whole: it keeps its arguments in memory, so the socket() family check can't apply to it.
 I386_AUDIT, I386_SOCKET_NR, I386_SOCKETCALL_NR = 0x40000003, 359, 102
 SYSCALLS_I386 = [283, 336, 357, 103, 86, 51, 131, 286, 288, 287, 317, 274, 275, 276, 294, 342, 341]
 SYSCALLS_I386_EXTRA = [425, 426, 427, 374, 347, 348, 349, 438, 428, 429, 430, 431, 432, 433, 442]

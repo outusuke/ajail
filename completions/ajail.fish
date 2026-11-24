@@ -7,10 +7,12 @@ set -l c "not __fish_seen_subcommand_from on off status check preview list stop 
 complete -c ajail -f -n $c -a "on off status check preview list stop name install uninstall restore run run-file export import desktop help"
 complete -c ajail -n $c -F
 complete -c ajail -n "__fish_seen_subcommand_from run" -l compat-env -d "Pass graphics and toolkit variables from this session"
+complete -c ajail -n "__fish_seen_subcommand_from run" -l allow-32bit -d "Let a 32-bit app run (weakens the socket filter)"
 complete -c ajail -f -n "__fish_seen_subcommand_from run" -a "(__ajail_apps)"
 complete -c ajail -n "__fish_seen_subcommand_from run-file" -l once -d "Delete the unpacked copy on exit"
 complete -c ajail -n "__fish_seen_subcommand_from run-file" -l mount -d "Mount the file instead of unpacking it"
 complete -c ajail -n "__fish_seen_subcommand_from run-file" -l compat-env -d "Pass graphics and toolkit variables from this session"
+complete -c ajail -n "__fish_seen_subcommand_from run-file" -l allow-32bit -d "Let a 32-bit app run (weakens the socket filter)"
 complete -c ajail -n "__fish_seen_subcommand_from install" -l trash -d "Move the AppImage to the Trash"
 complete -c ajail -n "__fish_seen_subcommand_from install" -l mount -d "Keep it compressed, mount at launch"
 complete -c ajail -n "__fish_seen_subcommand_from install" -l move -d "With --mount: move the file into ajail"

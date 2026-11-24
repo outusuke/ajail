@@ -30,7 +30,7 @@ os.makedirs(APPS, exist_ok=True)
 
 # Keep in sync with DEFAULTS in ajail.
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "a11y": 0, "gnome_shell": 0, "gnome_shell_manage": 0, "kde": 0, "bluetooth": 0, "battery": 0, "avahi": 0, "camera": 0,
-            "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 0,
+            "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 0, "allow_32bit": 0,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0, "single_instance": 0,
             "portal_screenshot": 1, "portal_screencast": 1,
             "portal_notification": 1, "portal_openuri": 1, "portal_print": 1, "portal_trash": 1, "portal_email": 1, "portal_inhibit": 1, "portal_network": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
@@ -135,6 +135,8 @@ SECTIONS = [
         ("app_writable", "Let the app save into its own folder",
          "For apps that fail with 'Read-only file system' under /app. What it writes is kept in a separate layer; "
          "the app's own files are not changed. Needs bubblewrap 0.11+."),
+        ("allow_32bit", "Allow 32-bit apps",
+         "Only for apps that are 32-bit. Weakens the network-socket filter for them, so leave it off unless an app needs it."),
         ("userns","Allow the app's own sandbox",
          "Electron and Chromium apps need this. Turn off for stricter isolation (needs bubblewrap 0.8+).")]),
 ]
@@ -432,6 +434,9 @@ LOG_HINTS = [
     (r"wgpu error: validation error[\s\S]*iced_wgpu|iced_wgpu[\s\S]*wgpu error: validation error",
      "env", "ICED_BACKEND=tiny-skia", "If that does not help: draw on the processor (a guess)",
      "The app draws with iced, which can skip the graphics card entirely. Slower, but it needs nothing from the card.", {}),
+    (r"32-bit app and 'allow 32-bit apps' is off",
+     "allow_32bit", 1, "Allow 32-bit apps",
+     "The app is 32-bit, which is blocked while this is off. Turning it on weakens the network-socket filter for 32-bit apps, so use it only for this app.", {}),
     # A silent crash (segfault, abort, trap) while user namespaces are off: Chrome, Chromium and Electron die like this when
     # they cannot make their own sandbox, often with only a core dump and no message. Shown only while "userns" is off.
     (r"\] EXIT code=(13[2-6]|139|159)\b",

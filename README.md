@@ -55,7 +55,7 @@ All commands and options: `ajail help` or `man ajail`.
 - Only `/usr` and a few `/etc` files are visible; the environment is rebuilt. Your `$HOME` is hidden except for shared folders. Each app's home is `~/.appimage-homes/NAME`.
 - Unpacking runs in a separate sandbox with no network and no home.
 - A seccomp blocklist denies `bpf`, `perf_event_open`, `kexec_load` and similar calls.
-- `socket()` works only for unix, inet, inet6 and netlink sockets; `AF_ALG`, `AF_VSOCK`, `AF_PACKET` and the rest answer `EPERM`. 32-bit x86 programs run on x86_64 under the same lists, but `socketcall` is blocked, so those that use it get no network. Other 32-bit ABIs are refused.
+- `socket()` works only for unix, inet, inet6 and netlink sockets; `AF_ALG`, `AF_VSOCK`, `AF_PACKET` and the rest answer `EPERM`. 32-bit apps fail by default. `allow_32bit=1` (`--allow-32bit` for one run) lets 32-bit x86 apps run on x86_64 under the same lists, with a warning, because `socketcall()` (how 32-bit libcs reach `socket()`, `connect()`, `send()`...) hides its arguments in memory, so a filter can't check them: through it, the `socket()` family allowlist does not apply to 32-bit apps. If a 32-bit app fails while it is off, ajail says so in its message and in the log. Other 32-bit ABIs are always refused.
 - Notifications and portals go through `xdg-dbus-proxy`, which allows only the permitted calls. The proxy tells the portals which app it serves, so the file chooser hands the app only the files you pick, through a folder of its own.
 - The private home is tied to the app's `Name=`. A different app with the same file name is refused.
 

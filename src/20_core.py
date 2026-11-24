@@ -145,7 +145,7 @@ def arch_block(nrs, sock, x32):
     ins += [(0x15, n - i, 0, nr) for i, nr in enumerate(nrs)]   # listed syscall: jump to deny
     return ins + [(0x06, 0, 0, 0x7FFF0000), (0x06, 0, 0, deny)] # allow, deny
 
-def seccomp_file(harden=False):
+def seccomp_file(harden=False, allow_32bit=False):
     """Syscall blocklist (like Flatpak's), generated as a raw BPF program. No extra packages needed."""
     machine = platform.machine()
     arch = {"x86_64": (0xC000003E, SYSCALLS_X86_64), "aarch64": (0xC00000B7, SYSCALLS_AARCH64)}.get(machine)
@@ -154,8 +154,8 @@ def seccomp_file(harden=False):
     audit, nrs = arch
     if harden: nrs = nrs + SYSCALLS_EXTRA[machine]
     blocks = [(audit, arch_block(nrs, SOCKET_NR[machine], True))]
-    if machine == "x86_64":
-        blocks.append((I386_AUDIT, arch_block(SYSCALLS_I386 + (SYSCALLS_I386_EXTRA if harden else []) + [I386_SOCKETCALL_NR], I386_SOCKET_NR, False)))
+    if machine == "x86_64" and allow_32bit:
+        blocks.append((I386_AUDIT, arch_block(SYSCALLS_I386 + (SYSCALLS_I386_EXTRA if harden else []), I386_SOCKET_NR, False)))
     ins, start = [(0x20, 0, 0, 4)], len(blocks) + 2             # load arch; the blocks follow the arch checks and the deny
     for audit, blk in blocks:
         ins += [(0x15, start - len(ins) - 1, 0, audit)]         # this ABI: jump to its block

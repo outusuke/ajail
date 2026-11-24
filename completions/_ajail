@@ -12,11 +12,12 @@ _ajail() {
     fi
     case $words[2] in
         run)
-            if (( CURRENT == 3 )); then _alternative 'flags:flag:(--compat-env)' 'apps:installed app:_ajail_apps'
-            elif (( CURRENT == 4 )) && [[ $words[3] == --compat-env ]]; then _ajail_apps; fi ;;
+            local i; for (( i = 3; i < CURRENT; i++ )); do [[ $words[i] == --* ]] || return; done
+            _alternative 'flags:flag:(--compat-env --allow-32bit)' 'apps:installed app:_ajail_apps' ;;
         run-file)
             _arguments '--once[delete the unpacked copy on exit]' '--mount[mount the file instead of unpacking it]' \
-                       '--compat-env[pass graphics and toolkit variables from this session]' '*:file:_files' ;;
+                       '--compat-env[pass graphics and toolkit variables from this session]' \
+                       '--allow-32bit[let a 32-bit app run (weakens the socket filter)]' '*:file:_files' ;;
         install)
             _arguments '--trash[move the AppImage to the Trash]' '--mount[keep it compressed, mount at launch]' \
                        '--move[with --mount: move the file into ajail]' '*:file:_files' ;;

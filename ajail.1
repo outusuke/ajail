@@ -7,10 +7,10 @@ ajail \- run AppImages in a bubblewrap sandbox
 \fIFILE.AppImage\fR [\fIargs\fR]
 .br
 .B ajail run
-[\fB\-\-compat\-env\fR] \fINAME\fR [\fIargs\fR]
+[\fB\-\-compat\-env\fR] [\fB\-\-allow\-32bit\fR] \fINAME\fR [\fIargs\fR]
 .br
 .B ajail run\-file
-[\fB\-\-once\fR] [\fB\-\-mount\fR] [\fB\-\-compat\-env\fR] \fIFILE\fR [\fIargs\fR]
+[\fB\-\-once\fR] [\fB\-\-mount\fR] [\fB\-\-compat\-env\fR] [\fB\-\-allow\-32bit\fR] \fIFILE\fR [\fIargs\fR]
 .br
 .B ajail install
 \fIFILE.AppImage\fR [\fB\-\-trash\fR] [\fB\-\-mount\fR [\fB\-\-move\fR]]
@@ -87,20 +87,29 @@ Files in
 .I args
 are shared for that run.
 .TP
-.B ajail run [\-\-compat\-env] NAME [args]
+.B ajail run [\-\-compat\-env] [\-\-allow\-32bit] NAME [args]
 Run an installed app.
 .B \-\-compat\-env
 passes a short list of graphics and toolkit variables from your session into the sandbox for this run (the
 permission
 .B compat_env=1
-does it every time). It goes before NAME.
+does it every time).
+.B \-\-allow\-32bit
+lets a 32-bit x86 app run for this run (the permission
+.B allow_32bit=1
+does it every time). Both go before NAME.
 .TP
-.B ajail run\-file [\-\-once] [\-\-mount] [\-\-compat\-env] FILE
+.B ajail run\-file [\-\-once] [\-\-mount] [\-\-compat\-env] [\-\-allow\-32bit] FILE
 Run an AppImage without offering to install it.
 .B \-\-once
 deletes its unpacked copy on exit and never mounts.
 .B \-\-mount
 mounts the file instead of unpacking it (experimental).
+.B \-\-compat\-env
+and
+.B \-\-allow\-32bit
+act as for
+.BR run .
 .TP
 .B ajail install FILE.AppImage [\-\-trash] [\-\-mount [\-\-move]]
 Unpack it and add it to the app menu (name, icon, file types). The file is left where it is.
@@ -241,6 +250,7 @@ Switches (0 or 1, default in brackets):
 .BR theme " (1),"
 .BR app_writable " (0, for apps that fail with Read\-only file system under /app: what they write goes to a separate layer and the app's own files stay unchanged; needs bubblewrap 0.11+),"
 .BR userns " (0; 1 lets Electron and Chromium apps make their own sandbox; 0 needs bubblewrap 0.8+),"
+.BR allow_32bit " (0; 1 lets 32-bit x86 apps run on x86_64 under the same blocklist, with a warning; socketcall() keeps its arguments in memory where the filter cannot read them, so the socket() family allowlist does not apply to them),"
 .BR tmp_home " (0, private home erased on exit),"
 .BR privacy " (0, minimal /etc/passwd, /etc/group and /etc/hosts, the hostname ajail and no Account portal),"
 .BR single_instance " (0, one private folder per app from $XDG_RUNTIME_DIR is bound into every sandbox of it and TMPDIR points there, so a second launch can find the first, as Chrome does with its singleton socket; /tmp stays private)"
