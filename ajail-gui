@@ -30,7 +30,7 @@ os.makedirs(APPS, exist_ok=True)
 
 # Keep in sync with DEFAULTS in ajail.
 DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "a11y": 0, "gnome_shell": 0, "gnome_shell_manage": 0, "kde": 0, "bluetooth": 0, "battery": 0, "avahi": 0, "camera": 0,
-            "input": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 0, "allow_32bit": 0,
+            "input": 0, "ntsync": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 0, "allow_32bit": 0,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0, "single_instance": 0,
             "portal_screenshot": 1, "portal_screencast": 1,
             "portal_notification": 1, "portal_openuri": 1, "portal_print": 1, "portal_trash": 1, "portal_email": 1, "portal_inhibit": 1, "portal_network": 1, "app_writable": 0, "compat_env": 0, "gpu_render_only": 0}
@@ -58,7 +58,7 @@ XDG =[("download", "Downloads"), ("documents", "Documents"), ("pictures", "Pictu
        ("music", "Music"), ("videos", "Videos"), ("desktop", "Desktop")]
 MODES = ["No access", "Read-only", "Read & write"]
 LABEL = {"net": "Internet", "sound": "Audio", "gpu": "Graphics", "camera": "Camera",
-         "input": "Input devices", "x11": "X11", "ssh_agent": "SSH agent", "printing": "Printing",
+         "input": "Input devices", "ntsync": "Wine synchronization", "x11": "X11", "ssh_agent": "SSH agent", "printing": "Printing",
          "compat_env": "Graphics variables", "a11y": "Screen reader", "gnome_shell": "GNOME Shell extensions", "kde": "KDE Plasma integration",
          "bluetooth": "Bluetooth", "battery": "Battery state", "avahi": "Network discovery"}
 # Basic portals that stay in one collapsed row, "More desktop portals" (they are on by default and seldom need a change).
@@ -90,6 +90,7 @@ SECTIONS = [
          "turn it off if graphics break. Needs Graphics acceleration."),
         ("camera", "Camera", "Webcams (/dev/video*)"),
         ("input", "Game controllers and input devices", "Raw access to /dev/input"),
+        ("ntsync", "Wine synchronization", "/dev/ntsync, for faster Wine and Proton"),
         ("bluetooth", "Bluetooth",
          "Let the app scan for and talk to Bluetooth devices (Web Bluetooth), through the system bus. Reaches nearby devices even without Internet (needs xdg-dbus-proxy)."),
         ("battery", "Battery and power state",

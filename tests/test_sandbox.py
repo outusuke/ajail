@@ -98,6 +98,7 @@ class EveryConfig(unittest.TestCase):
                 self.assertEqual("/dev/video0" in dsts, bool(c["camera"]))
                 self.assertEqual("/dev/nvidia0" in dsts, bool(c["gpu"]))
                 self.assertEqual("/dev/input" in dsts, bool(c["input"]))
+                self.assertEqual("/dev/ntsync" in dsts, bool(c["ntsync"]))
 
     def test_render_only_gpu_binds_no_card_nodes(self):
         nodes = ["/dev/dri/card0", "/dev/dri/renderD128", "/dev/dri/renderD129"]

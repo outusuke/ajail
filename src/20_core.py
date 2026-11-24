@@ -671,6 +671,8 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
             a += ["--dev-bind", p, p]
     if cfg["input"]:
         a += ["--dev-bind-try", "/dev/input", "/dev/input", "--ro-bind-try", "/run/udev", "/run/udev"]
+    if cfg["ntsync"]:
+        a += ["--dev-bind-try", "/dev/ntsync", "/dev/ntsync"]
     if cfg["gpu"] or cfg["camera"] or cfg["input"]:
         a += ["--ro-bind-try", "/sys/dev/char", "/sys/dev/char"]
         for p in glob.glob("/sys/devices/pci*") or ["/sys/devices"]:
