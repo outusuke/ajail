@@ -65,6 +65,11 @@ SYSCALLS_EXTRA = {"x86_64": [425, 426, 427, 323, 310, 311, 312, 438, 428, 429, 4
 # socket() only for unix, inet, inet6 and netlink; any other family (AF_ALG, AF_VSOCK, AF_PACKET...) gets EPERM.
 SOCKET_NR = {"x86_64": 41, "aarch64": 198}
 SOCKET_FAMILIES = (1, 2, 10, 16)
+# 32-bit x86 programs on x86_64 (another number table; the same calls as above in the same order). socketcall stays blocked:
+# it hides the socket family behind a pointer the filter can't read.
+I386_AUDIT, I386_SOCKET_NR, I386_SOCKETCALL_NR = 0x40000003, 359, 102
+SYSCALLS_I386 = [283, 336, 357, 103, 86, 51, 131, 286, 288, 287, 317, 274, 275, 276, 294, 342, 341]
+SYSCALLS_I386_EXTRA = [425, 426, 427, 374, 347, 348, 349, 438, 428, 429, 430, 431, 432, 433, 442]
 # Variables that "compat_env" copies from your session into the sandbox, only when they are set. Graphics, toolkit and
 # audio/video back-end switches, nothing else: no PATH, no tokens or keys, no SSH_AUTH_SOCK, no DBUS_*. Exact names
 # plus the prefixes below. Keep this list short; every entry is something the app can read.
@@ -425,28 +430,37 @@ def bwrap_has(opt):
 BASE = ["--ro-bind", "/usr", "/usr", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
         "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin"]
 
+def arch_block(nrs, sock, x32):
+    """The checks for one ABI. Jumps stay inside the block; the last two instructions are allow and deny."""
+    deny, fam, n = 0x00050000 | errno.EPERM, SOCKET_FAMILIES, len(nrs)
+    if n + len(fam) > 240: raise ValueError("too many blocked system calls: a BPF jump offset is 8 bits")
+    b = len(fam) + 3                                            # length of the socket part below
+    ins = [(0x20, 0, 0, 0)]                                     # load syscall number
+    # x32 calls share the x86_64 audit arch and only differ by bit 30 of the number: deny them all
+    if x32: ins += [(0x35, n + b + 1, 0, 0x40000000)]
+    ins += [(0x15, 0, b - 1, sock), (0x20, 0, 0, 16)]           # socket(): load the family (low half of arg 0)
+    ins += [(0x15, n + b - 3 - i, 0, f) for i, f in enumerate(fam)]    # listed family: jump to allow
+    ins += [(0x06, 0, 0, deny)]                                 # any other family: deny
+    ins += [(0x15, n - i, 0, nr) for i, nr in enumerate(nrs)]   # listed syscall: jump to deny
+    return ins + [(0x06, 0, 0, 0x7FFF0000), (0x06, 0, 0, deny)] # allow, deny
+
 def seccomp_file(harden=False):
     """Syscall blocklist (like Flatpak's), generated as a raw BPF program. No extra packages needed."""
-    arch = {"x86_64": (0xC000003E, SYSCALLS_X86_64), "aarch64": (0xC00000B7, SYSCALLS_AARCH64)}.get(platform.machine())
+    machine = platform.machine()
+    arch = {"x86_64": (0xC000003E, SYSCALLS_X86_64), "aarch64": (0xC00000B7, SYSCALLS_AARCH64)}.get(machine)
     if not arch:
         return None
     audit, nrs = arch
-    if harden: nrs = nrs + SYSCALLS_EXTRA[platform.machine()]
-    deny = 0x00050000 | errno.EPERM
-    ins = [(0x20, 0, 0, 4),                    # load arch
-           (0x15, 1, 0, audit),                # native arch? skip the next instruction
-           (0x06, 0, 0, deny),                 # other ABI (32-bit/x32): deny
-           (0x20, 0, 0, 0)]                    # load syscall number
-    n, fam = len(nrs), SOCKET_FAMILIES
-    if n + len(fam) > 245: raise ValueError("too many blocked system calls: a BPF jump offset is 8 bits")
-    b = len(fam) + 3                                            # length of the socket block below
-    # x32 calls share the x86_64 audit arch and only differ by bit 30 of the number: deny them all (skips the socket block, the list + allow)
-    ins += [(0x35, n + b + 1, 0, 0x40000000)]                   # number >= 0x40000000: jump to deny
-    ins += [(0x15, 0, b - 1, SOCKET_NR[platform.machine()]), (0x20, 0, 0, 16)]   # socket(): load the family (low half of arg 0)
-    ins += [(0x15, n + b - 3 - i, 0, f) for i, f in enumerate(fam)]              # listed family: jump to allow
-    ins += [(0x06, 0, 0, deny)]                                 # any other family: deny
-    ins += [(0x15, n - i, 0, nr) for i, nr in enumerate(nrs)]   # listed syscall: jump to deny
-    ins += [(0x06, 0, 0, 0x7FFF0000), (0x06, 0, 0, deny)]       # allow, deny
+    if harden: nrs = nrs + SYSCALLS_EXTRA[machine]
+    blocks = [(audit, arch_block(nrs, SOCKET_NR[machine], True))]
+    if machine == "x86_64":
+        blocks.append((I386_AUDIT, arch_block(SYSCALLS_I386 + (SYSCALLS_I386_EXTRA if harden else []) + [I386_SOCKETCALL_NR], I386_SOCKET_NR, False)))
+    ins, start = [(0x20, 0, 0, 4)], len(blocks) + 2             # load arch; the blocks follow the arch checks and the deny
+    for audit, blk in blocks:
+        ins += [(0x15, start - len(ins) - 1, 0, audit)]         # this ABI: jump to its block
+        start += len(blk)
+    ins += [(0x06, 0, 0, 0x00050000 | errno.EPERM)]             # any other ABI: deny
+    for _, blk in blocks: ins += blk
     try:
         tf = tempfile.TemporaryFile()
         tf.write(b"".join(struct.pack("=HBBI", *i) for i in ins)); tf.flush(); tf.seek(0)

@@ -386,11 +386,10 @@ class OldBubblewrapFailsClosed(unittest.TestCase):
 class SeccompList(unittest.TestCase):
     """What the generated filter blocks, read back from the BPF program itself."""
     def blocked(self, harden):
-        import struct
+        import platform
         f = A["seccomp_file"](harden); data = f.read(); f.close()
-        ins = [struct.unpack("=HBBI", data[i:i + 8]) for i in range(0, len(data), 8)]
-        # skip the arch check, the x32 test and the socket block; what is left are the listed numbers, then the allow and deny returns
-        return {k for code, jt, jf, k in ins[5 + len(A["SOCKET_FAMILIES"]) + 3:] if code == 0x15}
+        audit = {"x86_64": 0xC000003E, "aarch64": 0xC00000B7}[platform.machine()]
+        return {nr for nr in range(512) if self.run_bpf(data, nr, audit, 1) == 0x00050001}
 
     @staticmethod
     def run_bpf(data, nr, arch, arg0=0):
@@ -441,6 +440,38 @@ class SeccompList(unittest.TestCase):
                 base = {"x86_64": A["SYSCALLS_X86_64"], "aarch64": A["SYSCALLS_AARCH64"]}[machine]
                 for blocked in base + (A["SYSCALLS_EXTRA"][machine] if harden else []):
                     self.assertEqual(self.run_bpf(data, blocked, audit, 1), deny, f"{machine} {blocked}")
+
+    def test_i386_is_filtered_like_the_native_abi_but_socketcall_is_blocked(self):
+        import platform
+        allow, deny, audit = 0x7FFF0000, 0x00050001, A["I386_AUDIT"]
+        for harden in (False, True):
+            with unittest.mock.patch.object(A["platform"], "machine", return_value="x86_64"):
+                f = A["seccomp_file"](harden); data = f.read(); f.close()
+            blocked = A["SYSCALLS_I386"] + (A["SYSCALLS_I386_EXTRA"] if harden else [])
+            for nr in blocked + [A["I386_SOCKETCALL_NR"]]: self.assertEqual(self.run_bpf(data, nr, audit, 1), deny, nr)
+            for nr in (0, 1, 3, 4, 5, 192, 435, 0x40000000): self.assertEqual(self.run_bpf(data, nr, audit, 1), allow, nr)
+            if not harden: self.assertEqual(self.run_bpf(data, A["SYSCALLS_I386_EXTRA"][0], audit, 1), allow)
+            sock = A["I386_SOCKET_NR"]
+            for fam in (1, 2, 10, 16): self.assertEqual(self.run_bpf(data, sock, audit, fam), allow, fam)
+            for fam in (0, 3, 17, 38, 40, 255): self.assertEqual(self.run_bpf(data, sock, audit, fam), deny, fam)
+            self.assertEqual(self.run_bpf(data, sock, audit, (1 << 32) | 38), deny)
+            self.assertEqual(self.run_bpf(data, 0, 0x40000001, 0), deny, "an unknown ABI is refused")
+        with unittest.mock.patch.object(A["platform"], "machine", return_value="aarch64"):
+            f = A["seccomp_file"](False); data = f.read(); f.close()
+        self.assertEqual(self.run_bpf(data, 0, audit, 0), deny, "aarch64 does not accept i386")
+
+    def test_i386_numbers_match_the_kernel_headers(self):
+        path = "/usr/include/x86_64-linux-gnu/asm/unistd_32.h"
+        if not os.path.exists(path): self.skipTest("no i386 kernel header (linux-libc-dev)")
+        import re
+        with open(path) as f: nrs = {m[1]: int(m[2]) for m in re.finditer(r"#define __NR_(\w+)\s+(\d+)\s*$", f.read(), re.M)}
+        names = ("kexec_load perf_event_open bpf syslog uselib acct quotactl add_key keyctl request_key move_pages mbind get_mempolicy "
+                 "set_mempolicy migrate_pages open_by_handle_at name_to_handle_at").split()
+        extra = ("io_uring_setup io_uring_enter io_uring_register userfaultfd process_vm_readv process_vm_writev kcmp pidfd_getfd open_tree "
+                 "move_mount fsopen fsconfig fsmount fspick mount_setattr").split()
+        self.assertEqual(A["SYSCALLS_I386"], [nrs[n] for n in names])
+        self.assertEqual(A["SYSCALLS_I386_EXTRA"], [nrs[n] for n in extra])
+        self.assertEqual((A["I386_SOCKET_NR"], A["I386_SOCKETCALL_NR"]), (nrs["socket"], nrs["socketcall"]))
 
     def test_the_two_lists_are_the_same_length_on_both_cpus_apart_from_the_cpu_specific_calls(self):
         e = A["SYSCALLS_EXTRA"]

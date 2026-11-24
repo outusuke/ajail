@@ -65,6 +65,11 @@ SYSCALLS_EXTRA = {"x86_64": [425, 426, 427, 323, 310, 311, 312, 438, 428, 429, 4
 # socket() only for unix, inet, inet6 and netlink; any other family (AF_ALG, AF_VSOCK, AF_PACKET...) gets EPERM.
 SOCKET_NR = {"x86_64": 41, "aarch64": 198}
 SOCKET_FAMILIES = (1, 2, 10, 16)
+# 32-bit x86 programs on x86_64 (another number table; the same calls as above in the same order). socketcall stays blocked:
+# it hides the socket family behind a pointer the filter can't read.
+I386_AUDIT, I386_SOCKET_NR, I386_SOCKETCALL_NR = 0x40000003, 359, 102
+SYSCALLS_I386 = [283, 336, 357, 103, 86, 51, 131, 286, 288, 287, 317, 274, 275, 276, 294, 342, 341]
+SYSCALLS_I386_EXTRA = [425, 426, 427, 374, 347, 348, 349, 438, 428, 429, 430, 431, 432, 433, 442]
 # Variables that "compat_env" copies from your session into the sandbox, only when they are set. Graphics, toolkit and
 # audio/video back-end switches, nothing else: no PATH, no tokens or keys, no SSH_AUTH_SOCK, no DBUS_*. Exact names
 # plus the prefixes below. Keep this list short; every entry is something the app can read.
