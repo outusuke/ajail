@@ -308,8 +308,10 @@ class PidFiles(unittest.TestCase):
         self.assertTrue(self.all_gone(kids))
 
     def test_stop_leaves_pasta_to_end_with_its_app(self):
-        os.symlink("/bin/sleep", f"{self.d}/pasta")
-        net = subprocess.Popen([f"{self.d}/pasta", "60"]); self.addCleanup(lambda: net.kill() or net.wait())
+        with open(f"{self.d}/pasta", "w") as f: f.write("#!/bin/sh\nwhile :; do sleep 1; done\n")      # a multicall sleep refuses to run as "pasta"
+        os.chmod(f"{self.d}/pasta", 0o755)
+        net = subprocess.Popen([f"{self.d}/pasta"]); self.addCleanup(lambda: net.kill() or net.wait())
+        time.sleep(0.2); self.assertIsNone(net.poll(), "the fake pasta did not start")
         plain = self.sleeper()
         for f in (A["is_pasta"], self.G["is_pasta"]): self.assertTrue(f(net.pid)); self.assertFalse(f(plain.pid))
         self.entry(A["proc_start"](net.pid), net)
