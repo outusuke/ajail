@@ -57,14 +57,14 @@ class LaunchOutput(unittest.TestCase):
         self.d = tempfile.mkdtemp()
         names = ("check_identity", "private_net", "sweep_runtime", "start_bus", "seccomp_file", "work_dir", "make_files",
                  "bwrap_args", "limit_prefix", "forward_files", "stop_bus", "running", "notify_failure", "log",
-                 "HOMES", "RUNNING", "SOURCES", "LOG", "platform")
+                 "HOMES", "RUNNING", "SOURCES", "LOG", "STATE", "CONF", "platform")
         self.keep = {k: A[k] for k in names + ("wayland_path", "wayland_context", "wl_supported")}
         A.update(wayland_path=lambda: None, wayland_context=lambda *a: None, wl_supported=lambda p: False)       # never talk to the real compositor from a test
         A.update(check_identity=lambda *a: None, private_net=lambda c: False, sweep_runtime=lambda: None,
                  start_bus=lambda *a: None, seccomp_file=lambda h, a=False: tempfile.TemporaryFile(), work_dir=lambda: None, make_files=lambda *a: {},
                  bwrap_args=lambda *a: [], limit_prefix=lambda *a: [], forward_files=lambda e: [], stop_bus=lambda b: None,
                  running=lambda n: False, notify_failure=lambda n: None, log=lambda *a, **k: None,
-                 HOMES=f"{self.d}/h", RUNNING=f"{self.d}/r", SOURCES=f"{self.d}/s", LOG=f"{self.d}/log")
+                 HOMES=f"{self.d}/h", RUNNING=f"{self.d}/r", SOURCES=f"{self.d}/s", LOG=f"{self.d}/log", STATE=f"{self.d}/state", CONF=f"{self.d}/conf")
         os.makedirs(f"{self.d}/root"); open(f"{self.d}/root/AppRun", "w").close()
         app = ("import sys; e = %r\n"
                "sys.stdout.write('out ' + e + ' ok\\n'); sys.stdout.flush()\n"
@@ -372,9 +372,10 @@ class XauthFailsClosed(unittest.TestCase):
         self.d = tempfile.mkdtemp()
         self.xa = f"{self.d}/Xauthority"
         open(self.xa, "wb").write(b"\x00\x01garbage-not-an-xauthority-file")
-        self.keep = {k: A[k] for k in ("work_dir", "warn")}
+        self.keep = {k: A[k] for k in ("work_dir", "warn", "LOG", "STATE", "CONF")}
         self.warned = []
-        A.update(work_dir=lambda: self.d, warn=lambda m, n=None: self.warned.append(m))
+        A.update(work_dir=lambda: self.d, warn=lambda m, n=None: self.warned.append(m),
+                 LOG=f"{self.d}/state/ajail.log", STATE=f"{self.d}/state", CONF=f"{self.d}/conf")
         self.env = {k: os.environ.get(k) for k in ("DISPLAY", "XAUTHORITY")}
         os.environ.update(DISPLAY=":0", XAUTHORITY=self.xa)
     def tearDown(self):
@@ -411,7 +412,7 @@ class PrivateNetLaunch(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
         names = ("check_identity", "sweep_runtime", "start_bus", "work_dir", "limit_prefix", "forward_files", "stop_bus", "running",
-                 "notify_failure", "log", "HOMES", "RUNNING", "SOURCES", "LOG", "shutil", "subprocess", "pasta_problem")
+                 "notify_failure", "log", "HOMES", "RUNNING", "SOURCES", "LOG", "STATE", "CONF", "shutil", "subprocess", "pasta_problem")
         self.keep = {k: A[k] for k in names + ("wayland_path", "wayland_context", "wl_supported")}
         A.update(wayland_path=lambda: None, wayland_context=lambda *a: None, wl_supported=lambda p: False)       # never talk to the real compositor from a test
         self.wd, self.seen, self.pasta = f"{self.d}/wd", [], True
@@ -433,7 +434,7 @@ class PrivateNetLaunch(unittest.TestCase):
         A.update(check_identity=lambda *a: None, sweep_runtime=lambda: None, start_bus=lambda *a: None, work_dir=lambda: self.wd,
                  limit_prefix=lambda *a: [], forward_files=lambda e: [], stop_bus=lambda b: None, running=lambda n: False,
                  notify_failure=lambda n: None, log=lambda *a, **k: None, HOMES=f"{self.d}/h", RUNNING=f"{self.d}/r",
-                 SOURCES=f"{self.d}/s", LOG=f"{self.d}/log", shutil=FakeShutil(), subprocess=FakeSub(), pasta_problem=lambda: None)
+                 SOURCES=f"{self.d}/s", LOG=f"{self.d}/log", STATE=f"{self.d}/state", CONF=f"{self.d}/conf", shutil=FakeShutil(), subprocess=FakeSub(), pasta_problem=lambda: None)
         os.makedirs(f"{self.d}/root"); open(f"{self.d}/root/AppRun", "w").close()
     def tearDown(self): A.update(self.keep)
 

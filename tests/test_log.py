@@ -90,7 +90,7 @@ class Launch(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
         names = ("check_identity", "sweep_runtime", "start_bus", "work_dir", "limit_prefix", "forward_files", "stop_bus", "running",
-                 "notify_failure", "notify_crash", "notify_ended", "journal_tag", "HOMES", "RUNNING", "SOURCES", "LOG", "STATE",
+                 "notify_failure", "notify_crash", "notify_ended", "journal_tag", "HOMES", "RUNNING", "SOURCES", "LOG", "STATE", "CONF",
                  "subprocess", "time")
         self.keep = {k: A[k] for k in names + ("wayland_path", "wayland_context", "wl_supported")}
         A.update(wayland_path=lambda: None, wayland_context=lambda *a: None, wl_supported=lambda p: False)       # never talk to the real compositor from a test
@@ -107,7 +107,7 @@ class Launch(unittest.TestCase):
                  notify_failure=lambda n, hint="": self.popups.append(n if not hint else (n, hint)),
                  notify_crash=lambda n, sg, hint="": self.popups.append((n, sg) if not hint else (n, sg, hint)),
                  notify_ended=lambda n, c, hint="": self.popups.append(("ended", n, c) if not hint else ("ended", n, c, hint)), journal_tag=lambda n: None, HOMES=f"{self.d}/h", RUNNING=f"{self.d}/r",
-                 SOURCES=f"{self.d}/s", LOG=f"{self.d}/state/ajail.log", STATE=f"{self.d}/state", subprocess=FakeSub())
+                 SOURCES=f"{self.d}/s", LOG=f"{self.d}/state/ajail.log", STATE=f"{self.d}/state", CONF=f"{self.d}/conf", subprocess=FakeSub())
         os.makedirs(f"{self.d}/root"); open(f"{self.d}/root/AppRun", "w").close()
     def tearDown(self):
         A.update(self.keep)
