@@ -31,7 +31,7 @@ ETC = ["ld.so.cache", "ld.so.conf", "ld.so.conf.d", "passwd", "group", "nsswitch
 
 # Permission defaults. Keep in sync with DEFAULTS in ajail-gui. None means automatic: wayland_strict is on where the
 # compositor can make a restricted socket, off where it can't (launch decides).
-DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "a11y": 0, "gnome_shell": 0, "gnome_shell_manage": 0, "kde": 0, "bluetooth": 0, "battery": 0, "avahi": 0, "camera": 0,
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "mpris": 0, "a11y": 0, "gnome_shell": 0, "gnome_shell_manage": 0, "kde": 0, "bluetooth": 0, "battery": 0, "avahi": 0, "camera": 0,
             "input": 0, "ntsync": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 0, "allow_32bit": 0,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0, "single_instance": 0,
             "portal_screenshot": 1, "portal_screencast": 1,
@@ -481,7 +481,7 @@ def seccomp_file(harden=False, allow_32bit=False):
         return None
 
 def want_bus(cfg):
-    return bool(cfg["portals"] or cfg["tray"] or cfg["gnome_shell"] or cfg["kde"] or cfg["talk"])
+    return bool(cfg["portals"] or cfg["tray"] or cfg["mpris"] or cfg["gnome_shell"] or cfg["kde"] or cfg["talk"])
 
 # Desktop portals an app may call when "Notifications and portals" is on. xdg-dbus-proxy runs on the host, so the
 # desktop sees the app as an ordinary unsandboxed program: a portal that is not listed here is simply unreachable.
@@ -691,7 +691,9 @@ def start_bus(cfg, name):
     if cfg["portals"]:
         rules += portal_rules(cfg)
     if cfg["tray"]:
-        rules += tray_rules() + ["--own=org.mpris.MediaPlayer2.*"]
+        rules += tray_rules()
+    if cfg["mpris"]:
+        rules += ["--own=org.mpris.MediaPlayer2.*"]
     rules += gnome_shell_rules(cfg) + kde_rules(cfg)
     rules += [f"--talk={n}" for n in cfg["talk"] if talk_ok(n)]
     for wrapped in ((True, False) if cfg["portals"] and shutil.which("bwrap") else (False,)):
@@ -1002,6 +1004,7 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={rt}/bus"
         if cfg["portals"]: env["AJAIL_PORTALS"] = ",".join(extra_portals(cfg))     # read by the self-test
         if cfg["tray"]: env["AJAIL_TRAY"] = f"{TRAY_PIDS[0]}-{TRAY_PIDS[-1]}"      # read by the self-test
+        if cfg["mpris"]: env["AJAIL_MPRIS"] = "1"
         if cfg["portals"]:      # a toolkit uses the file chooser portal only when told to; a theme that compat_env passes through (gtk3, qt6ct) would open Qt's own dialog, so it is replaced; env= still wins (no /.flatpak-info for the app: glycin would then run its image loaders through flatpak-spawn, which fails, and GTK aborts)
             if cfg.get("gtk_portal") != "0": env["GTK_USE_PORTAL"] = "1"      # "auto" is settled by the caller (settle_gtk_portal); unsettled it counts as on
             env["QT_QPA_PLATFORMTHEME"] = "xdgdesktopportal"

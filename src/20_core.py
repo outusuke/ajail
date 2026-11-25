@@ -171,7 +171,7 @@ def seccomp_file(harden=False, allow_32bit=False):
         return None
 
 def want_bus(cfg):
-    return bool(cfg["portals"] or cfg["tray"] or cfg["gnome_shell"] or cfg["kde"] or cfg["talk"])
+    return bool(cfg["portals"] or cfg["tray"] or cfg["mpris"] or cfg["gnome_shell"] or cfg["kde"] or cfg["talk"])
 
 # Desktop portals an app may call when "Notifications and portals" is on. xdg-dbus-proxy runs on the host, so the
 # desktop sees the app as an ordinary unsandboxed program: a portal that is not listed here is simply unreachable.
@@ -381,7 +381,9 @@ def start_bus(cfg, name):
     if cfg["portals"]:
         rules += portal_rules(cfg)
     if cfg["tray"]:
-        rules += tray_rules() + ["--own=org.mpris.MediaPlayer2.*"]
+        rules += tray_rules()
+    if cfg["mpris"]:
+        rules += ["--own=org.mpris.MediaPlayer2.*"]
     rules += gnome_shell_rules(cfg) + kde_rules(cfg)
     rules += [f"--talk={n}" for n in cfg["talk"] if talk_ok(n)]
     for wrapped in ((True, False) if cfg["portals"] and shutil.which("bwrap") else (False,)):
@@ -692,6 +694,7 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
         env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={rt}/bus"
         if cfg["portals"]: env["AJAIL_PORTALS"] = ",".join(extra_portals(cfg))     # read by the self-test
         if cfg["tray"]: env["AJAIL_TRAY"] = f"{TRAY_PIDS[0]}-{TRAY_PIDS[-1]}"      # read by the self-test
+        if cfg["mpris"]: env["AJAIL_MPRIS"] = "1"
         if cfg["portals"]:      # a toolkit uses the file chooser portal only when told to; a theme that compat_env passes through (gtk3, qt6ct) would open Qt's own dialog, so it is replaced; env= still wins (no /.flatpak-info for the app: glycin would then run its image loaders through flatpak-spawn, which fails, and GTK aborts)
             if cfg.get("gtk_portal") != "0": env["GTK_USE_PORTAL"] = "1"      # "auto" is settled by the caller (settle_gtk_portal); unsettled it counts as on
             env["QT_QPA_PLATFORMTHEME"] = "xdgdesktopportal"

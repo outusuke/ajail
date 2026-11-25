@@ -327,9 +327,10 @@ if bus and shutil.which("gdbus"):
     else:
         row("EXPOSED", "  Portal: documents", "reachable (should be blocked)")
 
-    # Tray icon and media controls (the \"Tray icon and media keys\" switch). ajail tells us it is on in AJAIL_TRAY
-    # (the PID range it allows). Owning a name is tried for real; nothing stays registered after the call.
+    # Tray icon (switch tray, AJAIL_TRAY holds the PID range it allows) and media controls (switch mpris, AJAIL_MPRIS).
+    # Owning a name is tried for real; nothing stays registered after the call.
     tray_on = os.environ.get("AJAIL_TRAY", "")
+    mpris_on = os.environ.get("AJAIL_MPRIS", "")
     tray_at = len(out)                 # the summary row is inserted here, above the detail rows
     def own(name):
         rc, o = sh(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path",
@@ -352,7 +353,7 @@ if bus and shutil.which("gdbus"):
         "any org.kde name can be owned (too broad)" if ok else "blocked")
     ok, o = own("org.mpris.MediaPlayer2.ajail-selftest")
     m_ok = ok
-    if tray_on: row("ALLOWED" if ok else "blocked", "  Media controls (MPRIS)", "can be owned" if ok else "refused although the switch is on")
+    if mpris_on: row("ALLOWED" if ok else "blocked", "  Media controls (MPRIS)", "can be owned" if ok else "refused although the switch is on")
     else: row("EXPOSED" if ok else "blocked", "  Media controls (MPRIS)", "can be owned although the switch is off" if ok else "blocked (switch is off)")
     rc, o = sh(["gdbus", "call", "--session", "--dest", "org.kde.StatusNotifierWatcher", "--object-path",
                 "/StatusNotifierWatcher", "--method", "org.freedesktop.DBus.Peer.Ping"])
@@ -362,14 +363,11 @@ if bus and shutil.which("gdbus"):
         row("INFO", "  Tray host (StatusNotifierWatcher)", "none running: icons show only with a tray host (GNOME needs the AppIndicator extension)")
     else:
         row("EXPOSED" if not tray_on else "ALLOWED", "  Tray host (StatusNotifierWatcher)", "reachable")
-    if tray_on:
-        state = "ALLOWED" if t_ok and m_ok else "blocked"
-        detail = ("tray icon and media controls can register" if t_ok and m_ok else
-                  "tray icon refused" if m_ok else "media controls refused" if t_ok else "both refused although the switch is on")
-    else:
-        state = "EXPOSED" if t_ok or m_ok else "blocked"
-        detail = "reachable although the switch is off" if t_ok or m_ok else "off"
-    out.insert(tray_at, f"{state:8} {'Tray icon and media keys':<26} {detail}")
+    for label, on, got in (("Tray icon", tray_on, t_ok), ("Media keys", mpris_on, m_ok)):
+        if on: state, detail = ("ALLOWED", "can register") if got else ("blocked", "refused although the switch is on")
+        else: state, detail = ("EXPOSED", "reachable although the switch is off") if got else ("blocked", "off")
+        out.insert(tray_at, f"{state:8} {label:<26} {detail}")
+        tray_at += 1
 
 nr = {"x86_64": 298, "aarch64": 241}.get(platform.machine())
 if nr:

@@ -29,7 +29,7 @@ OUTSIDE = ("/mnt/", "/media/", f"/run/media/{USER}/")
 os.makedirs(APPS, exist_ok=True)
 
 # Keep in sync with DEFAULTS in ajail.
-DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "a11y": 0, "gnome_shell": 0, "gnome_shell_manage": 0, "kde": 0, "bluetooth": 0, "battery": 0, "avahi": 0, "camera": 0,
+DEFAULTS = {"net": 1, "sound": 1, "gpu": 1, "wayland": 1, "wayland_strict": None, "x11": 0, "portals": 1, "tray": 0, "mpris": 0, "a11y": 0, "gnome_shell": 0, "gnome_shell_manage": 0, "kde": 0, "bluetooth": 0, "battery": 0, "avahi": 0, "camera": 0,
             "input": 0, "ntsync": 0, "ssh_agent": 0, "printing": 0, "theme": 1, "userns": 0, "allow_32bit": 0,
             "net_private": 0, "tmp_home": 0, "privacy": 0, "harden": 0, "single_instance": 0,
             "portal_screenshot": 1, "portal_screencast": 1,
@@ -115,7 +115,8 @@ SECTIONS = [
         ("portal_screencast", "Screen sharing",
          "Let the app ask to share your screen or a window (Discord, Teams, Slack). "
          "The desktop shows its own picker."),
-        ("tray", "Tray icon and media keys", "Show a tray icon and answer media keys (needs xdg-dbus-proxy)"),
+        ("tray", "Tray icon", "Let the app show an icon in your panel's tray (needs xdg-dbus-proxy)"),
+        ("mpris", "Media keys", "Let the app show up as a media player and answer play, pause and next keys (needs xdg-dbus-proxy)"),
         ("a11y", "Screen reader support", "Let a screen reader such as Orca read the app (needs xdg-dbus-proxy)"),
         ("gnome_shell", "GNOME Shell integration",
          "Let the browser's GNOME Shell connector list and install extensions (the Shell asks you first; needs xdg-dbus-proxy)"),

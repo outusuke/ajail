@@ -28,7 +28,7 @@ sudo install -Dm644 completions/ajail.fish /usr/local/share/fish/vendor_completi
 ```
 
 **Required:** Linux, Wayland (X11 is a per-app option, and Wayland can be turned off per app), Python 3, `bubblewrap`, `squashfs-tools`.
-**Optional:** `xdg-dbus-proxy` (notifications, portals, tray, `a11y`, `gnome_shell`, `kde`, `bluetooth`, `battery`, `avahi`), `passt` (`net_private`), `squashfuse` + `fuse3` (compressed installs), `systemd --user` (resource limits), `notify-send` (failure popups).
+**Optional:** `xdg-dbus-proxy` (notifications, portals, `tray`, `mpris`, `a11y`, `gnome_shell`, `kde`, `bluetooth`, `battery`, `avahi`), `passt` (`net_private`), `squashfuse` + `fuse3` (compressed installs), `systemd --user` (resource limits), `notify-send` (failure popups).
 
 ## Usage
 

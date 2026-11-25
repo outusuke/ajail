@@ -246,9 +246,36 @@ class Config(unittest.TestCase):
         c = A["load_cfg"]("Foo"); c["tray"] = 1
         a = A["bwrap_args"]("Foo", "/x", c, ["/app/AppRun"], bus="/run/user/1/ajail/1.bus")
         i = a.index("AJAIL_TRAY"); self.assertEqual(a[i + 1], "2-64")
+        self.assertNotIn("AJAIL_MPRIS", a)
         c["tray"] = 0
         a = A["bwrap_args"]("Foo", "/x", c, ["/app/AppRun"], bus="/run/user/1/ajail/1.bus")
         self.assertNotIn("AJAIL_TRAY", a)
+
+    def test_bwrap_env_tells_selftest_about_mpris(self):
+        c = A["load_cfg"]("Foo"); c["mpris"] = 1
+        a = A["bwrap_args"]("Foo", "/x", c, ["/app/AppRun"], bus="/run/user/1/ajail/1.bus")
+        i = a.index("AJAIL_MPRIS"); self.assertEqual(a[i + 1], "1")
+        self.assertNotIn("AJAIL_TRAY", a)
+
+    def test_tray_and_media_keys_are_separate_switches(self):
+        self.assertEqual((A["DEFAULTS"]["tray"], A["DEFAULTS"]["mpris"]), (0, 0))
+        for kw, tray, mpris in ((dict(tray=1), True, False), (dict(mpris=1), False, True), (dict(tray=1, mpris=1), True, True), ({}, False, False)):
+            cmds = []
+            class P:
+                def __init__(s, cmd, **k): cmds.append(cmd); s.pid = 1
+                def terminate(s): pass
+                def wait(s, t=None): pass
+            fake = {"shutil": types.SimpleNamespace(which=lambda n: "/x/" + n), "warn": lambda *a: None,
+                    "subprocess": types.SimpleNamespace(Popen=P, DEVNULL=-3, SubprocessError=Exception, TimeoutExpired=Exception),
+                    "select": types.SimpleNamespace(select=lambda *a: ([a[0][0]], [], []))}
+            with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": d}), \
+                    unittest.mock.patch.dict(A, fake), unittest.mock.patch.object(os, "read", lambda fd, n: b"x"):
+                b = A["start_bus"](cfg(portals=0, **kw), "Foo")
+                if not (tray or mpris): self.assertIsNone(b); continue
+                A["stop_bus"](b)
+            rules = cmds[-1]
+            self.assertEqual("--talk=org.kde.StatusNotifierWatcher" in rules, tray, kw)
+            self.assertEqual("--own=org.mpris.MediaPlayer2.*" in rules, mpris, kw)
 
     def test_dump_json_roundtrip_keeps_portal(self):
         import json
@@ -353,7 +380,7 @@ else: fail("InvalidArgs")
         app = re.search(r"APPRUN = r'''(.*?)'''", s, re.S).group(1)
         names = set(A["PORTAL_BASIC"]) | {"Screenshot", "ScreenCast", "Camera", "Documents"}
         for p in names: self.assertIn(f'"{p}"', app, p)
-        self.assertIn("StatusNotifierItem", app); self.assertIn("MediaPlayer2", app); self.assertIn("AJAIL_TRAY", app)
+        self.assertIn("StatusNotifierItem", app); self.assertIn("MediaPlayer2", app); self.assertIn("AJAIL_TRAY", app); self.assertIn("AJAIL_MPRIS", app)
 
     def test_gui_compiles(self):
         compile(open(f"{HERE}/ajail-gui").read(), "ajail-gui", "exec")
