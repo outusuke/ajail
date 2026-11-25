@@ -118,6 +118,8 @@ def launch(name, root, cfg, extra, source=None, once=False):
             warn(f"could not prepare the portal folder ({e}); the file chooser may not work", name)
             inst, infopath = None, None
     infofd = (INFO_FD if priv else infof.fileno()) if infof else None
+    if cfg["portals"]:      # opened files go in read-only through the portal; files in a folder you share stay as they are
+        extra = portal_file_args(extra, portal_app_id(name), cfg)
     inner = bwrap_args(name, root, cfg, ["/app/AppRun"] + extra, bus[2] if bus else None,
                        secfd, forward_files(extra), gen, gset, wl.path if wl else None, infofd,
                        a11y[2] if a11y else None, system[2] if system else None)

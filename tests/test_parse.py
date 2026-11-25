@@ -100,6 +100,50 @@ class Talk(unittest.TestCase):
             d, err = self.parse(f"gtk_portal={v}\n")
             self.assertEqual(d["s"], {}); self.assertIn("x.conf:1", err); self.assertIn("expected auto, 1 or 0", err)
 
+    def test_share_dirs_takes_a_list_of_folders_or_nothing(self):
+        d, err = self.parse("share_dirs = download, music   # only these\n")
+        self.assertEqual(d["s"], {"share_dirs": "download,music"}); self.assertEqual(err, "")
+        d, err = self.parse("share_dirs=\n")
+        self.assertEqual(d["s"], {"share_dirs": ""}); self.assertEqual(err, "")
+        d, err = self.parse("share_dirs=download,desktop\n")
+        self.assertEqual(d["s"], {}); self.assertIn("x.conf:1", err); self.assertIn("comma list", err)
+
+    def test_share_dirs_is_all_five_until_a_file_says_otherwise(self):
+        os.makedirs(f"{self.d}/apps")
+        with unittest.mock.patch.dict(A, {"CONF": self.d}):
+            self.assertEqual(A["load_cfg"]("x")["share_dirs"], "download,documents,pictures,music,videos")
+            open(f"{self.d}/default.conf", "w").write("share_dirs=music\n")
+            self.assertEqual(A["load_cfg"]("x")["share_dirs"], "music")
+            open(f"{self.d}/apps/x.conf", "w").write("share_dirs=\n")      # an empty line cancels the default's
+            self.assertEqual(A["load_cfg"]("x")["share_dirs"], "")
+
+    def test_share_mounts_give_each_app_its_own_subfolder(self):
+        home = f"{self.d}/h"
+        for n in ("Downloads", "Music", ".hidden"): os.makedirs(f"{home}/{n}")
+        os.makedirs(f"{self.d}/homes/x/Downloads"); open(f"{self.d}/homes/x/Downloads/old.txt", "w").close()
+        c = {"share_dirs": "download,music,videos,pictures", "xdg": []}
+        with unittest.mock.patch.dict(A, {"HOME": home, "HOMES": f"{self.d}/homes"}), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(A["share_mounts"]("x", c, False), [(f"{home}/Downloads/ajail/x", f"{home}/Downloads"), (f"{home}/Music/ajail/x", f"{home}/Music")])
+            self.assertFalse(os.path.exists(f"{home}/Downloads/ajail"))      # a preview makes nothing
+            A["share_mounts"]("x", c, True)
+            self.assertTrue(os.path.exists(f"{home}/Downloads/ajail/x/old.txt"))      # what the app's home held moves over
+            self.assertEqual(oct(os.stat(f"{home}/Downloads/ajail/x").st_mode & 0o777), "0o700")
+            self.assertEqual([m[1] for m in A["share_mounts"]("x", {**c, "xdg": ["download"]}, False)], [f"{home}/Music"])      # xdg= shares the whole folder instead
+
+    def test_portal_file_args_swap_opened_files_for_their_portal_copy(self):
+        home, rt = f"{self.d}/h", f"{self.d}/run"
+        os.makedirs(f"{home}/docs"); os.makedirs(f"{home}/shared"); os.makedirs(f"{home}/.ssh")
+        f, kept, key = (f"{home}/docs/report.html", f"{home}/shared/a.txt", f"{home}/.ssh/key")
+        for p in (f, kept, key): open(p, "w").close()
+        c = {"allow": [f"{home}/shared"], "allow_ro": [], "xdg": []}
+        conv = lambda a, export=lambda paths, app: {p: "ab12" for p in paths}: A["portal_file_args"](a, "io.x.Run.x", c, export)
+        doc = f"{rt}/doc/ab12/report.html"
+        with unittest.mock.patch.dict(A, {"HOME": home, "runtime_dir": lambda: rt}):
+            self.assertEqual(conv([f, "--flag"]), [doc, "--flag"])
+            self.assertEqual(conv([f"file://{f}"]), [f"file://{doc}"])
+            self.assertEqual(conv(["report.html", "/usr/bin/env", home, key, kept]), ["report.html", "/usr/bin/env", home, key, kept])      # shared folder, hidden folder, folder, relative: unchanged
+            self.assertEqual(conv([f], lambda paths, app: {}), [f])      # no portal: the file is passed on as before
+
     def test_gtk_portal_is_auto_until_a_file_says_otherwise(self):
         os.makedirs(f"{self.d}/apps")
         with unittest.mock.patch.dict(A, {"CONF": self.d}):

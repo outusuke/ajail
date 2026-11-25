@@ -165,3 +165,41 @@ def sweep_runtime():
         elif e.endswith((".bus", ".a11y", ".sys", ".wl")):
             try: os.unlink(p)
             except OSError: pass
+
+def portal_export(paths, app):
+    """{path: document id} for the files the Documents portal took, read-only for APP; {} when it can't (no PyGObject, no portal)."""
+    try:
+        from gi.repository import Gio, GLib
+    except ImportError:
+        return {}
+    paths = sorted(set(paths))
+    try:
+        fds = [os.open(p, os.O_PATH | os.O_CLOEXEC) for p in paths]
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        reply, _ = bus.call_with_unix_fd_list_sync(
+            PORTAL_DOCS_NAME, PORTAL_DOCS_PATH, PORTAL_DOCS_NAME, "AddFull",
+            GLib.Variant("(ahusas)", (list(range(len(fds))), 1, app, ["read"])),    # 1: reuse a document that already exists
+            GLib.VariantType("(asa{sv})"), Gio.DBusCallFlags.NONE, 3000, Gio.UnixFDList.new_from_array(fds), None)
+        ids = reply.unpack()[0]
+    except (OSError, GLib.Error):
+        return {}
+    return dict(zip(paths, ids)) if len(ids) == len(paths) else {}
+
+def portal_file_args(args, app, cfg, export=portal_export):
+    """ARGS with each file you started the app with (a path or file:// URI) swapped for its read-only copy in the Documents portal."""
+    found = {}
+    for i, x in enumerate(args[:64]):
+        uri = x.startswith("file://")
+        q = urllib.parse.unquote(x[7:]) if uri else x
+        if not q.startswith("/") or "\n" in q or len(q) > 1024: continue
+        q = safe_path(q)
+        if q and os.path.isfile(q): found[i] = (q, uri)
+    shared = [p for p in (safe_path(x) for _, x in share_list(cfg)) if p] if found else []
+    found = {i: v for i, v in found.items() if not any(v[0] == s or v[0].startswith(s + "/") for s in shared)}
+    ids = export([q for q, _ in found.values()], app) if found else {}
+    out = list(args)
+    for i, (q, uri) in found.items():
+        if q in ids:
+            p = f"{runtime_dir()}/doc/{ids[q]}/{os.path.basename(q)}"
+            out[i] = "file://" + urllib.parse.quote(p) if uri else p
+    return out

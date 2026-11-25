@@ -86,10 +86,15 @@ Plain `key=value` files: `~/.config/ajail/default.conf` (all apps) and `~/.confi
 allow=/home/me/Projects          # read & write
 allow_ro=/media/me/usb/photos    # read-only
 xdg=download                     # also documents, pictures, music, videos, desktop; :ro or :none
+share_dirs=download,music        # default: download,documents,pictures,music,videos; empty = none
 env=MY_VAR=value
 talk=org.example.Service         # extra D-Bus name
 portal=Secret                    # turn on a portal that is off by default; portal=-Location turns one off
 ```
+
+Files you open with an app ("Open with", a path argument) and `portals=1` with PyGObject: the app gets a read-only copy through the Documents portal, as Flatpak does, instead of a shared path. Files inside a folder you already share, and folders, are passed on as before.
+
+Per-app folders: for each of Downloads, Documents, Pictures, Music and Videos that is set in `~/.config/user-dirs.dirs` and exists, `<folder>/ajail/NAME` is mounted over the same folder in the app's home (`~/Downloads/ajail/firefox` is `~/Downloads` for firefox), so the app sees only its own files there. `share_dirs=` picks some, or none when empty. What the app's home already holds in those folders is moved over on first use, never overwriting. ajail makes the folders with mode 0700 and never deletes them. If `ajail` or `ajail/NAME` is a link, ajail warns and that folder stays in the app's home. `xdg=` for the same folder shares the whole folder instead, and `tmp_home=1` ignores `share_dirs`.
 
 Back up or move settings with `ajail export -o FILE` and `ajail import FILE` (`--force` replaces settings that differ); `ajail-gui` has the same buttons. The export holds the permission files and the choices `ajail-gui` remembers (Ask before opening, Use less disk space, what to do with the AppImage after installing); it leaves out app data, installed apps, Sandbox every AppImage and the app menu entry.
 

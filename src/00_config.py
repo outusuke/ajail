@@ -48,6 +48,8 @@ EXTRA_PORTALS = ("Location", "GlobalShortcuts", "RemoteDesktop", "InputCapture",
 DEFAULT_PORTALS = ("FileTransfer", "Usb", "Clipboard", "Location", "GlobalShortcuts", "Wallpaper", "Secret")
 XDG_DEFAULT = {"download": "Downloads", "documents": "Documents", "pictures": "Pictures",
                "music": "Music", "videos": "Videos", "desktop": "Desktop"}
+SHARE_DIRS = ("download", "documents", "pictures", "music", "videos")
+SHARE_DEFAULT = ",".join(SHARE_DIRS)
 THEME = [".local/share/fonts", ".fonts", ".local/share/icons", ".icons", ".local/share/themes", ".themes",
          ".config/gtk-3.0/colors.css", ".config/gtk-4.0/colors.css",      # KDE's GTK theme reads its colors from here, or it does not parse
          ".config/kdeglobals", ".config/kdedefaults", ".local/share/color-schemes"]      # KDE: colors, icon theme, fonts

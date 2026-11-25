@@ -56,6 +56,8 @@ PORTAL_INFO = {      # name -> (switch title, description); must have exactly th
 }
 XDG =[("download", "Downloads"), ("documents", "Documents"), ("pictures", "Pictures"),
        ("music", "Music"), ("videos", "Videos"), ("desktop", "Desktop")]
+SHARE_DIRS = ("download", "documents", "pictures", "music", "videos")
+SHARE_DEFAULT = ",".join(SHARE_DIRS)
 MODES = ["No access", "Read-only", "Read & write"]
 LABEL = {"net": "Internet", "sound": "Audio", "gpu": "Graphics", "camera": "Camera",
          "input": "Input devices", "ntsync": "Wine synchronization", "x11": "X11", "ssh_agent": "SSH agent", "printing": "Printing",

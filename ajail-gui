@@ -56,6 +56,8 @@ PORTAL_INFO = {      # name -> (switch title, description); must have exactly th
 }
 XDG =[("download", "Downloads"), ("documents", "Documents"), ("pictures", "Pictures"),
        ("music", "Music"), ("videos", "Videos"), ("desktop", "Desktop")]
+SHARE_DIRS = ("download", "documents", "pictures", "music", "videos")
+SHARE_DEFAULT = ",".join(SHARE_DIRS)
 MODES = ["No access", "Read-only", "Read & write"]
 LABEL = {"net": "Internet", "sound": "Audio", "gpu": "Graphics", "camera": "Camera",
          "input": "Input devices", "ntsync": "Wine synchronization", "x11": "X11", "ssh_agent": "SSH agent", "printing": "Printing",
@@ -1762,6 +1764,56 @@ class Win(Adw.ApplicationWindow):
         addf.connect("clicked", lambda *_: pick(True))
         addfile.connect("clicked", lambda *_: pick(False))
         page.add(fg)
+
+        sg = Adw.PreferencesGroup(title="App's own folders")
+        srow = Adw.SwitchRow(title="Own folders in Downloads, Documents, Pictures, Music and Videos", use_markup=False)
+        sundo = Gtk.Button(icon_name="edit-undo-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="Use the default again")
+        srow.add_suffix(sundo)
+        sg.add(srow)
+        sbusy = [False]
+        sbase = "The app sees only its own subfolder of each (for example ~/Downloads/ajail/NAME as ~/Downloads), never the rest of the folder. Off: what it saves stays in its own home."
+
+        def share_text():
+            for src in ((R,) if scope is None else (R, G)):
+                if "share_dirs" in src["s"]: return src["s"]["share_dirs"]
+            return SHARE_DEFAULT
+
+        def share_show():
+            names = [x for x in share_text().split(",") if x]
+            sbusy[0] = True
+            srow.set_active(bool(names))
+            sbusy[0] = False
+            custom = bool(names) and set(names) != set(SHARE_DIRS)
+            srow.set_subtitle(sbase + (f"\nOnly {', '.join(names)}, as set in the settings file." if custom else ""))
+            sundo.set_visible("share_dirs" in R["s"])
+            refresh_tech()
+
+        def share_set(v):
+            if v is None: R["s"].pop("share_dirs", None)
+            else: R["s"]["share_dirs"] = v
+            commit()
+            share_show()
+
+        def share_toggled(*_):
+            if sbusy[0]: return
+            if srow.get_active():
+                inherited = scope is not None and G["s"].get("share_dirs", SHARE_DEFAULT)
+                share_set(None if inherited else SHARE_DEFAULT)      # the default says none: this app asks for all five
+                return
+            names = [x for x in share_text().split(",") if x]
+            if set(names) == set(SHARE_DIRS): return share_set("")
+            share_show()      # a custom list is kept unless you confirm
+            dlg = Adw.AlertDialog(heading="Turn off the app's own folders?", body=f"The settings file lists only {', '.join(names)}. Turning this off replaces that list with none.")
+            dlg.add_response("cancel", "Cancel")
+            dlg.add_response("ok", "Turn off")
+            dlg.set_close_response("cancel")
+            dlg.connect("response", lambda d, r: share_set("") if r == "ok" else None)
+            dlg.present(self)
+
+        srow.connect("notify::active", share_toggled)
+        sundo.connect("clicked", lambda *_: share_set(None))
+        share_show()
+        page.add(sg)
 
         def list_group(gtitle, desc, key, labels, build):
             lg = Adw.PreferencesGroup(title=gtitle, description=desc)

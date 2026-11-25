@@ -48,6 +48,8 @@ EXTRA_PORTALS = ("Location", "GlobalShortcuts", "RemoteDesktop", "InputCapture",
 DEFAULT_PORTALS = ("FileTransfer", "Usb", "Clipboard", "Location", "GlobalShortcuts", "Wallpaper", "Secret")
 XDG_DEFAULT = {"download": "Downloads", "documents": "Documents", "pictures": "Pictures",
                "music": "Music", "videos": "Videos", "desktop": "Desktop"}
+SHARE_DIRS = ("download", "documents", "pictures", "music", "videos")
+SHARE_DEFAULT = ",".join(SHARE_DIRS)
 THEME = [".local/share/fonts", ".fonts", ".local/share/icons", ".icons", ".local/share/themes", ".themes",
          ".config/gtk-3.0/colors.css", ".config/gtk-4.0/colors.css",      # KDE's GTK theme reads its colors from here, or it does not parse
          ".config/kdeglobals", ".config/kdedefaults", ".local/share/color-schemes"]      # KDE: colors, icon theme, fonts
@@ -332,6 +334,58 @@ def xdg_dir(kind):
         pass
     return path or f"{HOME}/{XDG_DEFAULT[kind]}"
 
+def share_hosts(kinds, whole):
+    """Your real folders that get a per-app subfolder; skips unset, missing, hidden or nested ones and those xdg= shares whole."""
+    found = []
+    for k in kinds:
+        d = os.path.normpath(xdg_dir(k))
+        if k in whole or not d.startswith(HOME + "/") or d[len(HOME) + 1:].startswith(".") or not os.path.isdir(d) or d in found: continue
+        found.append(d)
+    keep = []
+    for d in sorted(found, key=lambda d: d.count("/")):
+        if not any(d.startswith(k + "/") for k in keep): keep.append(d)
+    return keep
+
+def share_move(old, new):
+    moved = left = 0
+    try: entries = sorted(os.listdir(old))
+    except OSError: return 0, 0
+    for e in entries:
+        if os.path.lexists(f"{new}/{e}"): left += 1; continue
+        try: os.rename(f"{old}/{e}", f"{new}/{e}"); moved += 1
+        except OSError: left += 1
+    return moved, left
+
+def share_mounts(name, cfg, live):
+    """[(<folder>/ajail/NAME, that folder in the app's home)]. live also makes the folders and moves in what the app's home holds."""
+    kinds = [k for k in SHARE_DIRS if k in {x.strip() for x in cfg.get("share_dirs", "").split(",")}]
+    whole = {x.partition(":")[0] for x in cfg["xdg"] if x.partition(":")[2] != "none"}
+    out, moved, left = [], 0, 0
+    home = os.path.realpath(f"{HOMES}/{name}")
+    for d in share_hosts(kinds, whole):
+        rel = d[len(HOME) + 1:]
+        base, own, inside = f"{d}/ajail", f"{d}/ajail/{name}", f"{HOMES}/{name}/{rel}"
+        bad = next((p for p in (base, own) if os.path.lexists(p) and (os.path.islink(p) or not os.path.isdir(p))), None)
+        if bad: why = f"~/{bad[len(HOME) + 1:]} is a link or not a plain folder"
+        elif os.path.realpath(inside) != f"{home}/{rel}": why = f"{rel} in the app's home is behind a link"
+        else: why = None
+        if why is None and live:
+            try:
+                for p in (base, own):
+                    if not os.path.isdir(p): os.mkdir(p, 0o700)
+            except OSError as e:
+                why = f"can't make ~/{rel}/ajail/{name} ({e.strerror})"
+        if why:
+            if live: warn(f"share_dirs: {rel} stays in the app's home: {why}", name)
+            continue
+        if live and os.path.isdir(inside):
+            m, k = share_move(inside, own)
+            moved, left = moved + m, left + k
+        out.append((own, f"{HOME}/{rel}"))
+    if live and moved:
+        warn(f"moved {moved} item{'s' if moved != 1 else ''} from the app's home into <folder>/ajail/{name}" + (f"; {left} left in place (the name is taken there)" if left else ""), name)
+    return out
+
 def empty_cfg():
     return {"s": {}, **{k: [] for k in LISTS}}
 
@@ -373,6 +427,10 @@ def parse_cfg(path):
         elif k in NUM:
             if v.isdigit(): d["s"][k] = min(int(v), 10**7)
             else: bad("expected a whole number")
+        elif k == "share_dirs":
+            names = [x.strip() for x in v.split(",") if x.strip()]
+            if all(x in SHARE_DIRS for x in names): d["s"][k] = ",".join(names)
+            else: bad("expected a comma list of " + ", ".join(SHARE_DIRS) + ", or nothing")
         elif k in CHOICES:
             if v in CHOICES[k]: d["s"][k] = v
             else: bad("expected " + ", ".join(CHOICES[k][:-1]) + " or " + CHOICES[k][-1])
@@ -390,7 +448,7 @@ def load_cfg(name):
     """Built-in defaults < default.conf < apps/NAME.conf. Lists add up, except xdg (per folder)."""
     g = parse_cfg(f"{CONF}/default.conf") or empty_cfg()
     a = parse_cfg(f"{CONF}/apps/{name}.conf") or empty_cfg()
-    cfg = {**DEFAULTS, **NUM, **{k: v[0] for k, v in CHOICES.items()}, **g["s"], **a["s"]}
+    cfg = {**DEFAULTS, **NUM, **{k: v[0] for k, v in CHOICES.items()}, "share_dirs": SHARE_DEFAULT, **g["s"], **a["s"]}
     for k in ("allow", "allow_ro", "env", "talk"):
         cfg[k] = list(dict.fromkeys(g[k] + a[k]))
     on = list(DEFAULT_PORTALS)
@@ -1027,7 +1085,9 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
     else:
         a += ["--ro-bind", root, "/app"]
     if cfg["tmp_home"]: a += ["--perms", "0700", "--tmpfs", HOME]      # erased when the app closes
-    else: a += ["--bind", f"{HOMES}/{name}", HOME]
+    else:
+        a += ["--bind", f"{HOMES}/{name}", HOME]
+        for own, dst in share_mounts(name, cfg, not NO_LOG[0]): a += ["--bind", own, dst]
     if cfg["single_instance"]:      # a second launch of the same app finds the first one's lock/socket files (Chrome keeps its singleton socket in $TMPDIR); /tmp stays private
         si = f"{rt}/ajail/single/{name}"
         if not NO_LOG[0]:
@@ -1457,6 +1517,44 @@ def sweep_runtime():
             try: os.unlink(p)
             except OSError: pass
 
+def portal_export(paths, app):
+    """{path: document id} for the files the Documents portal took, read-only for APP; {} when it can't (no PyGObject, no portal)."""
+    try:
+        from gi.repository import Gio, GLib
+    except ImportError:
+        return {}
+    paths = sorted(set(paths))
+    try:
+        fds = [os.open(p, os.O_PATH | os.O_CLOEXEC) for p in paths]
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        reply, _ = bus.call_with_unix_fd_list_sync(
+            PORTAL_DOCS_NAME, PORTAL_DOCS_PATH, PORTAL_DOCS_NAME, "AddFull",
+            GLib.Variant("(ahusas)", (list(range(len(fds))), 1, app, ["read"])),    # 1: reuse a document that already exists
+            GLib.VariantType("(asa{sv})"), Gio.DBusCallFlags.NONE, 3000, Gio.UnixFDList.new_from_array(fds), None)
+        ids = reply.unpack()[0]
+    except (OSError, GLib.Error):
+        return {}
+    return dict(zip(paths, ids)) if len(ids) == len(paths) else {}
+
+def portal_file_args(args, app, cfg, export=portal_export):
+    """ARGS with each file you started the app with (a path or file:// URI) swapped for its read-only copy in the Documents portal."""
+    found = {}
+    for i, x in enumerate(args[:64]):
+        uri = x.startswith("file://")
+        q = urllib.parse.unquote(x[7:]) if uri else x
+        if not q.startswith("/") or "\n" in q or len(q) > 1024: continue
+        q = safe_path(q)
+        if q and os.path.isfile(q): found[i] = (q, uri)
+    shared = [p for p in (safe_path(x) for _, x in share_list(cfg)) if p] if found else []
+    found = {i: v for i, v in found.items() if not any(v[0] == s or v[0].startswith(s + "/") for s in shared)}
+    ids = export([q for q, _ in found.values()], app) if found else {}
+    out = list(args)
+    for i, (q, uri) in found.items():
+        if q in ids:
+            p = f"{runtime_dir()}/doc/{ids[q]}/{os.path.basename(q)}"
+            out[i] = "file://" + urllib.parse.quote(p) if uri else p
+    return out
+
 
 # ======== 40_images: AppImage storage: mounting, moving, trashing, running-state.
 
@@ -1800,6 +1898,8 @@ def launch(name, root, cfg, extra, source=None, once=False):
             warn(f"could not prepare the portal folder ({e}); the file chooser may not work", name)
             inst, infopath = None, None
     infofd = (INFO_FD if priv else infof.fileno()) if infof else None
+    if cfg["portals"]:      # opened files go in read-only through the portal; files in a folder you share stay as they are
+        extra = portal_file_args(extra, portal_app_id(name), cfg)
     inner = bwrap_args(name, root, cfg, ["/app/AppRun"] + extra, bus[2] if bus else None,
                        secfd, forward_files(extra), gen, gset, wl.path if wl else None, infofd,
                        a11y[2] if a11y else None, system[2] if system else None)

@@ -22,6 +22,58 @@ def xdg_dir(kind):
         pass
     return path or f"{HOME}/{XDG_DEFAULT[kind]}"
 
+def share_hosts(kinds, whole):
+    """Your real folders that get a per-app subfolder; skips unset, missing, hidden or nested ones and those xdg= shares whole."""
+    found = []
+    for k in kinds:
+        d = os.path.normpath(xdg_dir(k))
+        if k in whole or not d.startswith(HOME + "/") or d[len(HOME) + 1:].startswith(".") or not os.path.isdir(d) or d in found: continue
+        found.append(d)
+    keep = []
+    for d in sorted(found, key=lambda d: d.count("/")):
+        if not any(d.startswith(k + "/") for k in keep): keep.append(d)
+    return keep
+
+def share_move(old, new):
+    moved = left = 0
+    try: entries = sorted(os.listdir(old))
+    except OSError: return 0, 0
+    for e in entries:
+        if os.path.lexists(f"{new}/{e}"): left += 1; continue
+        try: os.rename(f"{old}/{e}", f"{new}/{e}"); moved += 1
+        except OSError: left += 1
+    return moved, left
+
+def share_mounts(name, cfg, live):
+    """[(<folder>/ajail/NAME, that folder in the app's home)]. live also makes the folders and moves in what the app's home holds."""
+    kinds = [k for k in SHARE_DIRS if k in {x.strip() for x in cfg.get("share_dirs", "").split(",")}]
+    whole = {x.partition(":")[0] for x in cfg["xdg"] if x.partition(":")[2] != "none"}
+    out, moved, left = [], 0, 0
+    home = os.path.realpath(f"{HOMES}/{name}")
+    for d in share_hosts(kinds, whole):
+        rel = d[len(HOME) + 1:]
+        base, own, inside = f"{d}/ajail", f"{d}/ajail/{name}", f"{HOMES}/{name}/{rel}"
+        bad = next((p for p in (base, own) if os.path.lexists(p) and (os.path.islink(p) or not os.path.isdir(p))), None)
+        if bad: why = f"~/{bad[len(HOME) + 1:]} is a link or not a plain folder"
+        elif os.path.realpath(inside) != f"{home}/{rel}": why = f"{rel} in the app's home is behind a link"
+        else: why = None
+        if why is None and live:
+            try:
+                for p in (base, own):
+                    if not os.path.isdir(p): os.mkdir(p, 0o700)
+            except OSError as e:
+                why = f"can't make ~/{rel}/ajail/{name} ({e.strerror})"
+        if why:
+            if live: warn(f"share_dirs: {rel} stays in the app's home: {why}", name)
+            continue
+        if live and os.path.isdir(inside):
+            m, k = share_move(inside, own)
+            moved, left = moved + m, left + k
+        out.append((own, f"{HOME}/{rel}"))
+    if live and moved:
+        warn(f"moved {moved} item{'s' if moved != 1 else ''} from the app's home into <folder>/ajail/{name}" + (f"; {left} left in place (the name is taken there)" if left else ""), name)
+    return out
+
 def empty_cfg():
     return {"s": {}, **{k: [] for k in LISTS}}
 
@@ -63,6 +115,10 @@ def parse_cfg(path):
         elif k in NUM:
             if v.isdigit(): d["s"][k] = min(int(v), 10**7)
             else: bad("expected a whole number")
+        elif k == "share_dirs":
+            names = [x.strip() for x in v.split(",") if x.strip()]
+            if all(x in SHARE_DIRS for x in names): d["s"][k] = ",".join(names)
+            else: bad("expected a comma list of " + ", ".join(SHARE_DIRS) + ", or nothing")
         elif k in CHOICES:
             if v in CHOICES[k]: d["s"][k] = v
             else: bad("expected " + ", ".join(CHOICES[k][:-1]) + " or " + CHOICES[k][-1])
@@ -80,7 +136,7 @@ def load_cfg(name):
     """Built-in defaults < default.conf < apps/NAME.conf. Lists add up, except xdg (per folder)."""
     g = parse_cfg(f"{CONF}/default.conf") or empty_cfg()
     a = parse_cfg(f"{CONF}/apps/{name}.conf") or empty_cfg()
-    cfg = {**DEFAULTS, **NUM, **{k: v[0] for k, v in CHOICES.items()}, **g["s"], **a["s"]}
+    cfg = {**DEFAULTS, **NUM, **{k: v[0] for k, v in CHOICES.items()}, "share_dirs": SHARE_DEFAULT, **g["s"], **a["s"]}
     for k in ("allow", "allow_ro", "env", "talk"):
         cfg[k] = list(dict.fromkeys(g[k] + a[k]))
     on = list(DEFAULT_PORTALS)
@@ -717,7 +773,9 @@ def bwrap_args(name, root, cfg, inner, bus=None, sec=None, files=(), gen=None, g
     else:
         a += ["--ro-bind", root, "/app"]
     if cfg["tmp_home"]: a += ["--perms", "0700", "--tmpfs", HOME]      # erased when the app closes
-    else: a += ["--bind", f"{HOMES}/{name}", HOME]
+    else:
+        a += ["--bind", f"{HOMES}/{name}", HOME]
+        for own, dst in share_mounts(name, cfg, not NO_LOG[0]): a += ["--bind", own, dst]
     if cfg["single_instance"]:      # a second launch of the same app finds the first one's lock/socket files (Chrome keeps its singleton socket in $TMPDIR); /tmp stays private
         si = f"{rt}/ajail/single/{name}"
         if not NO_LOG[0]:

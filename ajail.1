@@ -281,6 +281,12 @@ List keys:
 (read only),
 .B xdg=NAME[:ro|:none]
 (download, documents, pictures, music, videos or desktop),
+.B share_dirs=LIST
+(a comma list of download, documents, pictures, music and videos, all five by default, empty for none: for each one that is set in
+.I ~/.config/user\-dirs.dirs
+and exists, \fI<folder>\fR/ajail/NAME is mounted over that folder in the app's home; an \fBxdg\fR line for the same folder shares the whole folder instead, and
+.B tmp_home=1
+ignores it),
 .B env=VAR=value,
 .B talk=NAME
 (an extra D\-Bus name) and
@@ -293,6 +299,10 @@ turns one off again, which is how to drop Location, GlobalShortcuts, Usb, Clipbo
 .I /media
 or
 .IR /run/media/$USER .
+.PP
+With
+.B portals=1
+and PyGObject, a file you start an app with (a path or file:// URI, as "Open with" does) is handed to it read\-only through the Documents portal instead of being shared. Files inside a shared folder, folders, and files when the portal is not available are passed on as before.
 .SH FILES
 .TP
 .I ~/.config/ajail/default.conf
@@ -309,6 +319,9 @@ sets compressed installs for one app and beats the global choice.
 .TP
 .I ~/.appimage\-homes/NAME
 The private home of NAME.
+.TP
+.I ~/Downloads/ajail/NAME
+What NAME sees as its Downloads (likewise for Documents, Pictures, Music and Videos). Kept when NAME is cleaned.
 .TP
 .I ~/.local/share/ajail/apps/NAME
 An installed app.
