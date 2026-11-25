@@ -795,6 +795,7 @@ class Win(Adw.ApplicationWindow):
         super().__init__(application=app, title="AppImage Jail", default_width=560, default_height=800)
         self._busy = False
         self.rows, self.badges = [], {}
+        self.live_marks = {}     # scope -> redraw of the Running badge and Stop button on its app page
         self.app_pages = {}      # scope -> the app page last built for it (see refresh_app_page)
         self.toasts = Adw.ToastOverlay()
         self.nav = Adw.NavigationView()
@@ -1043,6 +1044,8 @@ class Win(Adw.ApplicationWindow):
         names = running_pids()
         for n, b in self.badges.items():
             b.set_visible(n in names)
+        for mark in self.live_marks.values():
+            mark(names)
         return True
 
     def on_force(self, row, _):
@@ -1366,15 +1369,28 @@ class Win(Adw.ApplicationWindow):
                 launch.connect("clicked", lambda *_: spawn(      # run once never mounts
                     [SELF, "run-file", "--once", src], scope))
             stop = Gtk.Button(label="Stop", valign=Gtk.Align.CENTER)
+            live = Gtk.Label(label="Running", valign=Gtk.Align.CENTER, css_classes=["success", "caption"])
+
+            def mark(names=None):
+                on = scope in (running_pids() if names is None else names)
+                live.set_visible(on)
+                stop.set_sensitive(on)
+                return False                              # also used as a one-shot timeout
+
+            self.live_marks[scope] = mark
+            mark()
+            for ms in (1000, 2500):
+                launch.connect("clicked", lambda *_, ms=ms: GLib.timeout_add(ms, mark))      # a start takes a moment to show
 
             def do_stop(*_):
                 stop_app(scope)
                 self.toast("Stopping…")
+                for ms in (1000, 2500): GLib.timeout_add(ms, mark)
 
             stop.connect("clicked", do_stop)
             logb = Gtk.Button(label="Log", valign=Gtk.Align.CENTER)
             logb.connect("clicked", lambda *_: self.open_trouble(scope))
-            for b in (logb, stop, launch):
+            for b in (live, logb, stop, launch):
                 arow.add_suffix(b)
             ag.add(arow)
             if inst:
