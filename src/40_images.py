@@ -175,6 +175,11 @@ def descendants(pid):
         for c in kids.get(todo.pop(), []): found.append(c); todo.append(c[0])
     return found
 
+def is_pasta(pid):
+    try:
+        with open(f"/proc/{pid}/comm") as f: return f.read().startswith("pasta")
+    except OSError: return False
+
 def signal_tree(tree, sig):
     for pid, start in tree:
         if proc_start(pid) != start: continue
@@ -203,10 +208,11 @@ def stop_app(name):
                 except ProcessLookupError: continue
                 except OSError: pass                     # no pidfd on this kernel: plain kill below
             if live_pid(entry) != pid: continue
-            if fd is None: os.kill(pid, signal.SIGTERM)
+            if is_pasta(pid): pass                   # pasta's own SIGKILL of its command is denied by SELinux on Fedora: it ends when the app does
+            elif fd is None: os.kill(pid, signal.SIGTERM)
             else: signal.pidfd_send_signal(fd, signal.SIGTERM)
             sent += 1
-            signal_tree(below, signal.SIGTERM)
+            signal_tree([x for x in below if not is_pasta(x[0])], signal.SIGTERM)
         except OSError:
             pass
         finally:

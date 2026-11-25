@@ -193,7 +193,7 @@ class PidFiles(unittest.TestCase):
         self.pid = str(self.p.pid)
         import ast
         tree = ast.parse(open(f"{HERE}/ajail-gui").read())
-        body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("live_ajail", "proc_start", "live_pid", "pid_app", "descendants", "send_signal", "running_pids", "stop_app")]
+        body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("live_ajail", "proc_start", "live_pid", "pid_app", "descendants", "is_pasta", "send_signal", "running_pids", "stop_app")]
         self.G = {"os": os, "signal": signal, "RUNNING": self.d}
         exec(compile(ast.Module(body, []), "ajail-gui", "exec"), self.G)
     def tearDown(self):
@@ -306,6 +306,15 @@ class PidFiles(unittest.TestCase):
         top, kids = self.tree_of_sleeps("trap '' TERM; ")
         A["signal_tree"](kids, signal.SIGTERM); A["finish_tree"](kids, 0.3)
         self.assertTrue(self.all_gone(kids))
+
+    def test_stop_leaves_pasta_to_end_with_its_app(self):
+        os.symlink("/bin/sleep", f"{self.d}/pasta")
+        net = subprocess.Popen([f"{self.d}/pasta", "60"]); self.addCleanup(lambda: net.kill() or net.wait())
+        plain = self.sleeper()
+        for f in (A["is_pasta"], self.G["is_pasta"]): self.assertTrue(f(net.pid)); self.assertFalse(f(plain.pid))
+        self.entry(A["proc_start"](net.pid), net)
+        for stop in (A["stop_app"], self.G["stop_app"]): stop("Foo")
+        time.sleep(0.3); self.assertIsNone(net.poll(), "pasta gets no signal from us")
 
     def test_signal_tree_leaves_a_reused_pid_alone(self):
         box = self.sleeper()

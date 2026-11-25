@@ -134,7 +134,8 @@ def launch(name, root, cfg, extra, source=None, once=False):
         tree[:] = descendants(child[0].pid) or tree      # pasta dies on SIGTERM but leaves bwrap and the app running
         if again: child[0].kill(); signal_tree(tree, signal.SIGKILL)
         else:
-            child[0].terminate(); signal_tree(tree, signal.SIGTERM)
+            if not is_pasta(child[0].pid): child[0].terminate()      # pasta is left to end with the app, see stop_app
+            signal_tree([x for x in tree if not is_pasta(x[0])], signal.SIGTERM)
             t = threading.Timer(STOP_GRACE, lambda: child[0].kill()); t.daemon = True; t.start()
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):      # before the child exists, so no signal is missed
         signal.signal(s, stop)

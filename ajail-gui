@@ -385,6 +385,13 @@ def descendants(pid):
             todo.append(c[0])
     return found
 
+def is_pasta(pid):
+    try:
+        with open(f"/proc/{pid}/comm") as f:
+            return f.read().startswith("pasta")
+    except OSError:
+        return False
+
 def send_signal(pid, sig, still_it):
     """Signal PID if still_it() agrees, pinned with a pidfd first so a reused PID is never hit; True when sent."""
     fd = None
@@ -416,9 +423,10 @@ def stop_app(name):
         if pid is None:
             continue
         below = descendants(pid) if pid != entry else []
-        if send_signal(pid, signal.SIGTERM, lambda: live_pid(str(entry)) == pid):
+        if is_pasta(pid) or send_signal(pid, signal.SIGTERM, lambda: live_pid(str(entry)) == pid):      # pasta ends with the app, see ajail's stop_app
             for p, start in below:
-                send_signal(p, signal.SIGTERM, lambda: proc_start(p) == start)
+                if not is_pasta(p):
+                    send_signal(p, signal.SIGTERM, lambda: proc_start(p) == start)
 
 def running_pids(name=None):
     out = {}
