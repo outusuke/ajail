@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Text that comes from an AppImage must not reach your terminal with control characters (OSC 52 clipboard writes,
 # title reports and similar). These tests feed hostile text through the paths that print it.
-import contextlib, io, os, shutil, signal, socket, subprocess, sys, tempfile, types, unittest
+import contextlib, io, os, shutil, signal, socket, subprocess, sys, tempfile, time, types, unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -192,7 +193,7 @@ class PidFiles(unittest.TestCase):
         self.pid = str(self.p.pid)
         import ast
         tree = ast.parse(open(f"{HERE}/ajail-gui").read())
-        body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("live_ajail", "proc_start", "pid_app", "running_pids", "stop_app")]
+        body = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("live_ajail", "proc_start", "live_pid", "pid_app", "descendants", "send_signal", "running_pids", "stop_app")]
         self.G = {"os": os, "signal": signal, "RUNNING": self.d}
         exec(compile(ast.Module(body, []), "ajail-gui", "exec"), self.G)
     def tearDown(self):
@@ -249,6 +250,68 @@ class PidFiles(unittest.TestCase):
         self.G["stop_app"]("Foo")
         self.assertEqual(self.p.wait(5), -signal.SIGTERM)
 
+    def entry(self, cstart, box):                              # 999999 is an ajail that is gone
+        open(f"{self.d}/999999", "w").write(f"Foo\n123\n{box.pid}\n{cstart}")
+
+    def sleeper(self):
+        box = subprocess.Popen(["sleep", "60"]); self.addCleanup(lambda: box.kill() or box.wait())
+        return box
+
+    def tree_of_sleeps(self, pre=""):
+        top = subprocess.Popen(["sh", "-c", pre + "sleep 60 & sleep 60 & wait"]); self.addCleanup(lambda: top.kill() or top.wait())
+        for _ in range(100):
+            kids = A["descendants"](top.pid)
+            if len(kids) == 2: return top, kids
+            time.sleep(0.05)
+        self.fail("the sleeps did not start")
+
+    def gone(self, pid):
+        try:
+            with open(f"/proc/{pid}/stat", "rb") as f: return f.read().rsplit(b")", 1)[1].split()[0] == b"Z"
+        except OSError: return True
+
+    def all_gone(self, kids):
+        for _ in range(100):
+            if all(self.gone(p) for p, _ in kids): break
+            time.sleep(0.05)
+        return all(self.gone(p) for p, _ in kids)
+
+    def test_a_run_whose_ajail_died_still_counts_through_its_sandbox_and_stop_reaches_it(self):
+        box = self.sleeper()
+        self.entry("1", box); self.assertEqual(self.seen(), ([], []))                   # reused PID
+        self.entry(A["proc_start"](box.pid), box); self.assertEqual(self.seen(), (["999999"], [999999]))
+        self.assertEqual(A["running"]("Bar"), [])
+        self.assertEqual(A["stop_app"]("Foo"), 1); self.assertEqual(box.wait(5), -signal.SIGTERM)
+        self.assertEqual(self.seen(), ([], []))
+
+    def test_the_window_stops_a_run_through_its_sandbox_when_ajail_is_gone(self):
+        box = self.sleeper()
+        self.entry(A["proc_start"](box.pid), box)
+        self.G["stop_app"]("Foo"); self.assertEqual(box.wait(5), -signal.SIGTERM)
+
+    def test_descendants_lists_every_process_below_a_pid_with_its_start_time(self):
+        top, kids = self.tree_of_sleeps()
+        self.assertEqual([s for _, s in kids], [A["proc_start"](p) for p, _ in kids])
+        self.assertNotIn(top.pid, [p for p, _ in kids])
+        self.assertEqual(sorted(self.G["descendants"](top.pid)), sorted(kids))
+
+    def test_stop_of_a_run_whose_ajail_died_also_ends_what_the_sandbox_started(self):
+        for stop in (A["stop_app"], self.G["stop_app"]):
+            top, kids = self.tree_of_sleeps()
+            self.entry(A["proc_start"](top.pid), top)
+            stop("Foo"); top.wait(5)
+            self.assertTrue(self.all_gone(kids), stop)
+
+    def test_finish_tree_kills_what_ignores_the_stop_once_the_grace_is_over(self):
+        top, kids = self.tree_of_sleeps("trap '' TERM; ")
+        A["signal_tree"](kids, signal.SIGTERM); A["finish_tree"](kids, 0.3)
+        self.assertTrue(self.all_gone(kids))
+
+    def test_signal_tree_leaves_a_reused_pid_alone(self):
+        box = self.sleeper()
+        A["signal_tree"]([(box.pid, str(int(A["proc_start"](box.pid)) + 1))], signal.SIGKILL)
+        self.assertIsNone(box.poll())
+
     def test_stop_commands_use_stop_app(self):
         calls, keep = [], {k: A[k] for k in ("running", "stop_app")}
         A["running"] = lambda n: ["1"]; A["stop_app"] = lambda n: calls.append(n) or 1
@@ -287,7 +350,9 @@ class PidFiles(unittest.TestCase):
                 A["launch"]("Foo", f"{d}/root", cfg, [])
         finally:
             A.update(keep)
-        self.assertEqual(open(seen).read(), f"Foo\n{A['proc_start'](os.getpid())}")
+        name, start, child, cstart = open(seen).read().split("\n")           # the app is the sandbox here
+        self.assertEqual((name, start), ("Foo", A["proc_start"](os.getpid())))
+        self.assertTrue(child.isdigit() and cstart.isdigit())
         self.assertEqual(os.listdir(self.d), [])                        # launch removed its own pid file again
 
 class XauthFailsClosed(unittest.TestCase):
@@ -335,7 +400,7 @@ class PrivateNetLaunch(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
         names = ("check_identity", "sweep_runtime", "start_bus", "work_dir", "limit_prefix", "forward_files", "stop_bus", "running",
-                 "notify_failure", "log", "HOMES", "RUNNING", "SOURCES", "LOG", "shutil", "subprocess")
+                 "notify_failure", "log", "HOMES", "RUNNING", "SOURCES", "LOG", "shutil", "subprocess", "pasta_problem")
         self.keep = {k: A[k] for k in names + ("wayland_path", "wayland_context", "wl_supported")}
         A.update(wayland_path=lambda: None, wayland_context=lambda *a: None, wl_supported=lambda p: False)       # never talk to the real compositor from a test
         self.wd, self.seen, self.pasta = f"{self.d}/wd", [], True
@@ -357,7 +422,7 @@ class PrivateNetLaunch(unittest.TestCase):
         A.update(check_identity=lambda *a: None, sweep_runtime=lambda: None, start_bus=lambda *a: None, work_dir=lambda: self.wd,
                  limit_prefix=lambda *a: [], forward_files=lambda e: [], stop_bus=lambda b: None, running=lambda n: False,
                  notify_failure=lambda n: None, log=lambda *a, **k: None, HOMES=f"{self.d}/h", RUNNING=f"{self.d}/r",
-                 SOURCES=f"{self.d}/s", LOG=f"{self.d}/log", shutil=FakeShutil(), subprocess=FakeSub())
+                 SOURCES=f"{self.d}/s", LOG=f"{self.d}/log", shutil=FakeShutil(), subprocess=FakeSub(), pasta_problem=lambda: None)
         os.makedirs(f"{self.d}/root"); open(f"{self.d}/root/AppRun", "w").close()
     def tearDown(self): A.update(self.keep)
 
@@ -387,6 +452,15 @@ class PrivateNetLaunch(unittest.TestCase):
         code, err = self.launch(net=1, net_private=1)
         self.assertNotEqual(code, 0); self.assertIn("needs pasta", err); self.assertIn("passt", err)
         self.assertEqual(self.seen, []); self.assertFalse(os.path.exists(self.wd))
+
+    def test_without_a_tun_device_the_app_does_not_start_and_the_message_says_why(self):
+        A["pasta_problem"] = self.keep["pasta_problem"]
+        with mock.patch.object(os, "access", lambda p, m: p != "/dev/net/tun" and os.path.exists(p)):
+            self.assertIn("modprobe tun", A["pasta_problem"]())
+            code, err = self.launch(net=1, net_private=1)
+        self.assertNotEqual(code, 0); self.assertRegex(err, r"'Keep localhost private' cannot work: /dev/net/tun"); self.assertIn("turn that option off", err)
+        self.assertEqual(self.seen, []); self.assertFalse(os.path.exists(self.wd))
+        with mock.patch.object(os, "access", lambda p, m: True): self.assertIsNone(A["pasta_problem"]())
 
     def test_nothing_changes_without_the_switch_or_with_the_network_off(self):
         self.pasta = False                                          # not needed, so not missed

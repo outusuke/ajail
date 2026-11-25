@@ -72,6 +72,8 @@ def launch(name, root, cfg, extra, source=None, once=False):
     priv = private_net(cfg)
     if priv and not shutil.which("pasta"):
         die("'Keep localhost private' needs pasta: " + install_hint("passt") + ". Or turn that option off for this app.")
+    problem = pasta_problem() if priv else None
+    if problem: die(f"'Keep localhost private' cannot work: {problem}. Or turn that option off for this app.")
     sweep_runtime()
     bus = start_bus(cfg, name)
     a11y = start_a11y(name) if cfg["a11y"] else None      # a screen reader reads the app over its own bus; works without portals
@@ -125,13 +127,14 @@ def launch(name, root, cfg, extra, source=None, once=False):
     lim = ",".join(f"{k}={cfg[k]}" for k in NUM if cfg[k])
     log(f"START allow=[{on}] limits=[{lim}] seccomp={'on' if sec else 'off'} dbus={'on' if bus else 'off'}", name)
     start = time.time()
-    stopped, child = [False], [None]              # stopped: ended by a signal (ajail stop, Ctrl-C, logout): not a failed start
+    stopped, child, tree = [False], [None], []    # stopped: ended by a signal (ajail stop, Ctrl-C, logout): not a failed start
     def stop(*_):                                 # first signal: ask politely, kill after STOP_GRACE s; a second one kills at once
         again, stopped[0] = stopped[0], True
         if not child[0]: return
-        if again: child[0].kill()
+        tree[:] = descendants(child[0].pid) or tree      # pasta dies on SIGTERM but leaves bwrap and the app running
+        if again: child[0].kill(); signal_tree(tree, signal.SIGKILL)
         else:
-            child[0].terminate()
+            child[0].terminate(); signal_tree(tree, signal.SIGTERM)
             t = threading.Timer(STOP_GRACE, lambda: child[0].kill()); t.daemon = True; t.start()
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):      # before the child exists, so no signal is missed
         signal.signal(s, stop)
@@ -141,7 +144,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
     child[0] = p
     if stopped[0]: p.terminate()                  # a signal that came while it was starting
     pidfile = f"{RUNNING}/{os.getpid()}"
-    open(pidfile, "w").write(f"{name}\n{proc_start(os.getpid()) or ''}")        # the start time tells this process from a later one with the same PID
+    open(pidfile, "w").write(f"{name}\n{proc_start(os.getpid()) or ''}\n{p.pid}\n{proc_start(p.pid) or ''}")      # the sandbox goes in too, so the run still counts if ajail dies first
     def tee():
         lf = open_log()                           # None when the log can't be opened: the app's output still reaches the terminal
         n = 0                                     # a chatty app must not fill the disk: cap what one run adds to the log
@@ -180,7 +183,9 @@ def launch(name, root, cfg, extra, source=None, once=False):
     t = threading.Thread(target=tee, daemon=True); t.start()
     t2 = threading.Thread(target=pump, daemon=True) if tty else None
     if t2: t2.start()
-    rc = p.wait(); t.join(2)
+    rc = p.wait()
+    if stopped[0]: finish_tree(tree, STOP_GRACE)
+    t.join(2)
     if t2: t2.join(2)
     stop_bus(bus); stop_bus(a11y); stop_bus(system)
     if infof and not infof.closed: infof.close()

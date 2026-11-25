@@ -518,6 +518,10 @@ def net_wrap(inner, secpath=None, infopath=None):
     shift = "shift" if len(files) == 1 else f"shift {len(files)}"
     return PASTA + ["/bin/sh", "-c", f'{opens}; {shift}; exec "$@"', "sh"] + [p for _, _, p in files] + inner
 
+def pasta_problem():      # pasta's tap device comes from /dev/net/tun
+    if not os.access("/dev/net/tun", os.R_OK | os.W_OK): return "/dev/net/tun is missing or not usable by you (try: sudo modprobe tun)"
+    return None
+
 def work_dir():
     return f"{runtime_dir()}/ajail/{os.getpid()}.d"
 

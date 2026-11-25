@@ -139,15 +139,22 @@ def proc_start(pid):
     except (OSError, IndexError, UnicodeDecodeError):
         return None
 
-def pid_app(pid):
-    """The app name in RUNNING/PID, if that file was written by the process that is still running under this PID.
-    The file holds "NAME\nSTARTTIME". Old files (the name only) can't be checked, so they count for nothing."""
+def live_pid(entry):
+    """The PID of ajail for RUNNING/ENTRY, else of its sandbox if ajail is gone, else None. File: NAME, START, then sandbox PID, START."""
     try:
-        with open(f"{RUNNING}/{pid}") as f: name, _, start = f.read().partition("\n")
+        with open(f"{RUNNING}/{entry}") as f: lines = [x.strip() for x in f.read().split("\n")] + ["", "", "", ""]
     except OSError:
         return None
-    start = start.strip()
-    return name.strip() if start and start == proc_start(pid) and live_ajail(pid) else None
+    if lines[1] and lines[1] == proc_start(entry) and live_ajail(entry): return int(entry)
+    if lines[2].isdigit() and lines[3] and lines[3] == proc_start(lines[2]): return int(lines[2])
+    return None
+
+def pid_app(pid):
+    if live_pid(pid) is None: return None
+    try:
+        with open(f"{RUNNING}/{pid}") as f: return f.readline().strip()
+    except OSError:
+        return None
 
 def running(name):
     try:
@@ -155,23 +162,51 @@ def running(name):
     except OSError:
         return []
 
+def descendants(pid):
+    kids = {}
+    for f in os.listdir("/proc"):
+        if not f.isdigit(): continue
+        try:
+            with open(f"/proc/{f}/stat", "rb") as h: rest = h.read().rsplit(b")", 1)[1].split()
+            kids.setdefault(int(rest[1]), []).append((int(f), rest[19].decode()))
+        except (OSError, IndexError, ValueError): pass
+    found, todo = [], [int(pid)]
+    while todo:
+        for c in kids.get(todo.pop(), []): found.append(c); todo.append(c[0])
+    return found
+
+def signal_tree(tree, sig):
+    for pid, start in tree:
+        if proc_start(pid) != start: continue
+        try: os.kill(pid, sig)
+        except OSError: pass
+
+def finish_tree(tree, grace):
+    end = time.time() + grace
+    while time.time() < end and any(proc_start(pid) == start for pid, start in tree): time.sleep(0.1)
+    signal_tree(tree, signal.SIGKILL)
+
 def stop_app(name):
     """SIGTERM every running process of the app NAME; returns how many were signalled. A PID can be reused between
     listing the processes and signalling one, so each PID is first pinned with a pidfd and only then checked against
     its pid file: the signal goes to the process that was checked, never to a newcomer that took the number."""
     sent = 0
     use_fd = hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal")
-    for pid in [int(p) for p in running(name)]:
+    for entry in running(name):
+        pid = live_pid(entry)
+        if pid is None: continue
+        below = descendants(pid) if pid != int(entry) else []          # ajail is gone: stop what its sandbox started too
         fd = None
         try:
             if use_fd:
                 try: fd = os.pidfd_open(pid)
                 except ProcessLookupError: continue
                 except OSError: pass                     # no pidfd on this kernel: plain kill below
-            if pid_app(pid) != name: continue
+            if live_pid(entry) != pid: continue
             if fd is None: os.kill(pid, signal.SIGTERM)
             else: signal.pidfd_send_signal(fd, signal.SIGTERM)
             sent += 1
+            signal_tree(below, signal.SIGTERM)
         except OSError:
             pass
         finally:

@@ -232,6 +232,13 @@ def cmd_check():
     yes(bwrap_has("--hostname"), "bubblewrap can hide the computer name", "bubblewrap too old for 'Hide personal details' to hide the computer name")
     yes(shutil.which("pasta"), "pasta installed ('Keep localhost private' available)",
         "pasta missing, so 'Keep localhost private' cannot be used: " + install_hint("passt"))
+    if shutil.which("pasta"):
+        pr = pasta_problem()
+        if not pr:
+            try: r = subprocess.run(["pasta", "--config-net", "--", shutil.which("true") or "/bin/true"], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+            except (OSError, subprocess.TimeoutExpired) as e: r = subprocess.CompletedProcess([], 1, "", str(e) or "timed out")
+            if r.returncode: pr = (r.stderr.strip().splitlines() or ["failed"])[-1][:160]
+        line("WARN" if pr else "OK", "pasta cannot set up a network, so 'Keep localhost private' cannot be used: " + pr if pr else "pasta can set up a network")
     sr = shutil.which("systemd-run")
     lim = bool(sr) and subprocess.run([sr, "--user", "--scope", "--quiet", "-p", "TasksMax=infinity", "--", "/usr/bin/true"],
                                       capture_output=True).returncode == 0
