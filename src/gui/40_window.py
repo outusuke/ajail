@@ -618,7 +618,30 @@ class Win(Adw.ApplicationWindow):
             stop.connect("clicked", do_stop)
             logb = Gtk.Button(label="Log", valign=Gtk.Align.CENTER)
             logb.connect("clicked", lambda *_: self.open_trouble(scope))
-            for b in (live, logb, stop, launch):
+            opts = Gtk.Button(icon_name="emblem-system-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Launch options")
+
+            def args_dialog(*_):
+                cur = next((src_["s"]["args"] for src_ in (R, G) if "args" in src_["s"]), "")
+                d = Adw.AlertDialog(heading="Launch options", body="Added before any arguments given at start, for example --profile work.")
+                entry = Gtk.Entry(text=cur, activates_default=True)
+                d.set_extra_child(entry)
+                d.add_response("cancel", "Cancel"); d.add_response("save", "Save")
+                d.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
+                d.set_default_response("save"); d.set_close_response("cancel")
+
+                def done(dlg, res):
+                    if dlg.choose_finish(res) != "save": return
+                    text = entry.get_text().strip()
+                    try: shlex.split(text)
+                    except ValueError: return self.toast("Unclosed quote in the arguments")
+                    if re.search(r"(^|\s)#", text): return self.toast("A # that starts a word would be read as a comment")
+                    if text or G["s"].get("args"): R["s"]["args"] = text      # empty in an app cancels the default's
+                    else: R["s"].pop("args", None)
+                    commit()
+                d.choose(self, None, done)
+
+            opts.connect("clicked", args_dialog)
+            for b in (live, logb, stop, opts, launch):
                 arow.add_suffix(b)
             ag.add(arow)
             if inst:

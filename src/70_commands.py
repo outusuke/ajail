@@ -272,7 +272,7 @@ def cmd_preview(n):
     wl = f"{runtime_dir()}/ajail/PID.wl" if wp and wl_supported(wp) else None
     info = f"{runtime_dir()}/.flatpak/PID/bwrapinfo.json" if bus and cfg["portals"] else None
     system = f"{runtime_dir()}/ajail/PID.sys" if any(cfg[k] for k in SYSTEM_BUS_NAMES) else None
-    cmd = bwrap_args(name, root, cfg, ["/app/AppRun"], bus, SEC_FD if priv else None, (), preview_files(cfg), gset, wl,
+    cmd = bwrap_args(name, root, cfg, ["/app/AppRun"] + shlex.split(cfg["args"]), bus, SEC_FD if priv else None, (), preview_files(cfg), gset, wl,
                      (INFO_FD if priv else "FD") if info else None, None, system)
     if priv: cmd = net_wrap(cmd, f"{runtime_dir()}/ajail/PID.d/seccomp.bpf", info)
     props = limit_props(cfg)

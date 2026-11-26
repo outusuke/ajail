@@ -85,6 +85,11 @@ def talk_ok(n):
     'org.freedesktop.*' (which would reach secrets, systemd and more) are refused; 'org.example.App.*' is fine."""
     return bool(TALK_RE.fullmatch(n)) and (not n.endswith(".*") or n.count(".") >= 3)
 
+def args_ok(v):
+    try: shlex.split(v)
+    except ValueError: return False
+    return True
+
 def parse_cfg(path):
     """Read one settings file. Whitespace around keys and values is ignored, and '#' starts a comment (so
     'net = 0  # no network' works). A line that can't be used is skipped with a warning (terminal and log),
@@ -119,6 +124,9 @@ def parse_cfg(path):
             names = [x.strip() for x in v.split(",") if x.strip()]
             if all(x in SHARE_DIRS for x in names): d["s"][k] = ",".join(names)
             else: bad("expected a comma list of " + ", ".join(SHARE_DIRS) + ", or nothing")
+        elif k == "args":
+            if args_ok(v): d["s"][k] = v
+            else: bad("an unclosed quote")
         elif k in CHOICES:
             if v in CHOICES[k]: d["s"][k] = v
             else: bad("expected " + ", ".join(CHOICES[k][:-1]) + " or " + CHOICES[k][-1])
@@ -136,7 +144,7 @@ def load_cfg(name):
     """Built-in defaults < default.conf < apps/NAME.conf. Lists add up, except xdg (per folder)."""
     g = parse_cfg(f"{CONF}/default.conf") or empty_cfg()
     a = parse_cfg(f"{CONF}/apps/{name}.conf") or empty_cfg()
-    cfg = {**DEFAULTS, **NUM, **{k: v[0] for k, v in CHOICES.items()}, "share_dirs": SHARE_DEFAULT, **g["s"], **a["s"]}
+    cfg = {**DEFAULTS, **NUM, **{k: v[0] for k, v in CHOICES.items()}, "share_dirs": SHARE_DEFAULT, "args": "", **g["s"], **a["s"]}
     for k in ("allow", "allow_ro", "env", "talk"):
         cfg[k] = list(dict.fromkeys(g[k] + a[k]))
     on = list(DEFAULT_PORTALS)

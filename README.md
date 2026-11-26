@@ -87,6 +87,7 @@ allow=/home/me/Projects          # read & write
 allow_ro=/media/me/usb/photos    # read-only
 xdg=download                     # also documents, pictures, music, videos, desktop; :ro or :none
 share_dirs=download,music        # default: download,documents,pictures,music,videos; empty = none
+args=--profile work              # launch arguments, split like a shell would, put before the ones you type
 env=MY_VAR=value
 talk=org.example.Service         # extra D-Bus name
 portal=Secret                    # turn on a portal that is off by default; portal=-Location turns one off
@@ -95,6 +96,8 @@ portal=Secret                    # turn on a portal that is off by default; port
 Files you open with an app ("Open with", a path argument) and `portals=1` with PyGObject: the app gets a read-only copy through the Documents portal, as Flatpak does, instead of a shared path. Files inside a folder you already share, and folders, are passed on as before.
 
 Per-app folders: for each of Downloads, Documents, Pictures, Music and Videos that is set in `~/.config/user-dirs.dirs` and exists, `<folder>/ajail/NAME` is mounted over the same folder in the app's home (`~/Downloads/ajail/firefox` is `~/Downloads` for firefox), so the app sees only its own files there. `share_dirs=` picks some, or none when empty. What the app's home already holds in those folders is moved over on first use, never overwriting. ajail makes the folders with mode 0700 and never deletes them. If `ajail` or `ajail/NAME` is a link, ajail warns and that folder stays in the app's home. `xdg=` for the same folder shares the whole folder instead, and `tmp_home=1` ignores `share_dirs`.
+
+Launch arguments: `args=--profile work` in an app's settings file (or `default.conf`) adds those arguments, split like a shell would, before the ones you type (`ajail-gui` has a gear button for it on each app's page). An app's `args` replaces the default's; an empty `args=` cancels it. Quote an argument that contains spaces. A `#` that starts a word begins a comment. Unlike a file you open with the app, a path in `args` is not shared: use `allow=` for that.
 
 Back up or move settings with `ajail export -o FILE` and `ajail import FILE` (`--force` replaces settings that differ); `ajail-gui` has the same buttons. The export holds the permission files and the choices `ajail-gui` remembers (Ask before opening, Use less disk space, what to do with the AppImage after installing); it leaves out app data, installed apps, Sandbox every AppImage and the app menu entry.
 

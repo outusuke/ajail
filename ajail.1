@@ -287,6 +287,8 @@ List keys:
 and exists, \fI<folder>\fR/ajail/NAME is mounted over that folder in the app's home; an \fBxdg\fR line for the same folder shares the whole folder instead, and
 .B tmp_home=1
 ignores it),
+.B args=ARGUMENTS
+(launch arguments, split like a shell would and put before the ones given at start; an app's line replaces the default's, an empty one cancels it; a path in them is not shared, use \fBallow\fR),
 .B env=VAR=value,
 .B talk=NAME
 (an extra D\-Bus name) and

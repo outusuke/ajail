@@ -117,6 +117,32 @@ class Talk(unittest.TestCase):
             open(f"{self.d}/apps/x.conf", "w").write("share_dirs=\n")      # an empty line cancels the default's
             self.assertEqual(A["load_cfg"]("x")["share_dirs"], "")
 
+    def test_args_is_kept_as_text_and_an_unclosed_quote_is_refused(self):
+        d, err = self.parse("args = --profile 'my work'   # mine\n")
+        self.assertEqual(d["s"], {"args": "--profile 'my work'"}); self.assertEqual(err, "")
+        d, err = self.parse("args=--title 'oops\n")
+        self.assertEqual(d["s"], {}); self.assertIn("x.conf:1", err); self.assertIn("unclosed quote", err)
+
+    def test_an_apps_args_replace_the_defaults_and_empty_cancels_them(self):
+        os.makedirs(f"{self.d}/apps")
+        with unittest.mock.patch.dict(A, {"CONF": self.d}):
+            self.assertEqual(A["load_cfg"]("x")["args"], "")
+            open(f"{self.d}/default.conf", "w").write("args=--a\n")
+            self.assertEqual(A["load_cfg"]("x")["args"], "--a")
+            open(f"{self.d}/apps/x.conf", "w").write("args=--b 'c d'\n")
+            self.assertEqual(A["load_cfg"]("x")["args"], "--b 'c d'")
+            open(f"{self.d}/apps/x.conf", "w").write("args=\n")
+            self.assertEqual(A["load_cfg"]("x")["args"], "")
+
+    def test_args_go_between_the_app_and_what_you_typed(self):
+        os.makedirs(f"{self.d}/apps")
+        open(f"{self.d}/apps/x.conf", "w").write("args=--profile 'my work'\n")
+        out = io.StringIO()
+        with unittest.mock.patch.dict(A, {"CONF": self.d, "LOG": f"{self.d}/l", "STATE": self.d, "bwrap_has": lambda o: True}), contextlib.redirect_stdout(out):
+            A["cmd_preview"]("x")
+        words = __import__("shlex").split(out.getvalue())
+        self.assertEqual(words[words.index("/app/AppRun") + 1:][:2], ["--profile", "my work"])
+
     def test_share_mounts_give_each_app_its_own_subfolder(self):
         home = f"{self.d}/h"
         for n in ("Downloads", "Music", ".hidden"): os.makedirs(f"{home}/{n}")
