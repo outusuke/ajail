@@ -215,6 +215,13 @@ class Win(Adw.ApplicationWindow):
         ts = Gtk.Button(icon_name="utilities-terminal-symbolic", tooltip_text="Troubleshooting")
         ts.connect("clicked", lambda *_: self.open_trouble(None))
         header.pack_end(ts)
+        about = Gio.SimpleAction.new("about", None)
+        about.connect("activate", lambda *_: self.show_about())
+        self.add_action(about)
+        menu = Gio.Menu()
+        menu.append("About AppImage Jail", "win.about")
+        header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, primary=True,
+                                       tooltip_text="Main menu"))
 
         view = Adw.ToolbarView()
         view.add_top_bar(header)
@@ -222,6 +229,14 @@ class Win(Adw.ApplicationWindow):
         self.main = Adw.NavigationPage(title="AppImage Jail", child=view)
         self.fill_apps()
         return self.main
+
+    def show_about(self):
+        # The own icon only exists once the app-menu entry is installed.
+        icon = "io.github.outusuke.ajail.Gui" if menu_entry_exists() else "security-high"
+        Adw.AboutDialog(
+            application_icon=icon, application_name="AppImage Jail", version=VERSION,
+            developer_name=DEVELOPER, developers=[DEVELOPER], website=REPO_URL,
+            issue_url=REPO_URL + "/issues", license_type=Gtk.License.GPL_3_0).present(self)
 
     def fill_apps(self):
         for r in self.rows:
