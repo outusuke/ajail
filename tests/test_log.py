@@ -90,7 +90,7 @@ class Launch(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
         names = ("check_identity", "sweep_runtime", "start_bus", "work_dir", "limit_prefix", "forward_files", "stop_bus", "running",
-                 "notify_failure", "notify_crash", "notify_ended", "journal_tag", "HOMES", "RUNNING", "SOURCES", "LOG", "STATE", "CONF",
+                 "notify_failure", "notify_crash", "notify_ended", "journal_tag", "on_journal", "HOMES", "RUNNING", "SOURCES", "LOG", "STATE", "CONF",
                  "subprocess", "time")
         self.keep = {k: A[k] for k in names + ("wayland_path", "wayland_context", "wl_supported")}
         A.update(wayland_path=lambda: None, wayland_context=lambda *a: None, wl_supported=lambda p: False)       # never talk to the real compositor from a test
@@ -184,6 +184,19 @@ class Launch(unittest.TestCase):
             del self.popups[:]
             _, err = self.launch(**cfg)
             self.assertNotIn(hint, err, label); self.assertTrue(all(not isinstance(x, tuple) or hint not in x for x in self.popups), label)
+
+    def test_x11_error_on_stdout_in_the_journal_is_logged_and_gets_the_hint(self):
+        hint = A["HINT_X11"]
+        self.child = "import sys; sys.stdout.write('Missing X server or $DISPLAY\\n'); sys.exit(1)"
+        A["on_journal"] = lambda fd, sock=None: True
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out): _, err = self.launch()
+        self.assertIn("Missing X server", out.getvalue()); self.assertIn("[Foo] Missing X server", self.log())
+        self.assertIn(hint, err); self.assertEqual(self.popups, [("Foo", hint)])
+        A["on_journal"] = lambda fd, sock=None: False      # a pipe or file keeps its stdout and the hint stays off
+        del self.popups[:]
+        _, err = self.launch()
+        self.assertNotIn(hint, err)
 
     def test_allow_32bit_warns_and_is_logged_as_on(self):
         self.apprun()

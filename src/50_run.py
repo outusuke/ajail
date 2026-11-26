@@ -142,23 +142,24 @@ def launch(name, root, cfg, extra, source=None, once=False):
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):      # before the child exists, so no signal is missed
         signal.signal(s, stop)
     tty = sys.stdout.isatty()                     # to a terminal, stdout is filtered too; to a pipe or file it stays untouched
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE if tty else None, stderr=subprocess.PIPE, text=True, errors="replace",
+    jrn = not tty and on_journal(1)               # menu or file-manager start: stdout goes only to the journal, so log it and check it for hints too
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE if tty or jrn else None, stderr=subprocess.PIPE, text=True, errors="replace",
                          pass_fds=([sec.fileno()] if sec and not priv else []) + ([infof.fileno()] if infof and not priv else []))
     child[0] = p
     if stopped[0]: p.terminate()                  # a signal that came while it was starting
     pidfile = f"{RUNNING}/{os.getpid()}"
     open(pidfile, "w").write(f"{name}\n{proc_start(os.getpid()) or ''}\n{p.pid}\n{proc_start(p.pid) or ''}")      # the sandbox goes in too, so the run still counts if ajail dies first
     x11_missing = [False]
-    def tee():
+    def tee(src, out):
         lf = open_log()                           # None when the log can't be opened: the app's output still reaches the terminal
         n = 0                                     # a chatty app must not fill the disk: cap what one run adds to the log
         dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
         pend = ""                                 # the unfinished line, kept short: a flood without newlines must not fill memory
         try:
             while True:
-                data = os.read(p.stderr.fileno(), 4096)
+                data = os.read(src.fileno(), 4096)
                 text = CTRL.sub("", dec.decode(data, final=not data))     # an app must not inject terminal escape sequences (OSC 52 etc.)
-                try: sys.stderr.write(text); sys.stderr.flush()
+                try: out.write(text); out.flush()
                 except (OSError, ValueError): pass
                 lines = (pend + text).split("\n"); pend = lines.pop()
                 lines = [x + "\n" for x in lines]
@@ -185,12 +186,13 @@ def launch(name, root, cfg, extra, source=None, once=False):
                 if not data: break
         except Exception:
             pass
-    t = threading.Thread(target=tee, daemon=True); t.start()
+    ts = [threading.Thread(target=tee, args=a, daemon=True) for a in ((p.stderr, sys.stderr),) + (((p.stdout, sys.stdout),) if jrn else ())]
+    for t in ts: t.start()
     t2 = threading.Thread(target=pump, daemon=True) if tty else None
     if t2: t2.start()
     rc = p.wait()
     if stopped[0]: finish_tree(tree, STOP_GRACE)
-    t.join(2)
+    for t in ts: t.join(2)
     if t2: t2.join(2)
     stop_bus(bus); stop_bus(a11y); stop_bus(system)
     if infof and not infof.closed: infof.close()
