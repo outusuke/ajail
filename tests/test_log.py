@@ -115,7 +115,7 @@ class Launch(unittest.TestCase):
         A["LOG_NAME"][0] = None
 
     def launch(self, **over):
-        cfg = dict(A["DEFAULTS"]); cfg.update(A["NUM"]); cfg.update({k: [] for k in A["LISTS"]}); cfg.update(theme=0); cfg.update(over)
+        cfg = dict(A["DEFAULTS"]); cfg.update(A["NUM"]); cfg.update({k: [] for k in A["LISTS"]}); cfg.update(theme=0, args=""); cfg.update(over)
         err = io.StringIO()
         with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as r:
             A["launch"]("Foo", f"{self.d}/root", cfg, [])
@@ -172,6 +172,18 @@ class Launch(unittest.TestCase):
             _, err = self.launch_as(machine, **cfg)
             self.assertNotIn(hint, err, label); self.assertNotIn(hint, self.log(), label)
             self.assertTrue(all(not isinstance(x, tuple) or hint not in x for x in self.popups), label)
+
+    def test_an_app_that_cannot_find_an_x_server_gets_a_hint_while_x11_is_off(self):
+        hint = A["HINT_X11"]
+        self.child = "import sys; sys.stderr.write('ERROR:ozone_platform_x11.cc:257] Missing X server or $DISPLAY\\n'); sys.exit(1)"
+        _, err = self.launch()
+        self.assertIn(hint, err); self.assertIn(f"WARNING {hint}", self.log()); self.assertEqual(self.popups, [("Foo", hint)])
+        for label, child, cfg in (("x11 on", self.child, {"x11": 1}), ("exit 0", self.child.replace("exit(1)", "exit(0)"), {}),
+                                  ("other error", "import sys; sys.stderr.write('boom\\n'); sys.exit(1)", {})):
+            self.child = child
+            del self.popups[:]
+            _, err = self.launch(**cfg)
+            self.assertNotIn(hint, err, label); self.assertTrue(all(not isinstance(x, tuple) or hint not in x for x in self.popups), label)
 
     def test_allow_32bit_warns_and_is_logged_as_on(self):
         self.apprun()
@@ -243,7 +255,7 @@ class Launch(unittest.TestCase):
         class Tty(io.StringIO):
             def isatty(s): return True
         with contextlib.redirect_stderr(Tty()), self.assertRaises(SystemExit):
-            A["launch"]("Foo", f"{self.d}/root", {**A["DEFAULTS"], **A["NUM"], **{k: [] for k in A["LISTS"]}, "theme": 0}, [])
+            A["launch"]("Foo", f"{self.d}/root", {**A["DEFAULTS"], **A["NUM"], **{k: [] for k in A["LISTS"]}, "theme": 0, "args": ""}, [])
         self.assertEqual(self.popups, [])                                      # the terminal already showed it
 
     def test_a_clean_exit_and_a_stop_by_signal_say_nothing(self):

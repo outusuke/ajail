@@ -148,6 +148,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
     if stopped[0]: p.terminate()                  # a signal that came while it was starting
     pidfile = f"{RUNNING}/{os.getpid()}"
     open(pidfile, "w").write(f"{name}\n{proc_start(os.getpid()) or ''}\n{p.pid}\n{proc_start(p.pid) or ''}")      # the sandbox goes in too, so the run still counts if ajail dies first
+    x11_missing = [False]
     def tee():
         lf = open_log()                           # None when the log can't be opened: the app's output still reaches the terminal
         n = 0                                     # a chatty app must not fill the disk: cap what one run adds to the log
@@ -164,6 +165,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
                 while len(pend) > LOG_LINE_MAX: lines.append(pend[:LOG_LINE_MAX] + "\n"); pend = pend[LOG_LINE_MAX:]
                 if not data and pend: lines.append(pend + "\n"); pend = ""
                 for line in lines:
+                    if NEEDS_X11.search(line): x11_missing[0] = True
                     if lf and n < LOG_RUN_MAX:
                         n += len(line)
                         log_write(lf, f"[{name}] {line}" + (f"[{name}] (more output not logged)\n" if n >= LOG_RUN_MAX else ""))
@@ -201,6 +203,7 @@ def launch(name, root, cfg, extra, source=None, once=False):
     code, sig = exit_code(rc), crash_signal(rc)
     log(f"EXIT code={code}" + (f" ({sig})" if sig else ""), name)
     hint = HINT_32BIT if rc != 0 and not stopped[0] and not cfg["allow_32bit"] and platform.machine() == "x86_64" and is_32bit_app(root, source) else ""
+    if not hint and rc != 0 and not stopped[0] and not cfg["x11"] and x11_missing[0]: hint = HINT_X11
     if hint: warn(hint, name)
     if not stopped[0]:
         if sig: notify_crash(name, sig, hint)                            # at any time, not only right after starting

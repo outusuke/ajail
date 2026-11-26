@@ -51,6 +51,11 @@ class Hints(unittest.TestCase):
         self.assertNotIn("a guess", G["log_hints"](l, cur(userns=1))[0][2])
         self.assertEqual(keys(run(code=134), cur()) and G["log_hints"](run(code=134), cur())[0][2][-9:], "(a guess)")
 
+    def test_chrome_without_an_x_server_suggests_x11(self):
+        l = run("ERROR:ui/ozone/platform/x11/ozone_platform_x11.cc:257] Missing X server or $DISPLAY", code=1)
+        self.assertEqual(keys(l, cur(x11=0, userns=1)), [("x11", 1)])
+        self.assertEqual(keys(l, cur(x11=1, userns=1)), [])
+
     WGPU = ["wgpu error: Validation Error", "Caused by:", "  In Device::create_shader_module, label = 'iced_wgpu.quad.solid.shader'",
             "Shader requires capability Capabilities(SHADER_FLOAT16_IN_FLOAT32)"]
 
